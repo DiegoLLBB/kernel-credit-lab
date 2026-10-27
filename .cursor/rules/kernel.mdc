@@ -22,3 +22,7 @@ Python tools, and claims are verified by an independent model before a memo is p
 - Ruff-clean (`ruff check`, `ruff format`). Tests with pytest; financial tools need edge-case tests.
 - Frontend: Next.js App Router, TypeScript strict, Tailwind. Handle loading, empty and error states.
 - Keep functions small and typed. Prefer explicit over clever.
+
+# Context
+- The plan and confirmed model settings live in `docs/CONTEXT.md`; read it before larger changes.
+- Log notable decisions and test results in `docs/PROGRESS.md` under the current day.
