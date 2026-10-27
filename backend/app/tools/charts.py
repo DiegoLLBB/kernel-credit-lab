@@ -1,0 +1,211 @@
+"""Verifiable chart reading: SAM 3.1 locates, Muse Spark reads, Python checks.
+
+Pipeline for an image (e.g. an investor-deck slide):
+  1. SAM 3.1 segments "bar chart"  -> one box per chart.
+  2. SAM 3.1 segments "bar"        -> one box per bar (legend swatches fall outside charts).
+  3. Each chart is cropped and sent to Muse Spark (with the full slide for legend/context),
+     which returns the bars left-to-right with their values as strict JSON.
+  4. Geometry check (deterministic): with a shared zero baseline, bar heights must be
+     proportional to the values Spark read. Any bar whose implied value deviates beyond the
+     tolerance is flagged, so a misread label cannot pass silently.
+"""
+
+from __future__ import annotations
+
+import io
+import statistics
+from dataclasses import dataclass, field
+
+from PIL import Image
+from pydantic import BaseModel, Field
+
+from app.llm.client import LLMClient, LLMResult, Provider
+from app.llm.sam import Region, image_data_url, segment_image
+
+CHART_PROMPT = "bar chart"
+BAR_PROMPT = "bar"
+PROMPT_VERSION = "chart_reader_v1"
+
+
+# --------------------------------------------------------------------------- schemas
+class BarReading(BaseModel):
+    category: str = Field(description="x-axis category under the bar, e.g. 'Q2' or '2027'")
+    series: str | None = Field(description="legend series of the bar, e.g. '2025', or null")
+    value: float = Field(description="numeric value printed on or above the bar")
+
+
+class ChartExtraction(BaseModel):
+    title: str | None
+    unit: str | None = Field(description="unit of the values, e.g. 'USD per share', '$bn'")
+    bars: list[BarReading] = Field(description="every bar, strictly ordered left to right")
+
+
+SYSTEM_PROMPT = (
+    "You read bar charts from financial presentations. The FIRST image is a crop containing "
+    "exactly one chart; the SECOND image is the full slide for context (titles, legend). "
+    "Read only the chart in the first image. List every bar strictly from left to right, "
+    "using the value printed on or above each bar. Never estimate a value that is not "
+    "printed; if a bar has no printed value, omit it. Use null when unsure of series or unit."
+)
+
+
+# --------------------------------------------------------------------------- results
+@dataclass
+class BarCheck:
+    reading: BarReading
+    box: Region
+    implied_value: float
+    deviation: float  # relative difference between implied and read value
+    ok: bool
+
+
+@dataclass
+class ChartResult:
+    chart_box: Region
+    extraction: ChartExtraction | None
+    bar_boxes: list[Region]
+    checks: list[BarCheck] = field(default_factory=list)
+    status: str = "unverified"  # verified | mismatch | unverified
+    reason: str | None = None
+    llm: LLMResult | None = None
+
+
+# --------------------------------------------------------------------------- geometry
+def _center(r: Region) -> tuple[float, float]:
+    return (r.x1 + r.x2) / 2, (r.y1 + r.y2) / 2
+
+
+def _contains(outer: Region, inner: Region, pad: float = 0.02) -> bool:
+    w, h = outer.x2 - outer.x1, outer.y2 - outer.y1
+    cx, cy = _center(inner)
+    return (outer.x1 - pad * w) <= cx <= (outer.x2 + pad * w) and (outer.y1 - pad * h) <= cy <= (
+        outer.y2 + pad * h
+    )
+
+
+def assign_bars(charts: list[Region], bars: list[Region]) -> dict[int, list[Region]]:
+    """Map each chart (by index) to the bars whose centre lies inside it, left to right.
+
+    Bars outside every chart (typically legend swatches) are dropped.
+    """
+    assigned: dict[int, list[Region]] = {i: [] for i in range(len(charts))}
+    for bar in bars:
+        for i, chart in enumerate(charts):
+            if _contains(chart, bar):
+                assigned[i].append(bar)
+                break
+    for i in assigned:
+        assigned[i].sort(key=lambda b: (b.x1 + b.x2) / 2)
+    return assigned
+
+
+def verify_proportional(
+    readings: list[BarReading], boxes: list[Region], tolerance: float = 0.08
+) -> tuple[str, str | None, list[BarCheck]]:
+    """Check bar heights against read values, assuming a shared zero baseline."""
+    if not readings or not boxes:
+        return "unverified", "no bars detected or read", []
+    if len(readings) != len(boxes):
+        return (
+            "unverified",
+            f"bar count differs: SAM found {len(boxes)}, Spark read {len(readings)}",
+            [],
+        )
+    if any(r.value <= 0 for r in readings):
+        return "unverified", "non-positive values: zero-baseline check does not apply", []
+
+    heights = [b.y2 - b.y1 for b in boxes]
+    tallest = max(heights)
+    baselines = [b.y2 for b in boxes]
+    if max(baselines) - min(baselines) > 0.05 * tallest:
+        return "unverified", "bars do not share a baseline (stacked or offset chart)", []
+
+    scale = statistics.median(r.value / h for r, h in zip(readings, heights, strict=True))
+    checks: list[BarCheck] = []
+    for reading, box, height in zip(readings, boxes, heights, strict=True):
+        implied = height * scale
+        deviation = abs(implied - reading.value) / reading.value
+        checks.append(BarCheck(reading, box, implied, deviation, deviation <= tolerance))
+    if all(c.ok for c in checks):
+        return "verified", None, checks
+    bad = [c for c in checks if not c.ok]
+    detail = "; ".join(
+        f"{c.reading.category}/{c.reading.series}: read {c.reading.value:g}, "
+        f"geometry implies {c.implied_value:.3g}"
+        for c in bad
+    )
+    return "mismatch", detail, checks
+
+
+def crop(image: Image.Image, box: Region, pad_x: float = 0.12, pad_y: float = 0.35) -> bytes:
+    """Crop a region (in SAM's frame coordinates) with padding for labels and titles."""
+    sx, sy = image.width / box.frame_width, image.height / box.frame_height
+    w, h = (box.x2 - box.x1) * sx, (box.y2 - box.y1) * sy
+    left = max(0, box.x1 * sx - pad_x * w)
+    top = max(0, box.y1 * sy - pad_y * h)
+    right = min(image.width, box.x2 * sx + pad_x * w)
+    bottom = min(image.height, box.y2 * sy + pad_y * h)
+    buf = io.BytesIO()
+    image.crop((int(left), int(top), int(right), int(bottom))).convert("RGB").save(buf, "PNG")
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- pipeline
+async def read_charts(
+    client: LLMClient,
+    image_bytes: bytes,
+    *,
+    filename: str = "slide.png",
+    run_id: str | None = None,
+    step_id: str | None = None,
+) -> list[ChartResult]:
+    settings = client.settings
+    image = Image.open(io.BytesIO(image_bytes))
+    charts, _ = await segment_image(
+        client, image_bytes, CHART_PROMPT, filename=filename, run_id=run_id, step_id=step_id
+    )
+    if not charts:
+        return []
+    bars, _ = await segment_image(
+        client, image_bytes, BAR_PROMPT, filename=filename, run_id=run_id, step_id=step_id
+    )
+    charts.sort(key=lambda c: (round(c.y1 / max(c.frame_height, 1), 1), c.x1))
+    by_chart = assign_bars(charts, bars)
+    full_slide = image_data_url(image_bytes, filename)
+
+    results: list[ChartResult] = []
+    for i, chart in enumerate(charts):
+        crop_url = image_data_url(crop(image, chart), "chart.png")
+        extraction, llm = await client.structured_json(
+            provider=Provider.META,
+            model=settings.default_model,
+            schema=ChartExtraction,
+            task="read_chart",
+            prompt_version=PROMPT_VERSION,
+            run_id=run_id,
+            step_id=step_id,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Chart crop, then full slide:"},
+                        {"type": "image_url", "image_url": {"url": crop_url}},
+                        {"type": "image_url", "image_url": {"url": full_slide}},
+                    ],
+                },
+            ],
+        )
+        status, reason, checks = verify_proportional(extraction.bars, by_chart[i])
+        results.append(
+            ChartResult(
+                chart_box=chart,
+                extraction=extraction,
+                bar_boxes=by_chart[i],
+                checks=checks,
+                status=status,
+                reason=reason,
+                llm=llm,
+            )
+        )
+    return results
