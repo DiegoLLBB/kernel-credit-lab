@@ -26,3 +26,6 @@ data/cache/
 .DS_Store
 .idea/
 .vscode/
+
+# Local test images (smoke tests)
+backend/*.png

@@ -8,19 +8,16 @@ What it checks:
   1. Which model IDs the Meta Model API actually exposes (GET /models).
   2. A plain chat call per configured model (latency, tokens).
   3. Structured JSON output against a small bond-terms schema (does json_schema work?).
-  4. Optionally, an image request to VISION_SEGMENTATION_MODEL. SAM 3.1's request/response
-     shape must be confirmed against the official docs; the raw response is printed so you
-     can adapt the client.
+  4. Optionally, SAM 3.1 segmentation of a document page via /v1/responses
+     (default prompt "table"; override with --prompt).
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
-import json
-import mimetypes
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -28,6 +25,7 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.llm import LLMClient, LLMError, ModelCallRecord, Provider
+from app.llm.sam import segment_image
 
 SAMPLE = (
     "Example Utility Holdings Inc. issued $600,000,000 aggregate principal amount of 4.750% "
@@ -123,38 +121,37 @@ async def ping(client: LLMClient, provider: Provider, model: str, label: str) ->
             fail(f"{label} structured output via {mode}: {exc}")
 
 
-async def vision(client: LLMClient, image: Path) -> None:
+async def vision(client: LLMClient, image: Path, prompt: str) -> None:
     s = get_settings()
     model = s.vision_segmentation_model
-    print(f"\n[3] Vision — {image.name} -> {model or '(VISION_SEGMENTATION_MODEL unset)'}")
+    print(f"\n[3] SAM 3.1 — segment {prompt!r} in {image.name} -> {model or '(unset)'}")
     if not model:
+        fail("VISION_SEGMENTATION_MODEL not set")
         return
-    mime = mimetypes.guess_type(image.name)[0] or "image/png"
-    data_uri = f"data:{mime};base64,{base64.b64encode(image.read_bytes()).decode()}"
     try:
-        result = await client.chat(
-            provider=Provider.META,
-            model=model,
-            task="smoke_vision",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Segment: table"},
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                    ],
-                }
-            ],
-        )
-        ok(f"responded in {result.latency_ms} ms; raw response (truncated):")
-        print(json.dumps(result.raw, indent=2)[:3000])
+        started = time.perf_counter()
+        regions, raw = await segment_image(client, image.read_bytes(), prompt, filename=image.name)
+        elapsed = int((time.perf_counter() - started) * 1000)
     except LLMError as exc:
-        fail(f"{exc}\n      SAM may use a dedicated endpoint; check the official model docs.")
+        fail(str(exc))
+        return
+    ok(f"{len(regions)} region(s) in {elapsed} ms")
+    for r in regions:
+        conf = f"{r.confidence:.2f}" if r.confidence is not None else "n/a"
+        nx1, ny1, nx2, ny2 = r.normalized
+        print(
+            f"      #{r.object_id}: box=({r.x1:.0f},{r.y1:.0f})-({r.x2:.0f},{r.y2:.0f}) "
+            f"of {r.frame_width:.0f}x{r.frame_height:.0f} "
+            f"[{nx1:.2f},{ny1:.2f},{nx2:.2f},{ny2:.2f}] conf={conf}"
+        )
+    if not regions:
+        print(f"      raw output (truncated): {raw[:500]!r}")
 
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", type=Path, help="prospectus page image (PNG/JPG) for SAM 3.1")
+    parser.add_argument("--prompt", default="table", help="SAM concept prompt (default: table)")
     args = parser.parse_args()
     s = get_settings()
     records: list[ModelCallRecord] = []
@@ -171,7 +168,7 @@ async def main() -> int:
         else:
             fail("Muse Spark Open: BASETEN_API_KEY not set (skip until credits arrive)")
         if args.image:
-            await vision(client, args.image)
+            await vision(client, args.image, args.prompt)
 
     failed = sum(r.status != "success" for r in records)
     print(f"\n{len(records)} model calls, {failed} failed.")
