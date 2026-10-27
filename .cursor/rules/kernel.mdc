@@ -1,0 +1,24 @@
+---
+description: Kernel Credit Lab engineering rules
+alwaysApply: true
+---
+
+# Product
+Kernel is an agentic, verifiable research workbench for USD investment-grade corporate bonds.
+It is NOT a basic RAG app: Postgres is the source of truth, numbers come from deterministic
+Python tools, and claims are verified by an independent model before a memo is published.
+
+# Hard rules
+- Never let an LLM compute financial figures. LLMs choose tools; Python computes.
+- Every number must link to a ToolCall; every material claim must link to a Citation.
+- Never generate prices, ratings or investment recommendations.
+- Every model call goes through `app.llm.LLMClient` so it is recorded as a ModelCall.
+- Structured outputs are validated with Pydantic. Never retry invalid JSON blindly.
+- API keys live only in `.env` / deployment secrets. Never hardcode, log or send them to the browser.
+- IG conventions: make-whole + par call windows, not high-yield step-down call schedules.
+
+# Code
+- Python 3.12, FastAPI, SQLAlchemy 2.0 typed mappings, Alembic for every schema change.
+- Ruff-clean (`ruff check`, `ruff format`). Tests with pytest; financial tools need edge-case tests.
+- Frontend: Next.js App Router, TypeScript strict, Tailwind. Handle loading, empty and error states.
+- Keep functions small and typed. Prefer explicit over clever.

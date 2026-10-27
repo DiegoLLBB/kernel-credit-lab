@@ -1,0 +1,28 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Data and caches (corpus is re-downloadable; never commit raw filings)
+data/raw/
+data/cache/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

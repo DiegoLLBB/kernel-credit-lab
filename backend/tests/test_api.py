@@ -1,0 +1,39 @@
+import os
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+client = TestClient(app)
+
+integration = pytest.mark.skipif(
+    os.getenv("KERNEL_INTEGRATION") != "1",
+    reason="needs Postgres + Redis (set KERNEL_INTEGRATION=1; runs in CI)",
+)
+
+
+def test_liveness():
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+    assert resp.headers["x-request-id"]
+
+
+def test_request_id_is_propagated():
+    resp = client.get("/health", headers={"x-request-id": "abc123"})
+    assert resp.headers["x-request-id"] == "abc123"
+
+
+@integration
+def test_readiness_with_dependencies():
+    resp = client.get("/health/ready")
+    assert resp.status_code == 200, resp.json()
+    assert resp.json()["checks"] == {"database": True, "redis": True}
+
+
+@integration
+def test_runs_endpoints_against_migrated_schema():
+    assert client.get("/api/runs").json() == []
+    assert client.get("/api/model-calls").json() == []
+    assert client.get("/api/runs/missing").status_code == 404
