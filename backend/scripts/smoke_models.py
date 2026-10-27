@@ -2,7 +2,7 @@
 
 Usage (from backend/, with .env filled in):
     python -m scripts.smoke_models                 # list models + ping all configured models
-    python -m scripts.smoke_models --image page.png  # also send a prospectus page to the vision model
+    python -m scripts.smoke_models --image page.png  # also test the vision model on a page
 
 What it checks:
   1. Which model IDs the Meta Model API actually exposes (GET /models).
@@ -163,7 +163,9 @@ async def main() -> int:
     async with LLMClient(s, recorder=records.append) as client:
         print("\n[2] Chat + structured output")
         await ping(client, Provider.META, s.default_model, "Muse Spark (DEFAULT_MODEL)")
-        await ping(client, Provider.META, s.deep_research_model, "Muse Wonder (DEEP_RESEARCH_MODEL)")
+        await ping(
+            client, Provider.META, s.deep_research_model, "Muse Wonder (DEEP_RESEARCH_MODEL)"
+        )
         if s.baseten_api_key:
             await ping(client, Provider.BASETEN, s.open_model, "Muse Spark Open (Baseten)")
         else:

@@ -278,7 +278,7 @@ class LLMClient:
                 "type": "json_schema",
                 "json_schema": {
                     "name": schema.__name__,
-                    "schema": schema.model_json_schema(),
+                    "schema": strict_json_schema(schema.model_json_schema()),
                     "strict": True,
                 },
             }
@@ -324,6 +324,24 @@ class LLMClient:
                     },
                 ]
         raise StructuredOutputError(f"Invalid structured output from {model}: {last_error}")
+
+
+def strict_json_schema(schema: Any) -> Any:
+    """Make a JSON schema valid for strict structured outputs.
+
+    Strict mode requires every object to declare additionalProperties: false and to list all of
+    its properties as required (optional fields stay nullable via anyOf/null). Pydantic emits
+    neither by default, and default values are not allowed either.
+    """
+    if isinstance(schema, list):
+        return [strict_json_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: strict_json_schema(v) for k, v in schema.items() if k != "default"}
+    if out.get("type") == "object" or "properties" in out:
+        out["additionalProperties"] = False
+        out["required"] = list(out.get("properties", {}))
+    return out
 
 
 def _message_content(data: dict[str, Any]) -> str:

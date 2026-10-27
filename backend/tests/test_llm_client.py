@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.config import Settings
 from app.llm import LLMClient, LLMError, ModelCallRecord, Provider, StructuredOutputError
+from app.llm.client import strict_json_schema
 
 
 class BondTerms(BaseModel):
@@ -147,6 +148,25 @@ async def test_structured_json_validates_and_accepts_fenced_json():
     body = json.loads(h.requests[0].content)
     assert body["response_format"]["type"] == "json_schema"
     assert body["response_format"]["json_schema"]["name"] == "BondTerms"
+    sent_schema = body["response_format"]["json_schema"]["schema"]
+    assert sent_schema["additionalProperties"] is False
+    assert set(sent_schema["required"]) == {"coupon", "maturity_date", "par_call_date"}
+
+
+def test_strict_json_schema_handles_nested_models_and_defaults():
+    class Covenant(BaseModel):
+        type: str
+        source_page: int | None = None
+
+    class Bond(BaseModel):
+        name: str
+        covenants: list[Covenant] = []
+
+    schema = strict_json_schema(Bond.model_json_schema())
+    nested = schema["$defs"]["Covenant"]
+    assert schema["additionalProperties"] is False and nested["additionalProperties"] is False
+    assert nested["required"] == ["type", "source_page"]
+    assert "default" not in schema["properties"]["covenants"]
 
 
 async def test_structured_json_repairs_once_with_validation_error():
