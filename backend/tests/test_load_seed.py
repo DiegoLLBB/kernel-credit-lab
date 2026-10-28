@@ -21,6 +21,7 @@ from app.models import (
     MaturitySchedule,
     Watchlist,
 )
+from app.tools.maturity import bucket_for
 from scripts.load_seed import SeedValidationError, load_seed, validate_seed
 
 SEED_PATH = Path(__file__).resolve().parents[1] / "seed" / "snapshot_2025-12-31.json"
@@ -194,23 +195,42 @@ def test_bad_seed_is_rejected_with_clear_message(
 
 
 def test_active_instruments_never_exceed_schedule_by_year(session: Session) -> None:
-    """Named instruments maturing in a year must fit inside that year's schedule bucket."""
+    """Active instruments assigned via bucket_for must fit each schedule bucket.
+
+    Consolidated schedules (e.g. Duke holdco) are checked against the issuer plus
+    its subsidiaries' instruments.
+    """
     load_seed(session, SEED_PATH)
     session.commit()
 
-    by_issuer_year: dict[str, dict[int, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
-    for inst in session.scalars(select(Instrument).where(Instrument.status == "active")).all():
-        by_issuer_year[inst.issuer_id][inst.maturity.year] += Decimal(inst.amount_outstanding)
+    issuers = list(session.scalars(select(Issuer)).all())
+    children: dict[str, list[str]] = defaultdict(list)
+    for issuer in issuers:
+        if issuer.parent_id:
+            children[issuer.parent_id].append(issuer.id)
+
+    active = list(session.scalars(select(Instrument).where(Instrument.status == "active")).all())
 
     for sched in session.scalars(select(MaturitySchedule)).all():
-        for bucket in sched.buckets:
-            period_end = bucket.get("period_end")
-            if not period_end:
+        issuer_ids = {sched.issuer_id}
+        if sched.basis == "consolidated":
+            issuer_ids.update(children.get(sched.issuer_id, []))
+
+        by_label: dict[str, Decimal] = defaultdict(Decimal)
+        for inst in active:
+            if inst.issuer_id not in issuer_ids:
                 continue
-            year = int(str(period_end)[:4])
+            label = bucket_for(inst.maturity, sched.buckets)
+            if label is not None:
+                by_label[label] += Decimal(inst.amount_outstanding)
+
+        for bucket in sched.buckets:
+            if not bucket.get("period_end"):
+                continue
+            label = str(bucket["label"])
             schedule_amount = Decimal(str(bucket["amount"]))
-            instrument_sum = by_issuer_year[sched.issuer_id][year]
+            instrument_sum = by_label[label]
             assert instrument_sum <= schedule_amount, (
-                f"issuer {sched.issuer_id} year {year}: instruments "
-                f"{instrument_sum} exceed schedule {schedule_amount} ({bucket.get('label')})"
+                f"issuer {sched.issuer_id} basis={sched.basis} bucket {label}: "
+                f"instruments {instrument_sum} exceed schedule {schedule_amount}"
             )
