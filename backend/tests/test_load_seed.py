@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import defaultdict
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,14 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
-from app.models import CallTerms, CuratedSource, Instrument, Issuer, Watchlist
+from app.models import (
+    CallTerms,
+    CuratedSource,
+    Instrument,
+    Issuer,
+    MaturitySchedule,
+    Watchlist,
+)
 from scripts.load_seed import SeedValidationError, load_seed, validate_seed
 
 SEED_PATH = Path(__file__).resolve().parents[1] / "seed" / "snapshot_2025-12-31.json"
@@ -32,17 +41,24 @@ def snapshot() -> dict:
         return json.load(fh)
 
 
-def test_valid_seed_loads(session: Session) -> None:
+def test_valid_seed_loads(session: Session, snapshot: dict) -> None:
+    n_issuers = len(snapshot["issuers"])
+    n_instruments = len(snapshot["instruments"])
+    n_schedules = len(snapshot["maturity_schedules"])
+    n_watchlist = len(snapshot["watchlist"])
+
     stats = load_seed(session, SEED_PATH)
     session.commit()
 
-    assert stats.issuers_created == 9
-    assert stats.instruments_created == 22
-    assert session.scalar(select(func.count()).select_from(Issuer)) == 9
-    assert session.scalar(select(func.count()).select_from(Instrument)) == 22
-    assert session.scalar(select(func.count()).select_from(Watchlist)) == 9
+    assert stats.issuers_created == n_issuers
+    assert stats.instruments_created == n_instruments
+    assert stats.maturity_schedules_created == n_schedules
+    assert session.scalar(select(func.count()).select_from(Issuer)) == n_issuers
+    assert session.scalar(select(func.count()).select_from(Instrument)) == n_instruments
+    assert session.scalar(select(func.count()).select_from(Watchlist)) == n_watchlist
     assert session.scalar(select(func.count()).select_from(CallTerms)) >= 1
     assert session.scalar(select(func.count()).select_from(CuratedSource)) > 0
+    assert session.scalar(select(func.count()).select_from(MaturitySchedule)) == n_schedules
 
     opco = session.scalars(select(Issuer).where(Issuer.cik == "30371")).one()
     holdco = session.scalars(select(Issuer).where(Issuer.cik == "1326160")).one()
@@ -68,8 +84,21 @@ def test_valid_seed_loads(session: Session) -> None:
     assert "sec.gov" in coupon_src.source_url
     assert coupon_src.as_of is not None
 
+    duk_sched = session.scalars(
+        select(MaturitySchedule).where(MaturitySchedule.issuer_id == holdco.id)
+    ).one()
+    assert duk_sched.basis == "consolidated"
+    assert duk_sched.as_of.isoformat() == "2025-12-31"
+    assert duk_sched.source_url
+    assert duk_sched.buckets[0]["label"] == "FY2026"
+    assert Decimal(str(duk_sched.buckets[0]["amount"])) > 0
 
-def test_second_load_changes_nothing(session: Session) -> None:
+
+def test_second_load_changes_nothing(session: Session, snapshot: dict) -> None:
+    n_issuers = len(snapshot["issuers"])
+    n_instruments = len(snapshot["instruments"])
+    n_schedules = len(snapshot["maturity_schedules"])
+
     load_seed(session, SEED_PATH)
     session.commit()
 
@@ -77,11 +106,15 @@ def test_second_load_changes_nothing(session: Session) -> None:
     instrument_ids = {
         i.key: i.id for i in session.scalars(select(Instrument)).all() if i.key is not None
     }
-    n_issuers = session.scalar(select(func.count()).select_from(Issuer))
-    n_instruments = session.scalar(select(func.count()).select_from(Instrument))
+    schedule_ids = {
+        (s.issuer_id, s.as_of): s.id for s in session.scalars(select(MaturitySchedule)).all()
+    }
+    n_db_issuers = session.scalar(select(func.count()).select_from(Issuer))
+    n_db_instruments = session.scalar(select(func.count()).select_from(Instrument))
     n_watchlist = session.scalar(select(func.count()).select_from(Watchlist))
     n_call_terms = session.scalar(select(func.count()).select_from(CallTerms))
     n_sources = session.scalar(select(func.count()).select_from(CuratedSource))
+    n_db_schedules = session.scalar(select(func.count()).select_from(MaturitySchedule))
     amounts = {
         i.key: i.amount_outstanding
         for i in session.scalars(select(Instrument)).all()
@@ -94,20 +127,26 @@ def test_second_load_changes_nothing(session: Session) -> None:
     assert stats.issuers_created == 0
     assert stats.instruments_created == 0
     assert stats.watchlist_created == 0
-    assert stats.issuers_updated == 9
-    assert stats.instruments_updated == 22
+    assert stats.maturity_schedules_created == 0
+    assert stats.issuers_updated == n_issuers
+    assert stats.instruments_updated == n_instruments
+    assert stats.maturity_schedules_updated == n_schedules
 
-    assert session.scalar(select(func.count()).select_from(Issuer)) == n_issuers
-    assert session.scalar(select(func.count()).select_from(Instrument)) == n_instruments
+    assert session.scalar(select(func.count()).select_from(Issuer)) == n_db_issuers
+    assert session.scalar(select(func.count()).select_from(Instrument)) == n_db_instruments
     assert session.scalar(select(func.count()).select_from(Watchlist)) == n_watchlist
     assert session.scalar(select(func.count()).select_from(CallTerms)) == n_call_terms
     assert session.scalar(select(func.count()).select_from(CuratedSource)) == n_sources
+    assert session.scalar(select(func.count()).select_from(MaturitySchedule)) == n_db_schedules
     assert {
         i.cik: i.id for i in session.scalars(select(Issuer)).all() if i.cik is not None
     } == issuer_ids
     assert {
         i.key: i.id for i in session.scalars(select(Instrument)).all() if i.key is not None
     } == instrument_ids
+    assert {
+        (s.issuer_id, s.as_of): s.id for s in session.scalars(select(MaturitySchedule)).all()
+    } == schedule_ids
     assert {
         i.key: i.amount_outstanding
         for i in session.scalars(select(Instrument)).all()
@@ -128,6 +167,9 @@ def test_bad_seed_is_rejected_with_clear_message(
     bad["instruments"][4]["rate_type"] = "fixed"
     bad["instruments"][4]["reference_rate"] = "SOFR"
     bad["instruments"][4]["spread_bps"] = 100
+    bad["maturity_schedules"][0]["buckets"][0]["amount"] = "-1"
+    bad["maturity_schedules"][1]["issuer"] = "ghost"
+    bad["maturity_schedules"][2]["source"] = "missing_src"
 
     with pytest.raises(SeedValidationError) as raised:
         validate_seed(bad)
@@ -138,6 +180,9 @@ def test_bad_seed_is_rejected_with_clear_message(
     assert "not in issuers" in message
     assert "unknown source" in message
     assert "floating-rate instruments must be flagged" in message
+    assert "amount must be >= 0" in message
+    assert "ghost" in message
+    assert "missing_src" in message
 
     bad_path = tmp_path / "bad_snapshot.json"
     bad_path.write_text(json.dumps(bad), encoding="utf-8")
@@ -146,3 +191,26 @@ def test_bad_seed_is_rejected_with_clear_message(
     session.rollback()
     assert "amount_outstanding must be > 0" in str(load_raised.value)
     assert (session.scalar(select(func.count()).select_from(Instrument)) or 0) == before_instruments
+
+
+def test_active_instruments_never_exceed_schedule_by_year(session: Session) -> None:
+    """Named instruments maturing in a year must fit inside that year's schedule bucket."""
+    load_seed(session, SEED_PATH)
+    session.commit()
+
+    by_issuer_year: dict[str, dict[int, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    for inst in session.scalars(select(Instrument).where(Instrument.status == "active")).all():
+        by_issuer_year[inst.issuer_id][inst.maturity.year] += Decimal(inst.amount_outstanding)
+
+    for sched in session.scalars(select(MaturitySchedule)).all():
+        for bucket in sched.buckets:
+            period_end = bucket.get("period_end")
+            if not period_end:
+                continue
+            year = int(str(period_end)[:4])
+            schedule_amount = Decimal(str(bucket["amount"]))
+            instrument_sum = by_issuer_year[sched.issuer_id][year]
+            assert instrument_sum <= schedule_amount, (
+                f"issuer {sched.issuer_id} year {year}: instruments "
+                f"{instrument_sum} exceed schedule {schedule_amount} ({bucket.get('label')})"
+            )

@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.models import CallTerms, CuratedSource, Instrument, Issuer, Watchlist
+from app.models import CallTerms, CuratedSource, Instrument, Issuer, MaturitySchedule, Watchlist
 
 CURATED_FIELDS = (
     "coupon",
@@ -53,6 +53,8 @@ class LoadStats:
     watchlist_created: int = 0
     call_terms_upserted: int = 0
     curated_sources_upserted: int = 0
+    maturity_schedules_created: int = 0
+    maturity_schedules_updated: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -87,6 +89,7 @@ def validate_seed(data: dict[str, Any]) -> None:
     issuers = data.get("issuers")
     instruments = data.get("instruments")
     watchlist = data.get("watchlist")
+    maturity_schedules = data.get("maturity_schedules", [])
 
     if not isinstance(sources, dict) or not sources:
         errors.append("sources: must be a non-empty object keyed by source id")
@@ -100,6 +103,11 @@ def validate_seed(data: dict[str, Any]) -> None:
     if not isinstance(watchlist, list):
         errors.append("watchlist: must be a list of issuer keys")
         watchlist = []
+    if maturity_schedules is None:
+        maturity_schedules = []
+    if not isinstance(maturity_schedules, list):
+        errors.append("maturity_schedules: must be a list")
+        maturity_schedules = []
 
     issuer_keys: set[str] = set()
     issuer_ciks: set[str] = set()
@@ -241,6 +249,66 @@ def validate_seed(data: dict[str, Any]) -> None:
                 except SeedValidationError as exc:
                     errors.extend(exc.errors)
 
+    schedule_keys: set[tuple[str, str]] = set()
+    for idx, sched in enumerate(maturity_schedules):
+        ctx = f"maturity_schedules[{idx}]"
+        if not isinstance(sched, dict):
+            errors.append(f"{ctx}: must be an object")
+            continue
+        issuer_ref = sched.get("issuer")
+        skey = f"{ctx} ({issuer_ref})" if issuer_ref else ctx
+        if not issuer_ref:
+            errors.append(f"{ctx}: missing issuer")
+        elif issuer_ref not in issuer_keys:
+            errors.append(f"{skey}: issuer {issuer_ref!r} not in issuers")
+
+        basis = sched.get("basis")
+        if basis not in {"consolidated", "registrant"}:
+            errors.append(f"{skey}: basis must be 'consolidated' or 'registrant' (got {basis!r})")
+
+        as_of = None
+        try:
+            as_of = _parse_date(sched.get("as_of"), field_name="as_of", context=skey)
+            if as_of is None:
+                errors.append(f"{skey}: missing as_of")
+        except SeedValidationError as exc:
+            errors.extend(exc.errors)
+
+        if issuer_ref and as_of is not None:
+            pair = (str(issuer_ref), as_of.isoformat())
+            if pair in schedule_keys:
+                errors.append(f"{skey}: duplicate schedule for issuer/as_of {pair}")
+            else:
+                schedule_keys.add(pair)
+
+        source_id = sched.get("source")
+        if not source_id:
+            errors.append(f"{skey}: missing source")
+        elif source_id not in sources:
+            errors.append(f"{skey}: unknown source {source_id!r}")
+
+        buckets = sched.get("buckets")
+        if not isinstance(buckets, list) or not buckets:
+            errors.append(f"{skey}: buckets must be a non-empty list")
+            continue
+        for bidx, bucket in enumerate(buckets):
+            bctx = f"{skey}.buckets[{bidx}]"
+            if not isinstance(bucket, dict):
+                errors.append(f"{bctx}: must be an object")
+                continue
+            if not bucket.get("label"):
+                errors.append(f"{bctx}: missing label")
+            try:
+                amount = _parse_decimal(bucket.get("amount"), field_name="amount", context=bctx)
+                if amount < 0:
+                    errors.append(f"{bctx}: amount must be >= 0 (got {amount})")
+            except SeedValidationError as exc:
+                errors.extend(exc.errors)
+            try:
+                _parse_date(bucket.get("period_end"), field_name="period_end", context=bctx)
+            except SeedValidationError as exc:
+                errors.extend(exc.errors)
+
     if errors:
         raise SeedValidationError(errors)
 
@@ -301,6 +369,7 @@ def load_seed(session: Session, path: Path | str) -> LoadStats:
     issuers_raw: list[dict[str, Any]] = data["issuers"]
     instruments_raw: list[dict[str, Any]] = data["instruments"]
     watchlist_raw: list[str] = data["watchlist"]
+    schedules_raw: list[dict[str, Any]] = data.get("maturity_schedules") or []
 
     # --- Issuers (by CIK), then parent links ---
     by_key: dict[str, Issuer] = {}
@@ -402,6 +471,36 @@ def load_seed(session: Session, path: Path | str) -> LoadStats:
 
         _upsert_curated_sources(session, instrument, raw, sources, stats)
 
+    # --- Maturity schedules (unique per issuer + as_of) ---
+    for raw in schedules_raw:
+        issuer = by_key[str(raw["issuer"])]
+        as_of = _parse_date(raw["as_of"], field_name="as_of", context=raw["issuer"])
+        assert as_of is not None
+        source = sources[str(raw["source"])]
+        buckets = [
+            {
+                "label": str(b["label"]),
+                "period_end": b.get("period_end"),
+                "amount": str(b["amount"]),
+            }
+            for b in raw["buckets"]
+        ]
+        row = session.scalars(
+            select(MaturitySchedule).where(
+                MaturitySchedule.issuer_id == issuer.id,
+                MaturitySchedule.as_of == as_of,
+            )
+        ).first()
+        if row is None:
+            row = MaturitySchedule(issuer_id=issuer.id, as_of=as_of)
+            session.add(row)
+            stats.maturity_schedules_created += 1
+        else:
+            stats.maturity_schedules_updated += 1
+        row.basis = str(raw["basis"])
+        row.source_url = str(source["url"])
+        row.buckets = buckets
+
     session.flush()
     return stats
 
@@ -437,7 +536,9 @@ def main(argv: list[str] | None = None) -> int:
         f"instruments +{stats.instruments_created}/~{stats.instruments_updated}, "
         f"watchlist +{stats.watchlist_created}, "
         f"call_terms {stats.call_terms_upserted}, "
-        f"curated_sources {stats.curated_sources_upserted} "
+        f"curated_sources {stats.curated_sources_upserted}, "
+        f"maturity_schedules +{stats.maturity_schedules_created}"
+        f"/~{stats.maturity_schedules_updated} "
         f"({elapsed:.2f}s)"
     )
     return 0

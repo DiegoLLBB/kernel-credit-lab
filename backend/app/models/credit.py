@@ -263,3 +263,26 @@ class MetricSnapshot(TimestampMixin, Base):
     )
 
     issuer: Mapped[Issuer] = relationship()
+
+
+class MaturitySchedule(TimestampMixin, Base):
+    """Issuer debt maturity wall from a filing (XBRL / 10-K schedule).
+
+    buckets: list of {label, period_end, amount}. Unique per issuer and as_of.
+    """
+
+    __tablename__ = "maturity_schedule"
+    __table_args__ = (
+        UniqueConstraint("issuer_id", "as_of", name="uq_maturity_schedule_issuer_as_of"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    issuer_id: Mapped[str] = mapped_column(
+        ForeignKey("issuer.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    basis: Mapped[str] = mapped_column(String(32), nullable=False)  # consolidated | registrant
+    as_of: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    buckets: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+
+    issuer: Mapped[Issuer] = relationship()
