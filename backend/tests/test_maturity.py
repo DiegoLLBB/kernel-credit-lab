@@ -1,8 +1,19 @@
-"""Unit tests for fiscal-year maturity bucket assignment."""
+"""Unit tests for fiscal-year maturity bucket assignment and maturity_wall."""
 
 from datetime import date
+from decimal import Decimal
+from pathlib import Path
 
-from app.tools.maturity import bucket_for
+import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.db import Base
+from app.models import Issuer
+from app.tools.maturity import bucket_for, maturity_wall
+from scripts.load_seed import load_seed
+
+SEED_PATH = Path(__file__).resolve().parents[1] / "seed" / "snapshot_2025-12-31.json"
 
 # Oracle FY ends 31 May.
 ORACLE_BUCKETS = [
@@ -54,3 +65,61 @@ def test_bucket_for_empty_and_before_first() -> None:
 def test_after_bucket_absent_returns_none() -> None:
     dated_only = [b for b in INTEL_BUCKETS if b["period_end"] is not None]
     assert bucket_for(date(2031, 1, 1), dated_only) is None
+
+
+@pytest.fixture()
+def seeded_session() -> Session:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as db:
+        load_seed(db, SEED_PATH)
+        db.commit()
+        yield db
+
+
+def test_maturity_wall_duke_corp_fy2026_schedule_amount(seeded_session: Session) -> None:
+    duke = seeded_session.scalars(
+        select(Issuer).where(Issuer.cik == "1326160")  # Duke Energy Corporation
+    ).one()
+    wall = maturity_wall(seeded_session, duke.id, date(2025, 12, 31))
+
+    assert wall["basis"] == "consolidated"
+    assert wall["schedule_as_of"] == date(2025, 12, 31)
+    fy2026 = wall["buckets"]["FY2026"]
+    assert fy2026["schedule_amount"] == Decimal("7123000000")  # $7,123M
+    assert fy2026["named_sum"] > 0
+    assert fy2026["unattributed"] == fy2026["schedule_amount"] - fy2026["named_sum"]
+    assert fy2026["breach"] is False
+    assert fy2026["unattributed"] >= 0
+    # Consolidated: includes subsidiary names (e.g. Carolinas 2.950% 2026).
+    keys = {row["key"] for row in fy2026["instruments"]}
+    assert "dec_fmb_2950_2026" in keys
+    assert all(row["maturity"] > date(2025, 12, 31) for row in fy2026["instruments"])
+
+
+def test_maturity_wall_duke_carolinas_fy2028_named(seeded_session: Session) -> None:
+    carolinas = seeded_session.scalars(
+        select(Issuer).where(Issuer.cik == "30371")  # Duke Energy Carolinas
+    ).one()
+    wall = maturity_wall(seeded_session, carolinas.id, date(2025, 12, 31))
+
+    assert wall["basis"] == "registrant"
+    fy2028 = wall["buckets"]["FY2028"]
+    assert fy2028["named_sum"] == Decimal("950000000")  # $950M
+    assert fy2028["schedule_amount"] == Decimal("1018000000")
+    assert fy2028["unattributed"] == Decimal("68000000")
+    assert fy2028["breach"] is False
+    assert {row["key"] for row in fy2028["instruments"]} == {
+        "dec_fmb_3950_2028",
+        "dec_6000_2028",
+    }
+
+
+def test_maturity_wall_excludes_matured_or_inactive(seeded_session: Session) -> None:
+    duke = seeded_session.scalars(select(Issuer).where(Issuer.cik == "1326160")).one()
+    # As of after all FY2026 maturities, FY2026 named should be empty.
+    wall = maturity_wall(seeded_session, duke.id, date(2026, 12, 31))
+    assert wall["buckets"]["FY2026"]["named_sum"] == Decimal("0")
+    assert wall["buckets"]["FY2026"]["instruments"] == []
+    assert wall["buckets"]["FY2026"]["unattributed"] == Decimal("7123000000")
