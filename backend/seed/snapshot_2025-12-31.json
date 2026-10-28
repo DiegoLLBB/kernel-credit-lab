@@ -1,0 +1,676 @@
+{
+  "snapshot_as_of": "2025-12-31",
+  "description": "Kernel seed: the watchlist's debt as an analyst would have known it at the start of 2026. 2026 changes (new issuance, repayments, tenders, redemptions) are discovered by Kernel during replay. Amounts are USD; coupons are percent. Each instrument's 'as_of' is the date of the source its amount comes from.",
+  "sources": {
+    "duke_ye25": {
+      "title": "Duke Energy, Debt Details as of 31 Dec 2025",
+      "url": "https://s201.q4cdn.com/583395453/files/doc_downloads/fixed-income-investors/2026/02/LT-Debt-Information-Final-Debt-Details-12-31-25.pdf",
+      "as_of": "2025-12-31"
+    },
+    "orcl_fwp": {
+      "title": "Oracle, pricing term sheet (FWP), 22 Mar 2021",
+      "url": "https://www.sec.gov/Archives/edgar/data/1341439/000119312521089955/d132146dfwp.htm",
+      "as_of": "2021-03-22"
+    },
+    "orcl_10k": {
+      "title": "Oracle, Form 10-K for FY ended 31 May 2026, notes payable table",
+      "url": "https://www.sec.gov/Archives/edgar/data/0001341439/000119312526277521/orcl-20260531.htm",
+      "as_of": "2026-05-31"
+    },
+    "vz_fwp": {
+      "title": "Verizon, pricing term sheet (FWP), 11 Mar 2021",
+      "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312521078281/d120674dfwp.htm",
+      "as_of": "2021-03-11"
+    },
+    "vz_tender_launch": {
+      "title": "Verizon, tender offer announcement, 11 May 2026 (principal outstanding before the tender)",
+      "url": "https://www.stocktitan.net/news/VZ/verizon-announces-tender-offers-and-consent-solicitations-for-20-2459nxemk8pi.html",
+      "as_of": "2026-05-11"
+    },
+    "vz_portfolio_jun26": {
+      "title": "Verizon, debt portfolio as of 30 Jun 2026",
+      "url": "https://www.verizon.com/about/sites/default/files/Verizon-IR-debt-portfolio-63026.pdf",
+      "as_of": "2026-06-30"
+    },
+    "ba_fwp": {
+      "title": "Boeing, pricing term sheet (FWP), 30 Apr 2020",
+      "url": "https://www.sec.gov/Archives/edgar/data/12927/000119312520129342/d848621dfwp.htm",
+      "as_of": "2020-04-30"
+    },
+    "intc_fwp": {
+      "title": "Intel, pricing term sheet (FWP), 7 Feb 2023",
+      "url": "https://www.sec.gov/Archives/edgar/data/50863/000119312523027126/d448265dfwp.htm",
+      "as_of": "2023-02-07"
+    },
+    "intc_10k": {
+      "title": "Intel, Form 10-K for FY ended 27 Dec 2025, long-term debt table",
+      "url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000011/",
+      "as_of": "2025-12-27"
+    },
+    "amzn_fwp": {
+      "title": "Amazon, pricing term sheet (FWP), 10 May 2021",
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000119312521156519/d504007dfwp.htm",
+      "as_of": "2021-05-10"
+    },
+    "amzn_10k": {
+      "title": "Amazon, Form 10-K for FY2025, long-term debt table (May 2021 issuance outstanding $15.0bn)",
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872426000004/",
+      "as_of": "2025-12-31"
+    }
+  },
+  "issuers": [
+    {
+      "key": "duke_corp",
+      "name": "Duke Energy Corporation",
+      "cik": "1326160",
+      "parent": null,
+      "ticker": "DUK",
+      "sector": "Utilities"
+    },
+    {
+      "key": "duke_carolinas",
+      "name": "Duke Energy Carolinas, LLC",
+      "cik": "30371",
+      "parent": "duke_corp",
+      "ticker": null,
+      "sector": "Utilities"
+    },
+    {
+      "key": "duke_progress",
+      "name": "Duke Energy Progress, LLC",
+      "cik": "17797",
+      "parent": "duke_corp",
+      "ticker": null,
+      "sector": "Utilities"
+    },
+    {
+      "key": "duke_florida",
+      "name": "Duke Energy Florida, LLC",
+      "cik": "37637",
+      "parent": "duke_corp",
+      "ticker": null,
+      "sector": "Utilities"
+    },
+    {
+      "key": "oracle",
+      "name": "Oracle Corporation",
+      "cik": "1341439",
+      "parent": null,
+      "ticker": "ORCL",
+      "sector": "Technology"
+    },
+    {
+      "key": "verizon",
+      "name": "Verizon Communications Inc.",
+      "cik": "732712",
+      "parent": null,
+      "ticker": "VZ",
+      "sector": "Telecommunications"
+    },
+    {
+      "key": "boeing",
+      "name": "The Boeing Company",
+      "cik": "12927",
+      "parent": null,
+      "ticker": "BA",
+      "sector": "Aerospace & Defense"
+    },
+    {
+      "key": "intel",
+      "name": "Intel Corporation",
+      "cik": "50863",
+      "parent": null,
+      "ticker": "INTC",
+      "sector": "Semiconductors"
+    },
+    {
+      "key": "amazon",
+      "name": "Amazon.com, Inc.",
+      "cik": "1018724",
+      "parent": null,
+      "ticker": "AMZN",
+      "sector": "Technology"
+    }
+  ],
+  "watchlist": [
+    "duke_corp",
+    "duke_carolinas",
+    "duke_progress",
+    "duke_florida",
+    "oracle",
+    "verizon",
+    "boeing",
+    "intel",
+    "amazon"
+  ],
+  "instruments": [
+    {
+      "key": "duk_4850_2027",
+      "issuer": "duke_corp",
+      "name": "4.850% Senior Notes due 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "4.850",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-01-05",
+      "issue_date": "2024-01-05",
+      "amount_outstanding": "600000000",
+      "cusip": "26441CCB9",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "duk_3150_2027",
+      "issuer": "duke_corp",
+      "name": "3.150% Senior Notes due 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "3.150",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-08-15",
+      "issue_date": "2017-08-10",
+      "amount_outstanding": "750000000",
+      "cusip": "26441CAX3",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "duk_5000_2027",
+      "issuer": "duke_corp",
+      "name": "5.000% Senior Notes due 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "5.000",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-12-08",
+      "issue_date": "2022-12-08",
+      "amount_outstanding": "500000000",
+      "cusip": "26441CBW4",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "duk_4300_2028",
+      "issuer": "duke_corp",
+      "name": "4.300% Senior Notes due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "4.300",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-03-15",
+      "issue_date": "2022-08-11",
+      "amount_outstanding": "900000000",
+      "cusip": "26441CBS3",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "duk_3400_2029",
+      "issuer": "duke_corp",
+      "name": "3.400% Senior Notes due 2029",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "3.400",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2029-06-15",
+      "issue_date": "2019-06-07",
+      "amount_outstanding": "600000000",
+      "cusip": "26441CBE4",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "duk_conv_4125_2026",
+      "issuer": "duke_corp",
+      "name": "4.125% Convertible Senior Notes due 2026",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "4.125",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2026-04-15",
+      "issue_date": "2023-04-06",
+      "amount_outstanding": "1725000000",
+      "cusip": null,
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": "Convertible; matures 15 Apr 2026 (replay: refinanced by 3.000% convertible issued 12 Mar 2026). CUSIP not captured; add from source."
+    },
+    {
+      "key": "duk_tl_2026",
+      "issuer": "duke_corp",
+      "name": "Unsecured Term Loan due 2026",
+      "instrument_type": "loan",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "4.704",
+      "rate_type": "floating",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2026-09-11",
+      "issue_date": "2025-09-12",
+      "amount_outstanding": "2000000000",
+      "cusip": null,
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": "Floating; 4.704% is the rate shown at 31 Dec 2025. Absent from the 30 Jun 2026 debt details (replay: repaid early)."
+    },
+    {
+      "key": "dec_fmb_2950_2026",
+      "issuer": "duke_carolinas",
+      "name": "2.950% First Mortgage Bonds due 2026",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "2.950",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2026-12-01",
+      "issue_date": "2016-11-17",
+      "amount_outstanding": "600000000",
+      "cusip": "26442CAS3",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "dec_fmb_3950_2028",
+      "issuer": "duke_carolinas",
+      "name": "3.950% First Mortgage Bonds due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "3.950",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-11-15",
+      "issue_date": "2018-11-08",
+      "amount_outstanding": "650000000",
+      "cusip": "26442CAX2",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "dec_fmb_2450_2029",
+      "issuer": "duke_carolinas",
+      "name": "2.450% First Mortgage Bonds due 2029",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "2.450",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2029-08-15",
+      "issue_date": "2019-08-14",
+      "amount_outstanding": "450000000",
+      "cusip": "26442CAY0",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "dep_fmb_4350_2027",
+      "issuer": "duke_progress",
+      "name": "4.350% First Mortgage Bonds due 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "4.350",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-03-06",
+      "issue_date": "2025-03-06",
+      "amount_outstanding": "500000000",
+      "cusip": "26442UAT1",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "dep_fmb_3700_2028",
+      "issuer": "duke_progress",
+      "name": "3.700% First Mortgage Bonds due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "3.700",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-09-01",
+      "issue_date": "2018-08-09",
+      "amount_outstanding": "500000000",
+      "cusip": "26442UAG9",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "dep_fmb_3450_2029",
+      "issuer": "duke_progress",
+      "name": "3.450% First Mortgage Bonds due 2029",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "3.450",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2029-03-15",
+      "issue_date": "2019-03-07",
+      "amount_outstanding": "600000000",
+      "cusip": "26442UAH7",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "def_fmb_3200_2027",
+      "issuer": "duke_florida",
+      "name": "3.200% First Mortgage Bonds due 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "3.200",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-01-15",
+      "issue_date": "2017-01-06",
+      "amount_outstanding": "650000000",
+      "cusip": "26444HAC5",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "def_fmb_3800_2028",
+      "issuer": "duke_florida",
+      "name": "3.800% First Mortgage Bonds due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "3.800",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-07-15",
+      "issue_date": "2018-06-21",
+      "amount_outstanding": "600000000",
+      "cusip": "26444HAE1",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "def_fmb_2500_2029",
+      "issuer": "duke_florida",
+      "name": "2.500% First Mortgage Bonds due 2029",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "2.500",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2029-12-01",
+      "issue_date": "2019-11-26",
+      "amount_outstanding": "700000000",
+      "cusip": "26444HAH4",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "orcl_2300_2028",
+      "issuer": "oracle",
+      "name": "2.300% Senior Notes due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "2.300",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-03-25",
+      "issue_date": "2021-03-24",
+      "amount_outstanding": "2000000000",
+      "cusip": "68389XCD5",
+      "status": "active",
+      "call_terms": {
+        "par_call_date": "2028-01-25",
+        "make_whole_spread_bps": 15
+      },
+      "sources": [
+        "orcl_fwp",
+        "orcl_10k"
+      ],
+      "as_of": "2026-05-31",
+      "note": "Amount from FY2026 10-K (31 May 2026); unchanged since issue."
+    },
+    {
+      "key": "vz_2100_2028",
+      "issuer": "verizon",
+      "name": "2.100% Notes due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "2.100",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-03-22",
+      "issue_date": "2021-03-22",
+      "amount_outstanding": "2068135000",
+      "cusip": "92343VGH1",
+      "status": "active",
+      "call_terms": {
+        "par_call_date": "2028-01-22",
+        "make_whole_spread_bps": 15
+      },
+      "sources": [
+        "vz_fwp",
+        "vz_tender_launch"
+      ],
+      "as_of": "2026-05-11",
+      "note": "Amount outstanding per Verizon's tender announcement of 11 May 2026 (Verizon does not itemize notes at year-end). Replay: tender buys back $1,142,981,000 (settled 22 Jun 2026)."
+    },
+    {
+      "key": "vz_4329_2028",
+      "issuer": "verizon",
+      "name": "4.329% Notes due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "4.329",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-09-21",
+      "issue_date": null,
+      "amount_outstanding": "1250000000",
+      "cusip": "92343VER1",
+      "status": "active",
+      "call_terms": {
+        "par_call_date": null,
+        "make_whole_spread_bps": 25
+      },
+      "sources": [
+        "vz_portfolio_jun26"
+      ],
+      "as_of": "2026-06-30",
+      "note": "Issued 2018 (exchange offer). Replay: redemption announced 20 Aug 2026, settled 21 Sep 2026."
+    },
+    {
+      "key": "ba_5040_2027",
+      "issuer": "boeing",
+      "name": "5.040% Senior Notes due 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "5.040",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-05-01",
+      "issue_date": "2020-05-04",
+      "amount_outstanding": "2000000000",
+      "cusip": "097023CU7",
+      "status": "active",
+      "call_terms": {
+        "par_call_date": "2027-03-01",
+        "make_whole_spread_bps": 50
+      },
+      "sources": [
+        "ba_fwp"
+      ],
+      "as_of": "2020-05-04",
+      "note": "Original issue amount; Boeing does not itemize notes and no repurchase was found (medium confidence)."
+    },
+    {
+      "key": "intc_4875_2028",
+      "issuer": "intel",
+      "name": "4.875% Senior Notes due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "4.875",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-02-10",
+      "issue_date": "2023-02-10",
+      "amount_outstanding": "1750000000",
+      "cusip": "458140CE8",
+      "status": "active",
+      "call_terms": {
+        "par_call_date": "2028-01-10",
+        "make_whole_spread_bps": 20
+      },
+      "sources": [
+        "intc_fwp",
+        "intc_10k"
+      ],
+      "as_of": "2025-12-27",
+      "note": null
+    },
+    {
+      "key": "amzn_1650_2028",
+      "issuer": "amazon",
+      "name": "1.650% Notes due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "1.650",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-05-12",
+      "issue_date": "2021-05-12",
+      "amount_outstanding": "2250000000",
+      "cusip": "023135BY1",
+      "status": "active",
+      "call_terms": {
+        "par_call_date": "2028-03-12",
+        "make_whole_spread_bps": 7
+      },
+      "sources": [
+        "amzn_fwp",
+        "amzn_10k"
+      ],
+      "as_of": "2025-12-31",
+      "note": "Amount derived: May 2021 issuance outstanding $15.0bn at 31 Dec 2025 = $18.5bn issued minus 2023 and 2024 maturities."
+    }
+  ]
+}

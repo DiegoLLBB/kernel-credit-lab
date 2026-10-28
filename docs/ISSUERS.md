@@ -113,11 +113,22 @@ figures above become the **expected end state** of the replay at that date.
 | Duke Progress term loan 2027 | absent | new loan, settled 15 May 2026 (Q2 10-Q) |
 | Verizon 2.100% 2028 | $2,068,135,000 | tender: −$1,142,981,000 (June) |
 | Verizon 4.329% 2028 | $1,250,000,000 | redemption announced 20 Aug, settled 21 Sep |
-| Other Duke instruments | amounts from Duke's 31 Dec 2025 debt details | — |
+| Duke Corp 4.125% convertible due 15 Apr 2026 | $1,725,000,000 | matures 15 Apr 2026 |
+| Duke Corp term loan due Sep 2026 (floating) | $2,000,000,000 | repaid early (absent at 30 Jun 2026) |
+| Other Duke instruments | same amounts at 31 Dec 2025 and 30 Jun 2026 (verified) | — |
 
-To do: read Duke's [31 Dec 2025 debt details](https://s201.q4cdn.com/583395453/files/doc_downloads/fixed-income-investors/2026/02/LT-Debt-Information-Final-Debt-Details-12-31-25.pdf)
-for the snapshot amounts; confirm the Verizon 2.100% amount at 31 Dec 2025 (it may differ from the
-pre-tender $2,068M if Verizon repurchased notes in Q1 2026).
+**Done (28 Oct):** Duke's [31 Dec 2025 debt details](https://s201.q4cdn.com/583395453/files/doc_downloads/fixed-income-investors/2026/02/LT-Debt-Information-Final-Debt-Details-12-31-25.pdf)
+read row by row: all 15 Duke bonds have the same amounts as at 30 Jun 2026; the 2026 convertible
+and opco term loans are absent; the holdco term loan and 4.125% convertible are present (added to
+the seed). Verizon does not itemize notes at year-end, so the 2.100% 2028 snapshot amount is the
+$2,068,135,000 stated in its 11 May 2026 tender announcement (dated accordingly in the seed).
+
+**Duke's first half of 2026, as the replay should narrate it:** new $1.5bn 3.000% convertible
+(12 Mar) → $1.725bn 4.125% convertible repaid at maturity (15 Apr) → $2.0bn holdco term loan
+repaid early → $1.0bn Carolinas term loan (13 Mar) and $0.3bn Progress term loan (15 May) added.
+
+Seed file: `backend/seed/snapshot_2025-12-31.json` (9 issuers, 21 bonds, 1 loan, sources per
+instrument).
 
 ## Open items
 
