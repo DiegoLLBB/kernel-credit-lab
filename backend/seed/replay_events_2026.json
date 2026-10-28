@@ -419,10 +419,10 @@
       "title": "Verizon launches cash tender offers for 20 series, incl. its 2.100% notes due 2028",
       "sources": [
         {
-          "form": "8-K",
+          "form": "press release",
           "filed": "2026-05-11",
-          "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312526215839/0001193125-26-215839-index.htm",
-          "description": null
+          "url": "https://www.verizon.com/about/news/feed/verizon-debt-tender-offer-consent-solicitation",
+          "description": "Tender offers for 20 series; Table 2 row 9: 2.100% Notes due 2028, CUSIP 92343VGH1, $2,068,135,000 outstanding"
         }
       ],
       "expected_changes": [
@@ -433,7 +433,7 @@
       ],
       "expected_alert": false,
       "why": "Pending; Kernel records it and waits for results",
-      "notes": "Announcement states $2,068,135,000 outstanding for the 2.100% 2028 notes (seed source)."
+      "notes": "Not filed on EDGAR: Verizon's 8-K of 11 May 2026 (0001193125-26-215839) covers a separate private exchange offer for Frontier notes. Kernel must watch the issuer's press releases as well as EDGAR."
     },
     {
       "key": "vz_hybrid_may",
@@ -553,10 +553,10 @@
       "title": "Verizon buys back $1.14bn (55%) of its 2.100% notes due 2028 in its tender offer",
       "sources": [
         {
-          "form": "8-K",
+          "form": "press release",
           "filed": "2026-06-17",
-          "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/0001193125-26-273410-index.htm",
-          "description": "Final results; settlement 22 Jun 2026"
+          "url": "https://www.verizon.com/about/node/929969",
+          "description": "Final results, Table 2: 2.100% Notes due 2028, $1,142,981,000 accepted (55.27%); settlement 22 Jun 2026"
         }
       ],
       "expected_changes": [
@@ -569,7 +569,7 @@
       ],
       "expected_alert": true,
       "why": "Cuts one of Verizon's cheapest 2028 bonds by more than half; lowers 2028 rate-reset exposure",
-      "notes": "Results press release lists per-series amounts; Kernel must read the 2.100% 2028 row."
+      "notes": "Not filed on EDGAR: Verizon's 8-K of 17 Jun 2026 (0001193125-26-273410) reports the separate Frontier exchange offer results, not this tender."
     },
     {
       "key": "amzn_usd_jul",

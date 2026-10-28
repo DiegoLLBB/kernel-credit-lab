@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 from datetime import date
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from app.models import Filing, Issuer
 from app.sources.edgar import EdgarClient, EdgarError
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "edgar"
+ENV_EXAMPLE = Path(__file__).resolve().parents[2] / ".env.example"
 
 live = pytest.mark.skipif(
     os.getenv("EDGAR_LIVE") != "1",
@@ -25,11 +28,18 @@ live = pytest.mark.skipif(
 
 
 def _settings() -> Settings:
-    return Settings(sec_user_agent="Kernel Credit Lab tests@example.com")
+    return Settings(sec_user_agent="Kernel Credit Lab tests@kernel.example.edu")
 
 
 def _fixture_bytes(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
+
+
+def _env_example_sec_user_agent() -> str:
+    text = ENV_EXAMPLE.read_text()
+    match = re.search(r"^SEC_USER_AGENT=(.*)$", text, flags=re.M)
+    assert match, "SEC_USER_AGENT missing from .env.example"
+    return match.group(1).strip().strip('"').strip("'")
 
 
 def _mock_transport() -> httpx.MockTransport:
@@ -76,11 +86,19 @@ def session() -> Session:
         yield db
 
 
-def test_requires_real_user_agent() -> None:
+def test_requires_user_agent_with_real_email() -> None:
     with pytest.raises(EdgarError, match="SEC_USER_AGENT"):
         EdgarClient(settings=Settings(sec_user_agent=""))
-    with pytest.raises(EdgarError, match="placeholder"):
-        EdgarClient(settings=Settings(sec_user_agent="KernelCreditLab your-email@example.com"))
+    with pytest.raises(EdgarError, match="email"):
+        EdgarClient(settings=Settings(sec_user_agent="Kernel Credit Lab no-email-here"))
+    example_ua = _env_example_sec_user_agent()
+    assert "example.com" in example_ua.lower() or "example.org" in example_ua.lower()
+    with pytest.raises(EdgarError, match="example"):
+        EdgarClient(settings=Settings(sec_user_agent=example_ua))
+    with pytest.raises(EdgarError, match="example"):
+        EdgarClient(settings=Settings(sec_user_agent="Kernel Lab someone@example.org"))
+    with pytest.raises(EdgarError, match="example"):
+        EdgarClient(settings=Settings(sec_user_agent="Kernel Lab someone@example.net"))
 
 
 def test_list_filings_verizon_8k(edgar: EdgarClient) -> None:
@@ -139,13 +157,25 @@ def test_fetch_text_keeps_table_rows(edgar: EdgarClient) -> None:
         "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/d15574dex991.htm"
     )
     assert "Exhibit 99.1" in text or "EX-99.1" in text or "News Release" in text
-    # Table cells from the press-release header stay on one line.
     assert any(
         "FOR IMMEDIATE RELEASE" in line and "Media contact" in line for line in text.splitlines()
     )
 
 
-def test_upsert_filings_idempotent(edgar: EdgarClient, session: Session) -> None:
+def test_fetch_text_verizon_frontier_florida_2028_row(edgar: EdgarClient) -> None:
+    """Table cells stay on one line; row is in the real EX-99.1 (Frontier Florida)."""
+    text = edgar.fetch_text(
+        "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/d15574dex991.htm"
+    )
+    matches = [
+        line
+        for line in text.splitlines()
+        if ("6.860% Debentures due 2028" in line and "282,289,000" in line and "2,903,000" in line)
+    ]
+    assert matches, "expected Frontier Florida 6.860% 2028 results row on one line"
+
+
+def test_upsert_filings_leaves_content_hash_null(edgar: EdgarClient, session: Session) -> None:
     issuer = Issuer(name="Verizon Communications Inc.", cik="732712")
     session.add(issuer)
     session.flush()
@@ -156,17 +186,51 @@ def test_upsert_filings_idempotent(edgar: EdgarClient, session: Session) -> None
     first = edgar.upsert_filings(session, issuer, filings)
     session.commit()
     assert session.scalar(select(func.count()).select_from(Filing)) == len(first)
+    row = session.scalars(
+        select(Filing).where(Filing.accession_number == "0001193125-26-273410")
+    ).one()
+    assert row.content_hash is None
+    assert row.issuer_id == issuer.id
+    assert row.form_type == "8-K"
+    assert row.filed_at == date(2026, 6, 17)
 
     second = edgar.upsert_filings(session, issuer, filings)
     session.commit()
     assert session.scalar(select(func.count()).select_from(Filing)) == len(first)
     assert {r.accession_number for r in second} == {r.accession_number for r in first}
-    row = session.scalars(
-        select(Filing).where(Filing.accession_number == "0001193125-26-273410")
-    ).one()
-    assert row.issuer_id == issuer.id
-    assert row.form_type == "8-K"
-    assert row.filed_at == date(2026, 6, 17)
+    assert (
+        session.scalars(select(Filing).where(Filing.accession_number == "0001193125-26-273410"))
+        .one()
+        .content_hash
+        is None
+    )
+
+
+def test_fetch_filing_text_sets_content_hash(edgar: EdgarClient, session: Session) -> None:
+    issuer = Issuer(name="Verizon Communications Inc.", cik="732712")
+    session.add(issuer)
+    session.flush()
+    refs = edgar.list_filings(
+        "732712", forms=["8-K"], since=date(2026, 6, 17), until=date(2026, 6, 17)
+    )
+    # Point the filing URL at the EX-99.1 fixture so we hash exhibit text.
+    exhibit_url = (
+        "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/d15574dex991.htm"
+    )
+    rows = edgar.upsert_filings(session, issuer, refs)
+    session.commit()
+    filing = rows[0]
+    filing.url = exhibit_url
+    session.commit()
+
+    text = edgar.fetch_filing_text(session, filing)
+    session.commit()
+    assert "6.860% Debentures due 2028" in text
+    expected = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    assert filing.content_hash == expected
+    assert session.scalars(select(Filing).where(Filing.id == filing.id)).one().content_hash == (
+        expected
+    )
 
 
 def test_retries_on_429_then_succeeds() -> None:
@@ -208,4 +272,8 @@ def get_settings_live() -> Settings:
     s = get_settings()
     if not s.sec_user_agent:
         pytest.skip("SEC_USER_AGENT not configured")
+    try:
+        EdgarClient(settings=s).close()
+    except EdgarError as exc:
+        pytest.skip(str(exc))
     return s

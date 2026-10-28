@@ -222,7 +222,7 @@ FRED FX rates on the event date.
 - **O2** Oracle, [FY2026 Form 10-K](https://www.sec.gov/Archives/edgar/data/0001341439/000119312526277521/orcl-20260531.htm) and Q1 FY2027 10-Q (filed 11 Sep 2026)
 - **V1** Verizon, [pricing term sheet, 11 Mar 2021](https://www.sec.gov/Archives/edgar/data/732712/000119312521078281/d120674dfwp.htm)
 - **V2** Verizon, [redemption announcement, 20 Aug 2026](https://www.verizon.com/about/news/verizon-redeems-debt-securities-september-2026)
-- **V3** Verizon, [final tender offer results, June 2026](https://www.stocktitan.net/news/VZ/verizon-announces-expiration-and-final-results-of-its-tender-offers-gsva5gtxsh10.html)
+- **V3** Verizon, [final tender offer results, 17 Jun 2026](https://www.verizon.com/about/node/929969) (press release; not filed on EDGAR)
 - **V4** Verizon, [debt portfolio as of 30 Jun 2026](https://www.verizon.com/about/sites/default/files/Verizon-IR-debt-portfolio-63026.pdf)
 - **B1** Boeing, [pricing term sheet, 30 Apr 2020](https://www.sec.gov/Archives/edgar/data/12927/000119312520129342/d848621dfwp.htm)
 - **B2** Boeing, FY2025 10-K and [Q3 2026 10-Q](https://www.sec.gov/Archives/edgar/data/0000012927/000162828026067508/ba-20260930.htm)

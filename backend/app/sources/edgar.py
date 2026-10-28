@@ -26,7 +26,8 @@ from app.models import Filing, Issuer
 DATA_SEC = "https://data.sec.gov"
 WWW_SEC = "https://www.sec.gov"
 MAX_RPS = 8.0
-_PLACEHOLDER_UA = ("your-email@example.com", "research@example.com")
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_RESERVED_EMAIL_DOMAINS = frozenset({"example.com", "example.org", "example.net"})
 
 
 class EdgarError(RuntimeError):
@@ -80,11 +81,14 @@ def index_url(cik: str | int, accession: str) -> str:
 def _require_user_agent(user_agent: str) -> str:
     ua = (user_agent or "").strip()
     if not ua:
-        raise EdgarError("SEC_USER_AGENT is required (e.g. 'Kernel Credit Lab you@example.com')")
-    lowered = ua.lower()
-    if any(p in lowered for p in _PLACEHOLDER_UA):
+        raise EdgarError("SEC_USER_AGENT is required (e.g. 'Kernel Credit Lab you@domain.com')")
+    match = _EMAIL_RE.search(ua)
+    if match is None:
+        raise EdgarError("SEC_USER_AGENT must include a contact email address")
+    domain = match.group(0).rsplit("@", 1)[1].lower()
+    if domain in _RESERVED_EMAIL_DOMAINS:
         raise EdgarError(
-            "SEC_USER_AGENT must be a real contact identity, not the placeholder email"
+            "SEC_USER_AGENT email must not use a reserved example.com/.org/.net domain"
         )
     return ua
 
@@ -383,7 +387,10 @@ class EdgarClient:
     def upsert_filings(
         self, session: Session, issuer: Issuer, filings: list[FilingRef]
     ) -> list[Filing]:
-        """Insert or update ``Filing`` rows; idempotent on accession_number."""
+        """Insert or update ``Filing`` rows; idempotent on accession_number.
+
+        Does not set ``content_hash`` — that is filled by ``fetch_filing_text``.
+        """
         result: list[Filing] = []
         for ref in filings:
             row = session.scalars(
@@ -397,8 +404,16 @@ class EdgarClient:
             row.filed_at = ref.filing_date
             row.url = ref.url
             row.title = ref.primary_document
-            if not row.content_hash:
-                row.content_hash = hashlib.sha256(ref.url.encode()).hexdigest()[:16]
             result.append(row)
         session.flush()
         return result
+
+    def fetch_filing_text(self, session: Session, filing: Filing) -> str:
+        """Fetch filing body text, set ``content_hash`` to sha256 of the text, return text."""
+        if not filing.url:
+            raise EdgarError("Filing has no url to fetch")
+        text = self.fetch_text(filing.url)
+        filing.content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        session.add(filing)
+        session.flush()
+        return text
