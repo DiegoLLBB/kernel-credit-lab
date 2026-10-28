@@ -1,0 +1,914 @@
+{
+  "window": {
+    "from": "2026-01-01",
+    "to": "2026-10-27"
+  },
+  "snapshot": "snapshot_2025-12-31.json",
+  "description": "Real 2026 debt events for the watchlist, in date order, each with primary sources. 'available_from' is when Kernel could first see the event (filing date), which drives replay order; 'expected_changes' and 'expected_alert' are the evaluation reference (the agent never sees them).",
+  "recurring": [
+    {
+      "type": "rate_update",
+      "source": "FRED daily Treasury yields (DGS1, DGS2, DGS3, DGS5, DGS10) and FX (DEXUSEU, DEXUSUK, DEXCAUS)",
+      "frequency": "weekly in replay",
+      "expected_alert": "only when an issuer's rate-reset cost moves ≥ 10%"
+    }
+  ],
+  "end_state_checks": [
+    {
+      "as_of": "2026-06-30",
+      "source": "Duke Energy debt details 30 Jun 2026",
+      "checks": [
+        "duk_conv_3000_2029 = 1,500,000,000",
+        "duk_tl_2026 absent",
+        "duk_conv_4125_2026 absent",
+        "dec_tl_2027 = 1,000,000,000",
+        "dep_tl_2027 = 300,000,000"
+      ]
+    },
+    {
+      "as_of": "2026-06-30",
+      "source": "Verizon debt portfolio 30 Jun 2026",
+      "checks": [
+        "vz_2100_2028 = 925,000,000 (±1m)",
+        "vz_4329_2028 = 1,250,000,000"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "key": "orcl_25bn_notes_feb",
+      "event_date": "2026-02-04",
+      "available_from": "2026-02-04",
+      "issuer": "oracle",
+      "event_type": "new_issuance",
+      "title": "Oracle issues $25bn of notes, incl. $3.5bn maturing in 2029",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-02-04",
+          "url": "https://www.sec.gov/Archives/edgar/data/1341439/000119312526037840/0001193125-26-037840-index.htm",
+          "description": "Item 8.01: issuance of $25 billion of notes"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "name": "Floating Rate Notes due 2029",
+          "amount": "500000000",
+          "currency": "USD",
+          "rate_type": "floating",
+          "maturity_year": 2029
+        },
+        {
+          "action": "add_instrument",
+          "name": "4.550% Notes due 2029",
+          "amount": "3000000000",
+          "currency": "USD",
+          "coupon": "4.550",
+          "maturity_year": 2029
+        },
+        {
+          "action": "log_only",
+          "name": "2031-2066 tranches ($21.5bn)",
+          "reason": "outside the 24-month horizon; raises total debt"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Adds $3.5bn to Oracle's FY2029 maturities and ~$25bn to total debt; also funds AI capex plan announced 1 Feb",
+      "notes": "Exact 2029 maturity dates and par-call terms to read from the 424B2 filed 3 Feb 2026."
+    },
+    {
+      "key": "vz_hybrid_feb",
+      "event_date": "2026-02-23",
+      "available_from": "2026-02-23",
+      "issuer": "verizon",
+      "event_type": "new_issuance",
+      "title": "Verizon issues €2.25bn and £600m junior subordinated hybrids due 2056",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-02-23",
+          "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312526064358/0001193125-26-064358-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "long-dated hybrid; no effect on the 24-month wall"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Funding activity outside the horizon; logged on Verizon's timeline",
+      "notes": null
+    },
+    {
+      "key": "duk_conv_launch",
+      "event_date": "2026-03-09",
+      "available_from": "2026-03-09",
+      "issuer": "duke_corp",
+      "event_type": "financing_announced",
+      "title": "Duke announces $1bn convertible notes due 2029 to repay its $1.725bn 4.125% convertible at maturity",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-03-09",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000110465926024945/0001104659-26-024945-index.htm",
+          "description": "Ex. 99.1: proposed offering; use of proceeds"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "announcement; terms confirmed at pricing"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Announcement only; the pricing and closing events carry the changes",
+      "notes": null
+    },
+    {
+      "key": "duk_conv_priced_closed",
+      "event_date": "2026-03-12",
+      "available_from": "2026-03-10",
+      "issuer": "duke_corp",
+      "event_type": "new_issuance",
+      "title": "Duke prices and closes $1.3bn 3.000% convertible notes due 2029 (+$200m option)",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-03-10",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000110465926025530/0001104659-26-025530-index.htm",
+          "description": "Ex. 99.1: pricing, upsized from $1bn"
+        },
+        {
+          "form": "8-K",
+          "filed": "2026-03-12",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000110465926027080/0001104659-26-027080-index.htm",
+          "description": "Item 2.03: closing"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "key": "duk_conv_3000_2029",
+          "name": "3.000% Convertible Senior Notes due 2029",
+          "amount": "1300000000",
+          "coupon": "3.000",
+          "maturity": "2029-03-15",
+          "cusip": "26441CCL7"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Adds a 2029 maturity; refinances the April 2026 convertible at a lower coupon",
+      "notes": "The $200m option was exercised: $1.5bn outstanding at 30 Jun 2026 (Duke debt details). Kernel should update the amount when it sees the later source."
+    },
+    {
+      "key": "amzn_usd_mar",
+      "event_date": "2026-03-13",
+      "available_from": "2026-03-13",
+      "issuer": "amazon",
+      "event_type": "new_issuance",
+      "title": "Amazon issues a USD multi-tranche deal incl. $4.0bn due 2028 and $4.0bn due 2029",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-03-13",
+          "url": "https://www.sec.gov/Archives/edgar/data/1018724/000110465926027729/0001104659-26-027729-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "name": "Floating Rate Notes due 2028",
+          "amount": "1750000000",
+          "currency": "USD",
+          "rate_type": "floating",
+          "maturity_year": 2028
+        },
+        {
+          "action": "add_instrument",
+          "name": "3.850% Notes due 2028",
+          "amount": "2250000000",
+          "currency": "USD",
+          "coupon": "3.850",
+          "maturity_year": 2028
+        },
+        {
+          "action": "add_instrument",
+          "name": "Floating Rate Notes due 2029",
+          "amount": "1000000000",
+          "currency": "USD",
+          "rate_type": "floating",
+          "maturity_year": 2029
+        },
+        {
+          "action": "add_instrument",
+          "name": "4.000% Notes due 2029",
+          "amount": "3000000000",
+          "currency": "USD",
+          "coupon": "4.000",
+          "maturity_year": 2029
+        },
+        {
+          "action": "log_only",
+          "name": "2031+ tranches",
+          "reason": "outside horizon"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Nearly doubles Amazon's 2028 maturities ($4.75bn per 10-K → +$4.0bn) and adds $4.0bn in 2029",
+      "notes": null
+    },
+    {
+      "key": "amzn_eur_mar",
+      "event_date": "2026-03-16",
+      "available_from": "2026-03-16",
+      "issuer": "amazon",
+      "event_type": "new_issuance",
+      "title": "Amazon issues a EUR deal incl. €3.0bn due 2028",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-03-16",
+          "url": "https://www.sec.gov/Archives/edgar/data/1018724/000110465926028556/0001104659-26-028556-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "name": "Floating Rate Notes due 2028 (EUR)",
+          "amount": "1750000000",
+          "currency": "EUR",
+          "rate_type": "floating",
+          "maturity_year": 2028
+        },
+        {
+          "action": "add_instrument",
+          "name": "2.800% Notes due 2028 (EUR)",
+          "amount": "1250000000",
+          "currency": "EUR",
+          "coupon": "2.800",
+          "maturity_year": 2028
+        },
+        {
+          "action": "log_only",
+          "name": "2030+ tranches",
+          "reason": "outside horizon"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Further adds to 2028 maturities; requires FX conversion (FRED EUR/USD)",
+      "notes": null
+    },
+    {
+      "key": "intc_bridge",
+      "event_date": "2026-04-01",
+      "available_from": "2026-04-08",
+      "issuer": "intel",
+      "event_type": "new_debt",
+      "title": "Intel draws a $6.5bn 364-day bridge loan to buy out Apollo's 49% of its Ireland fab JV",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-04-08",
+          "url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000072/0000050863-26-000072-index.htm",
+          "description": "Item 8.01: $14.2bn repurchase financed with cash and a $6.5bn bridge loan"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "key": "intc_bridge_2027",
+          "instrument_type": "loan",
+          "rate_type": "floating",
+          "name": "364-day Senior Unsecured Term Loan (bridge)",
+          "amount": "6500000000",
+          "maturity_year": 2027
+        }
+      ],
+      "expected_alert": true,
+      "why": "Adds $6.5bn of short-dated debt (FY2027) that must be refinanced",
+      "notes": "Rate 4.79% and drawdown on 1 Apr 2026 per the Q2 10-Q."
+    },
+    {
+      "key": "duk_conv_matured",
+      "event_date": "2026-04-15",
+      "available_from": "2026-04-15",
+      "issuer": "duke_corp",
+      "event_type": "maturity",
+      "title": "Duke's $1.725bn 4.125% convertible notes mature and are repaid",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-03-09",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000110465926024945/0001104659-26-024945-index.htm",
+          "description": "Use of proceeds: repay at maturity"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "mark_matured",
+          "instrument_key": "duk_conv_4125_2026"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Scheduled and pre-funded; logged without an alert",
+      "notes": "Calendar-triggered. Confirmation: absent from the 30 Jun 2026 debt details."
+    },
+    {
+      "key": "intc_notes_apr",
+      "event_date": "2026-04-30",
+      "available_from": "2026-04-30",
+      "issuer": "intel",
+      "event_type": "new_issuance",
+      "title": "Intel issues $6.5bn of notes (2031-2066) and repays the bridge loan",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-04-30",
+          "url": "https://www.sec.gov/Archives/edgar/data/50863/000119312526197845/0001193125-26-197845-index.htm",
+          "description": "Item 8.01: notes issued"
+        },
+        {
+          "form": "10-Q",
+          "filed": "2026-07-24",
+          "url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000157/0000050863-26-000157-index.htm",
+          "description": "Note 11: bridge repaid in full on 30 Apr 2026"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "mark_repaid",
+          "instrument_key": "intc_bridge_2027"
+        },
+        {
+          "action": "log_only",
+          "name": "2031-2066 notes",
+          "reason": "outside horizon"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Short-dated bridge replaced by long-dated bonds: FY2027 maturities fall by $6.5bn",
+      "notes": "The repayment is confirmed only in the Q2 10-Q (24 Jul); on 30 Apr the use of proceeds (FWP of 27 Apr) supports it."
+    },
+    {
+      "key": "dec_term_loan",
+      "event_date": "2026-03-13",
+      "available_from": "2026-05-05",
+      "issuer": "duke_carolinas",
+      "event_type": "new_debt_found",
+      "title": "Duke Energy Carolinas drew a new $1.0bn term loan due March 2027 (not in the bond list)",
+      "sources": [
+        {
+          "form": "10-Q",
+          "filed": "2026-05-05",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000026/0001326160-26-000026-index.htm",
+          "description": "Term Loan Facilities: $1.5bn commitments; $1bn outstanding at 31 Mar 2026"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "key": "dec_tl_2027",
+          "instrument_type": "loan",
+          "rate_type": "floating",
+          "name": "Unsecured Term Loan due 2027",
+          "amount": "1000000000",
+          "maturity": "2027-03-12"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Critique trap: debt missing from the bond list. Duke Carolinas FY2027 maturities rise from $67m (10-K) to over $1bn",
+      "notes": "Maturity date 12 Mar 2027 and settlement 13 Mar 2026 per Duke's 30 Jun 2026 debt details."
+    },
+    {
+      "key": "duk_parent_tl_repaid",
+      "event_date": "2026-03-31",
+      "available_from": "2026-05-05",
+      "issuer": "duke_corp",
+      "event_type": "debt_repaid",
+      "title": "Duke Energy (Parent) repaid its $2.0bn term loan in March (disclosed in Q1 10-Q)",
+      "sources": [
+        {
+          "form": "10-Q",
+          "filed": "2026-05-05",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000026/0001326160-26-000026-index.htm",
+          "description": "Debt and Credit Facilities: Term Loan Facilities"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "mark_repaid",
+          "instrument_key": "duk_tl_2026",
+          "amount": "2000000000"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Removes $2.0bn from the parent's FY2026 maturities; only visible in the periodic filing",
+      "notes": "Exact repayment date in March not disclosed; use 2026-03-31 as the period end."
+    },
+    {
+      "key": "vz_tender_launch",
+      "event_date": "2026-05-11",
+      "available_from": "2026-05-11",
+      "issuer": "verizon",
+      "event_type": "tender_announced",
+      "title": "Verizon launches cash tender offers for 20 series, incl. its 2.100% notes due 2028",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-05-11",
+          "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312526215839/0001193125-26-215839-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "outcome unknown until results"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Pending; Kernel records it and waits for results",
+      "notes": "Announcement states $2,068,135,000 outstanding for the 2.100% 2028 notes (seed source)."
+    },
+    {
+      "key": "vz_hybrid_may",
+      "event_date": "2026-05-14",
+      "available_from": "2026-05-14",
+      "issuer": "verizon",
+      "event_type": "new_issuance",
+      "title": "Verizon issues $4.0bn of junior subordinated hybrids due 2056/2058",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-05-14",
+          "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312526224113/0001193125-26-224113-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "long-dated; funds the tender"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Outside horizon",
+      "notes": null
+    },
+    {
+      "key": "dec_fmb_jun",
+      "event_date": "2026-06-05",
+      "available_from": "2026-06-02",
+      "issuer": "duke_carolinas",
+      "event_type": "new_issuance",
+      "title": "Duke Energy Carolinas issues $2.4bn of first mortgage bonds (2031/2036/2056)",
+      "sources": [
+        {
+          "form": "FWP",
+          "filed": "2026-06-02",
+          "url": "https://www.sec.gov/Archives/edgar/data/30371/000110465926069536/0001104659-26-069536-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "long-dated; proceeds pre-fund the $600m Dec 2026 maturity and repay term-loan borrowings"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Refinancing source; reduces near-term pressure qualitatively",
+      "notes": "Q2 10-Q: Duke Carolinas repaid $500m of term-loan borrowings in Q2; $1bn outstanding at 30 Jun."
+    },
+    {
+      "key": "amzn_ddtl",
+      "event_date": "2026-06-08",
+      "available_from": "2026-06-10",
+      "issuer": "amazon",
+      "event_type": "facility_signed",
+      "title": "Amazon signs a $17.5bn delayed-draw term loan facility (commitments expire 30 Sep 2026)",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-06-10",
+          "url": "https://www.sec.gov/Archives/edgar/data/1018724/000110465926072140/0001104659-26-072140-index.htm",
+          "description": "Items 1.01/2.03"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "undrawn commitment; track drawdowns"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Contingent debt; becomes material only if drawn",
+      "notes": null
+    },
+    {
+      "key": "amzn_cad_jun",
+      "event_date": "2026-06-12",
+      "available_from": "2026-06-12",
+      "issuer": "amazon",
+      "event_type": "new_issuance",
+      "title": "Amazon issues a CAD deal incl. C$1.25bn 3.400% notes due 2029",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-06-12",
+          "url": "https://www.sec.gov/Archives/edgar/data/1018724/000110465926073562/0001104659-26-073562-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "name": "3.400% Notes due 2029 (CAD)",
+          "amount": "1250000000",
+          "currency": "CAD",
+          "coupon": "3.400",
+          "maturity_year": 2029
+        },
+        {
+          "action": "log_only",
+          "name": "2031+ tranches",
+          "reason": "outside horizon"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Adds to 2029 maturities (FX conversion needed)",
+      "notes": null
+    },
+    {
+      "key": "vz_tender_results",
+      "event_date": "2026-06-22",
+      "available_from": "2026-06-17",
+      "issuer": "verizon",
+      "event_type": "tender_results",
+      "title": "Verizon buys back $1.14bn (55%) of its 2.100% notes due 2028 in its tender offer",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-06-17",
+          "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/0001193125-26-273410-index.htm",
+          "description": "Final results; settlement 22 Jun 2026"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "reduce_outstanding",
+          "instrument_key": "vz_2100_2028",
+          "by": "1142981000",
+          "new_amount": "925154000"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Cuts one of Verizon's cheapest 2028 bonds by more than half; lowers 2028 rate-reset exposure",
+      "notes": "Results press release lists per-series amounts; Kernel must read the 2.100% 2028 row."
+    },
+    {
+      "key": "amzn_usd_jul",
+      "event_date": "2026-07-09",
+      "available_from": "2026-07-09",
+      "issuer": "amazon",
+      "event_type": "new_issuance",
+      "title": "Amazon issues another USD deal incl. $4.25bn due 2029",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-07-09",
+          "url": "https://www.sec.gov/Archives/edgar/data/1018724/000110465926082293/0001104659-26-082293-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "name": "Floating Rate Notes due 2029",
+          "amount": "750000000",
+          "currency": "USD",
+          "rate_type": "floating",
+          "maturity_year": 2029
+        },
+        {
+          "action": "add_instrument",
+          "name": "4.600% Notes due 2029",
+          "amount": "3500000000",
+          "currency": "USD",
+          "coupon": "4.600",
+          "maturity_year": 2029
+        },
+        {
+          "action": "log_only",
+          "name": "2031+ tranches",
+          "reason": "outside horizon"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Amazon's 2029 maturities have now roughly tripled since year-end",
+      "notes": null
+    },
+    {
+      "key": "dep_term_loan",
+      "event_date": "2026-05-15",
+      "available_from": "2026-08-04",
+      "issuer": "duke_progress",
+      "event_type": "new_debt_found",
+      "title": "Duke Energy Progress drew a $300m term loan due March 2027 (not in the bond list)",
+      "sources": [
+        {
+          "form": "10-Q",
+          "filed": "2026-08-04",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000040/0001326160-26-000040-index.htm",
+          "description": "Term Loan Facilities: $300m outstanding at 30 Jun 2026"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "key": "dep_tl_2027",
+          "instrument_type": "loan",
+          "rate_type": "floating",
+          "name": "Unsecured Term Loan due 2027",
+          "amount": "300000000",
+          "maturity": "2027-03-12"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Duke Progress FY2027 maturities rise ~50% (from $604m)",
+      "notes": null
+    },
+    {
+      "key": "duk_q2_10q",
+      "event_date": "2026-06-30",
+      "available_from": "2026-08-04",
+      "issuer": "duke_corp",
+      "event_type": "periodic_filing",
+      "title": "Duke Q2 10-Q: confirms term loans outstanding ($1bn Carolinas, $300m Progress) and parent loan repaid",
+      "sources": [
+        {
+          "form": "10-Q",
+          "filed": "2026-08-04",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000040/0001326160-26-000040-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "verify_state",
+          "checks": [
+            "dec_tl_2027 = 1,000,000,000",
+            "dep_tl_2027 = 300,000,000",
+            "duk_tl_2026 repaid"
+          ]
+        }
+      ],
+      "expected_alert": false,
+      "why": "Confirms earlier changes; the Progress loan itself is the new finding (event dep_term_loan)",
+      "notes": null
+    },
+    {
+      "key": "vz_hybrid_aug",
+      "event_date": "2026-08-13",
+      "available_from": "2026-08-10",
+      "issuer": "verizon",
+      "event_type": "new_issuance",
+      "title": "Verizon issues $3.75bn of junior subordinated hybrids due 2057/2059",
+      "sources": [
+        {
+          "form": "FWP",
+          "filed": "2026-08-10",
+          "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312526342722/0001193125-26-342722-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "long-dated"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Outside horizon",
+      "notes": null
+    },
+    {
+      "key": "duk_equity_units",
+      "event_date": "2026-08-13",
+      "available_from": "2026-08-11",
+      "issuer": "duke_corp",
+      "event_type": "equity_raise",
+      "title": "Duke prices 35m equity units",
+      "sources": [
+        {
+          "form": "FWP",
+          "filed": "2026-08-11",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000110465926093620/0001104659-26-093620-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "equity-linked; no near-term maturity"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Funding for the capital plan; logged",
+      "notes": null
+    },
+    {
+      "key": "intc_equity",
+      "event_date": "2026-08-12",
+      "available_from": "2026-08-12",
+      "issuer": "intel",
+      "event_type": "equity_raise",
+      "title": "Intel prices a $15bn common stock offering (210.5m shares at $71.25, plus a $2.25bn option)",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-08-12",
+          "url": "https://www.sec.gov/Archives/edgar/data/50863/000119312526346806/0001193125-26-346806-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "no debt change; liquidity to meet maturities improves"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Credit-positive: proceeds exceed Intel's FY2026-2028 scheduled maturities ($9.5bn per the 10-K)",
+      "notes": "Material by judgement, not by the numeric rules; tests whether the agent explains liquidity correctly. Up to 242,105,262 shares (incl. 31,578,947 option shares) per Ex. 5.1, ≈ $17.25bn gross if the option is fully exercised."
+    },
+    {
+      "key": "vz_redemption_notice",
+      "event_date": "2026-08-20",
+      "available_from": "2026-08-20",
+      "issuer": "verizon",
+      "event_type": "redemption_notice",
+      "title": "Verizon will redeem all $1.25bn of its 4.329% notes due 2028 on 21 Sep 2026",
+      "sources": [
+        {
+          "form": "press release",
+          "filed": "2026-08-20",
+          "url": "https://www.verizon.com/about/news/verizon-redeems-debt-securities-september-2026",
+          "description": "Make-whole redemption (T+25)"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "mark_redeemed",
+          "instrument_key": "vz_4329_2028",
+          "effective": "2026-09-21"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Flagship alert: removes $1.25bn from Verizon's 2028 maturities; the seed still lists it as outstanding",
+      "notes": null
+    },
+    {
+      "key": "ba_revolver",
+      "event_date": "2026-08-24",
+      "available_from": "2026-08-28",
+      "issuer": "boeing",
+      "event_type": "facility_signed",
+      "title": "Boeing renews its $3.0bn 364-day revolver and extends its five-year facilities",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-08-28",
+          "url": "https://www.sec.gov/Archives/edgar/data/12927/000162828026059427/0001628280-26-059427-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "undrawn liquidity backstop"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Liquidity maintained; no debt change",
+      "notes": null
+    },
+    {
+      "key": "duk_2650_matured",
+      "event_date": "2026-09-01",
+      "available_from": "2026-09-01",
+      "issuer": "duke_corp",
+      "event_type": "maturity",
+      "title": "Duke's $1.5bn 2.650% notes mature",
+      "sources": [
+        {
+          "form": "debt details",
+          "filed": "2026-08",
+          "url": "https://s201.q4cdn.com/583395453/files/doc_downloads/2026/08/Debt-Details-06-30-26-FINAL.pdf",
+          "description": "Outstanding at 30 Jun 2026"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "mark_matured",
+          "instrument_key": "duk_2650_2026",
+          "confirmation": "pending until Q3 10-Q"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Scheduled maturity; Kernel marks it matured by date and flags that repayment is not yet confirmed by a filing",
+      "notes": null
+    },
+    {
+      "key": "dep_fmb_sep",
+      "event_date": "2026-09-11",
+      "available_from": "2026-09-08",
+      "issuer": "duke_progress",
+      "event_type": "new_issuance",
+      "title": "Duke Energy Progress issues $1.0bn of first mortgage bonds (2036/2056)",
+      "sources": [
+        {
+          "form": "FWP",
+          "filed": "2026-09-08",
+          "url": "https://www.sec.gov/Archives/edgar/data/17797/000110465926105962/0001104659-26-105962-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "long-dated; refinancing capacity for the Mar 2027 term loan"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Outside horizon",
+      "notes": null
+    },
+    {
+      "key": "amzn_gbp_sep",
+      "event_date": "2026-09-14",
+      "available_from": "2026-09-14",
+      "issuer": "amazon",
+      "event_type": "new_issuance",
+      "title": "Amazon issues a GBP deal incl. £1.25bn 5.200% notes due 2029",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-09-14",
+          "url": "https://www.sec.gov/Archives/edgar/data/1018724/000110465926107526/0001104659-26-107526-index.htm",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "add_instrument",
+          "name": "5.200% Notes due 2029 (GBP)",
+          "amount": "1250000000",
+          "currency": "GBP",
+          "coupon": "5.200",
+          "maturity_year": 2029
+        },
+        {
+          "action": "log_only",
+          "name": "2032+ tranches",
+          "reason": "outside horizon"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Adds to 2029 maturities (FX conversion needed)",
+      "notes": null
+    },
+    {
+      "key": "vz_redemption_settled",
+      "event_date": "2026-09-21",
+      "available_from": "2026-09-21",
+      "issuer": "verizon",
+      "event_type": "redemption_settled",
+      "title": "Verizon's 4.329% 2028 notes redeemed",
+      "sources": [
+        {
+          "form": "press release",
+          "filed": "2026-08-20",
+          "url": "https://www.verizon.com/about/news/verizon-redeems-debt-securities-september-2026",
+          "description": null
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "verify_state",
+          "checks": [
+            "vz_4329_2028 status = redeemed"
+          ]
+        }
+      ],
+      "expected_alert": false,
+      "why": "Confirms the August alert",
+      "notes": null
+    }
+  ]
+}

@@ -150,6 +150,64 @@ convertible). The Duke-family gap is mostly Duke Energy Ohio, Indiana, Kentucky 
 on the watchlist) plus securitization bonds and finance leases. Oracle's schedule is by fiscal year
 (June–May) as of 31 May 2025.
 
+## Replay events, Jan–Oct 2026 (added 28 Oct)
+
+`backend/seed/replay_events_2026.json` lists 29 real debt events for the watchlist, all read from
+primary sources (8-Ks, 10-Qs, FWPs on EDGAR; one Verizon press release). Each event has:
+- `event_date`: when it happened.
+- `available_from`: when Kernel could first see it (the filing date), which sets the replay order.
+- `expected_changes` and `expected_alert`: the evaluation reference. The agent never sees these.
+
+15 events should raise an alert; 14 should only be logged. Rules of thumb used for the reference:
+- **Alert:** anything that changes the 2026–2029 maturity wall, plus debt found that isn't on
+  the bond list, plus one judgement call (Intel's $15bn equity raise, credit-positive with no debt
+  change).
+- **Log only:** long-dated issuance (hybrids, 2031+ bonds), scheduled maturities that were
+  pre-funded, undrawn facilities, announcements whose outcome comes later.
+
+| Seen | Issuer | Event | Alert |
+|---|---|---|---|
+| 4 Feb | Oracle | $25bn notes, $3.5bn due 2029 | yes |
+| 23 Feb | Verizon | €/£ hybrids due 2056 | log |
+| 9 Mar | Duke | $1bn convertible announced | log |
+| 10 Mar | Duke | $1.3bn 3.000% convertible 2029 priced, closed 12 Mar | yes |
+| 13 Mar | Amazon | USD deal: +$4.0bn 2028, +$4.0bn 2029 | yes |
+| 16 Mar | Amazon | EUR deal: +€3.0bn 2028 | yes |
+| 8 Apr | Intel | $6.5bn 364-day bridge loan (Ireland JV buyout) | yes |
+| 15 Apr | Duke | $1.725bn 4.125% convertible matures | log |
+| 30 Apr | Intel | $6.5bn notes 2031–66, bridge repaid | yes |
+| 5 May | Duke Carolinas | **trap:** $1bn term loan due Mar 2027, only in the Q1 10-Q | yes |
+| 5 May | Duke | **trap:** parent's $2bn term loan repaid early, only in the Q1 10-Q | yes |
+| 11 May | Verizon | tender launched | log |
+| 14 May | Verizon | $4bn hybrids | log |
+| 2 Jun | Duke Carolinas | $2.4bn FMBs (long-dated) | log |
+| 10 Jun | Amazon | $17.5bn delayed-draw term loan, undrawn | log |
+| 12 Jun | Amazon | CAD deal: +C$1.25bn 2029 | yes |
+| 17 Jun | Verizon | tender results: 2.100% 2028 cut by $1.14bn | yes |
+| 9 Jul | Amazon | USD deal: +$4.25bn 2029 | yes |
+| 4 Aug | Duke Progress | **trap:** $300m term loan due Mar 2027, only in the Q2 10-Q | yes |
+| 4 Aug | Duke | Q2 10-Q confirms loan balances | log |
+| 10 Aug | Verizon | $3.75bn hybrids | log |
+| 11 Aug | Duke | 35m equity units | log |
+| 12 Aug | Intel | $15bn equity offering | yes (judgement) |
+| 20 Aug | Verizon | **flagship:** 4.329% 2028 ($1.25bn) to be redeemed 21 Sep | yes |
+| 28 Aug | Boeing | $3bn 364-day revolver renewed | log |
+| 1 Sep | Duke | $1.5bn 2.650% notes mature | log |
+| 8 Sep | Duke Progress | $1bn FMBs (long-dated) | log |
+| 14 Sep | Amazon | GBP deal: +£1.25bn 2029 | yes |
+| 21 Sep | Verizon | redemption settled | log |
+
+Two end-state checks at 30 Jun 2026 are taken from Duke's and Verizon's own debt listings. FRED
+Treasury yields and FX rates arrive weekly as recurring events. Non-USD bonds are converted with
+FRED FX rates on the event date.
+
+**Replay limits:**
+- The exact dates of some 2029 tranches (Oracle, Amazon) still need reading from each 424B2;
+  the file gives only the maturity year.
+- Duke's 2.650% maturity on 1 Sep is marked by date only; a filing confirms it in the Q3 10-Q.
+- Amazon's 2028/2029 additions may exceed the 10-K backbone for those years. That is expected:
+  the backbone is as of 31 Dec 2025, so the wall must be rebuilt as backbone plus new issuance.
+
 ## Open items
 
 1. **Maturity-profile chart** for the chart reader: not found yet (AEP and Duke publish tables).

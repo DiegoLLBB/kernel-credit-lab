@@ -96,6 +96,17 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
 6. **Seed expanded:** all 2026–2029 debt for the four Duke entities (33 instruments total, +11) and
    10-K maturity schedules for all 9 issuers.
 
+7. **Replay event list built** (`backend/seed/replay_events_2026.json`; see ISSUERS.md). It has
+   29 real events from Feb to Sep 2026, each with its primary source, the changes Kernel should
+   make and whether it should alert (15 alerts, 14 log-only). This is both the demo script and
+   the evaluation set. Three of the events are critique traps: debt that appears only in a 10-Q
+   (Duke Carolinas and Duke Progress term loans, the parent's early repayment). The flagship
+   event is Verizon's 20 Aug redemption notice.
+8. **Horizon for the reference:** additions to 2029 maturities count as material. The §8 rule
+   "24-month maturities ±10% / $500M" would miss most of Amazon's and Oracle's 2029 issuance, so
+   the rule should apply to each bucket of the 2026–2029 wall. To settle when writing the
+   materiality tool.
+
 ### Built and reviewed
 - Muse Wonder: schema (0002–0004), seed loader (0005) — see [META_TOOLING.md](META_TOOLING.md).
 - Review fix: Postgres integration tests no longer leave rows behind (append-only table).
