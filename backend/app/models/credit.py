@@ -178,7 +178,12 @@ class Event(TimestampMixin, Base):
 
 
 class StateChange(TimestampMixin, Base):
-    """Proposed/applied/rejected diff to structured state, with evidence and verifier result."""
+    """Proposed/applied/rejected diff to structured state, with evidence and verifier result.
+
+    Applied instrument diffs use proposed_diff =
+    ``{"field": "amount_outstanding"|"status", "before": ..., "after": ...}`` and
+    ``effective_date`` so maturity_wall can reconstruct state at any past date.
+    """
 
     __tablename__ = "state_change"
 
@@ -198,6 +203,7 @@ class StateChange(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="proposed", index=True
     )  # proposed | applied | rejected
+    effective_date: Mapped[date | None] = mapped_column(Date, index=True)
 
     instrument: Mapped[Instrument | None] = relationship()
     event: Mapped[Event | None] = relationship()

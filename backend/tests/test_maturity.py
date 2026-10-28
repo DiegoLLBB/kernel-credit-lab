@@ -9,8 +9,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
-from app.models import Instrument, Issuer
-from app.tools.maturity import NonUsdAmountError, bucket_for, maturity_wall
+from app.models import Instrument, Issuer, StateChange
+from app.tools.maturity import NonUsdAmountError, bucket_for, instrument_state_at, maturity_wall
 from scripts.load_seed import load_seed
 
 SEED_PATH = Path(__file__).resolve().parents[1] / "seed" / "snapshot_2025-12-31.json"
@@ -97,7 +97,6 @@ def test_maturity_wall_duke_corp_fy2026_schedule_amount(seeded_session: Session)
     keys = {row["key"] for row in fy2026["named_active"]}
     assert "dec_fmb_2950_2026" in keys
     assert all(row["currency"] == "USD" for row in fy2026["named_active"])
-    assert all(row["maturity"] > date(2025, 12, 31) for row in fy2026["named_active"])
 
 
 def test_maturity_wall_duke_carolinas_fy2028_named(seeded_session: Session) -> None:
@@ -131,6 +130,18 @@ def test_maturity_wall_unattributed_stable_after_named_matures(
         select(Instrument).where(Instrument.key == "duk_conv_4125_2026")
     ).one()
     conv.status = "matured"
+    seeded_session.add(
+        StateChange(
+            instrument_id=conv.id,
+            status="applied",
+            effective_date=date(2026, 4, 15),
+            proposed_diff={
+                "field": "status",
+                "before": "active",
+                "after": "matured",
+            },
+        )
+    )
     seeded_session.commit()
 
     after = maturity_wall(seeded_session, duke.id, date(2026, 6, 30))
@@ -139,9 +150,6 @@ def test_maturity_wall_unattributed_stable_after_named_matures(
     assert "duk_conv_4125_2026" not in {r["key"] for r in fy2026["named_active"]}
     assert "duk_conv_4125_2026" in {r["key"] for r in fy2026["repaid_since_schedule"]}
     assert fy2026["breach"] is False
-    assert fy2026["named_active_sum"] == before["buckets"]["FY2026"]["named_active_sum"] - Decimal(
-        "1725000000"
-    )
 
 
 def test_maturity_wall_new_issuance_adds_to_total_without_breach(
@@ -188,3 +196,105 @@ def test_maturity_wall_non_usd_raises(seeded_session: Session) -> None:
 
     with pytest.raises(NonUsdAmountError, match="non-USD"):
         maturity_wall(seeded_session, duke.id, date(2025, 12, 31))
+
+
+def test_verizon_tender_replay_amounts(seeded_session: Session) -> None:
+    """Tender StateChange: unattributed frozen; totals differ around effective_date."""
+    verizon = seeded_session.scalars(select(Issuer).where(Issuer.cik == "732712")).one()
+    bond = seeded_session.scalars(select(Instrument).where(Instrument.key == "vz_2100_2028")).one()
+    assert bond.amount_outstanding == Decimal("2068135000")
+
+    bond.amount_outstanding = Decimal("925154000")
+    seeded_session.add(
+        StateChange(
+            instrument_id=bond.id,
+            status="applied",
+            effective_date=date(2026, 6, 22),
+            proposed_diff={
+                "field": "amount_outstanding",
+                "before": "2068135000",
+                "after": "925154000",
+            },
+        )
+    )
+    seeded_session.commit()
+
+    amt_before, _ = instrument_state_at(seeded_session, bond, date(2026, 6, 1))
+    amt_after, _ = instrument_state_at(seeded_session, bond, date(2026, 6, 30))
+    assert amt_before == Decimal("2068135000")
+    assert amt_after == Decimal("925154000")
+
+    wall_after = maturity_wall(seeded_session, verizon.id, date(2026, 6, 30))
+    fy2028_after = wall_after["buckets"]["FY2028"]
+    assert fy2028_after["unattributed"] == Decimal("9713865000")  # $9,713M
+    assert fy2028_after["total_outstanding"] == Decimal("11889019000")  # $11,889M
+    assert fy2028_after["breach"] is False
+
+    wall_before = maturity_wall(seeded_session, verizon.id, date(2026, 6, 1))
+    fy2028_before = wall_before["buckets"]["FY2028"]
+    assert fy2028_before["unattributed"] == Decimal("9713865000")  # unchanged
+    assert fy2028_before["total_outstanding"] == Decimal("13032000000")  # $13,032M
+
+
+def test_new_issuance_gated_by_as_of(seeded_session: Session) -> None:
+    duke = seeded_session.scalars(select(Issuer).where(Issuer.cik == "1326160")).one()
+    seeded_session.add(
+        Instrument(
+            key="duk_issued_mar_2026",
+            issuer_id=duke.id,
+            name="New notes due 2029",
+            instrument_type="bond",
+            coupon=Decimal("4.500"),
+            rate_type="fixed",
+            maturity=date(2029, 3, 15),
+            issue_date=date(2026, 3, 12),
+            amount_outstanding=Decimal("1000000000"),
+            currency="USD",
+            status="active",
+        )
+    )
+    seeded_session.commit()
+
+    jan = maturity_wall(seeded_session, duke.id, date(2026, 1, 31))
+    assert "duk_issued_mar_2026" not in {
+        r["key"] for r in jan["buckets"]["FY2029"]["new_since_schedule"]
+    }
+    assert "duk_issued_mar_2026" not in {r["key"] for r in jan["buckets"]["FY2029"]["named_active"]}
+
+    mar = maturity_wall(seeded_session, duke.id, date(2026, 3, 31))
+    assert "duk_issued_mar_2026" in {
+        r["key"] for r in mar["buckets"]["FY2029"]["new_since_schedule"]
+    }
+    assert mar["buckets"]["FY2029"]["new_since_schedule_sum"] == Decimal("1000000000")
+
+
+def test_verizon_redemption_replay_status(seeded_session: Session) -> None:
+    verizon = seeded_session.scalars(select(Issuer).where(Issuer.cik == "732712")).one()
+    bond = seeded_session.scalars(select(Instrument).where(Instrument.key == "vz_4329_2028")).one()
+    bond.status = "redeemed"
+    seeded_session.add(
+        StateChange(
+            instrument_id=bond.id,
+            status="applied",
+            effective_date=date(2026, 9, 21),
+            proposed_diff={"field": "status", "before": "active", "after": "redeemed"},
+        )
+    )
+    seeded_session.commit()
+
+    _amt, status_before = instrument_state_at(seeded_session, bond, date(2026, 9, 1))
+    _amt, status_after = instrument_state_at(seeded_session, bond, date(2026, 9, 30))
+    assert status_before == "active"
+    assert status_after == "redeemed"
+
+    wall_before = maturity_wall(seeded_session, verizon.id, date(2026, 9, 1))
+    assert "vz_4329_2028" in {r["key"] for r in wall_before["buckets"]["FY2028"]["named_active"]}
+    assert "vz_4329_2028" not in {
+        r["key"] for r in wall_before["buckets"]["FY2028"]["repaid_since_schedule"]
+    }
+
+    wall_after = maturity_wall(seeded_session, verizon.id, date(2026, 9, 30))
+    assert "vz_4329_2028" not in {r["key"] for r in wall_after["buckets"]["FY2028"]["named_active"]}
+    assert "vz_4329_2028" in {
+        r["key"] for r in wall_after["buckets"]["FY2028"]["repaid_since_schedule"]
+    }

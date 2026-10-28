@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Instrument, Issuer, MaturitySchedule
+from app.models import Instrument, Issuer, MaturitySchedule, StateChange
 
 
 class NonUsdAmountError(ValueError):
@@ -66,76 +66,93 @@ def _subsidiary_ids(session: Session, issuer_id: str) -> set[str]:
     return ids
 
 
-def _instrument_row(inst: Instrument) -> dict[str, Any]:
+def instrument_state_at(session: Session, instrument: Instrument, d: date) -> tuple[Decimal, str]:
+    """Amount and status of ``instrument`` as of date ``d``.
+
+    Starts from the current row and undoes every applied ``StateChange`` for that
+    instrument with ``effective_date > d``, latest first. Applied diffs use
+    ``{"field": "amount_outstanding"|"status", "before": ..., "after": ...}``.
+    """
+    amount = Decimal(instrument.amount_outstanding)
+    status = str(instrument.status)
+
+    changes = session.scalars(
+        select(StateChange)
+        .where(
+            StateChange.instrument_id == instrument.id,
+            StateChange.status == "applied",
+            StateChange.effective_date.is_not(None),
+            StateChange.effective_date > d,
+        )
+        .order_by(StateChange.effective_date.desc(), StateChange.created_at.desc())
+    ).all()
+
+    for change in changes:
+        diff = change.proposed_diff or {}
+        field = diff.get("field")
+        if field not in {"amount_outstanding", "status"}:
+            continue
+        if "before" not in diff:
+            continue
+        if field == "amount_outstanding":
+            amount = Decimal(str(diff["before"]))
+        else:
+            status = str(diff["before"])
+
+    return amount, status
+
+
+def _instrument_row(inst: Instrument, *, amount: Decimal, status: str) -> dict[str, Any]:
     return {
         "id": inst.id,
         "key": inst.key,
         "name": inst.name,
         "issuer_id": inst.issuer_id,
         "maturity": inst.maturity,
-        "amount_outstanding": Decimal(inst.amount_outstanding),
+        "amount_outstanding": amount,
         "currency": inst.currency,
         "instrument_type": inst.instrument_type,
         "cusip": inst.cusip,
-        "status": inst.status,
+        "status": status,
         "issue_date": inst.issue_date,
     }
 
 
-def _require_usd(instruments: list[Instrument], *, context: str) -> None:
-    for inst in instruments:
-        if (inst.currency or "USD").upper() != "USD":
-            raise NonUsdAmountError(
-                f"{context}: cannot sum non-USD amount for instrument "
-                f"{inst.key or inst.id} ({inst.currency}); FX conversion not implemented"
-            )
+def _require_usd(inst: Instrument, *, context: str) -> None:
+    if (inst.currency or "USD").upper() != "USD":
+        raise NonUsdAmountError(
+            f"{context}: cannot sum non-USD amount for instrument "
+            f"{inst.key or inst.id} ({inst.currency}); FX conversion not implemented"
+        )
 
 
-def _sum_amounts(instruments: list[Instrument], *, context: str) -> Decimal:
-    _require_usd(instruments, context=context)
-    return sum((Decimal(i.amount_outstanding) for i in instruments), Decimal("0"))
+def _sum_rows(rows: list[tuple[Instrument, Decimal, str]], *, context: str) -> Decimal:
+    total = Decimal("0")
+    for inst, amount, _status in rows:
+        _require_usd(inst, context=context)
+        total += amount
+    return total
 
 
-def _in_schedule_set(inst: Instrument, schedule_as_of: date) -> bool:
-    """Outstanding at the schedule date: issued on/before (or unknown), maturity after."""
+def _candidate_for_schedule(inst: Instrument, schedule_as_of: date) -> bool:
+    """Issued on/before the schedule date (or unknown), maturing after it."""
     if inst.maturity <= schedule_as_of:
         return False
     return inst.issue_date is None or inst.issue_date <= schedule_as_of
 
 
-def _instrument_sort_key(inst: Instrument) -> tuple:
+def _instrument_sort_key(row: tuple[Instrument, Decimal, str]) -> tuple:
+    inst, _amount, _status = row
     return (inst.maturity, inst.key or "", inst.id)
-
-
-def _is_named_active(inst: Instrument, as_of: date) -> bool:
-    return inst.status == "active" and inst.maturity > as_of
-
-
-def _is_repaid_since_schedule(inst: Instrument, as_of: date) -> bool:
-    """Was in the schedule set but no longer counts as outstanding at ``as_of``."""
-    return inst.status != "active" or inst.maturity <= as_of
-
-
-def _is_new_since_schedule(inst: Instrument, schedule_as_of: date, as_of: date) -> bool:
-    return (
-        inst.issue_date is not None
-        and inst.issue_date > schedule_as_of
-        and inst.status == "active"
-        and inst.maturity > as_of
-    )
 
 
 def maturity_wall(session: Session, issuer_id: str, as_of: date) -> dict[str, Any]:
     """Two-layer maturity wall for an issuer as of ``as_of`` (CONTEXT.md §8).
 
-    Unattributed remainder and breach are computed against instruments outstanding at
-    the schedule's ``as_of`` (issue_date ≤ schedule.as_of or null, maturity > schedule.as_of),
-    so the remainder does not grow when a named instrument matures or is repaid.
-
-    Per bucket returns ``named_active``, ``repaid_since_schedule``, ``new_since_schedule``,
-    ``unattributed``, and ``total_outstanding`` = named_active + new + unattributed.
-    Consolidated schedules include subsidiaries. Raises ``NonUsdAmountError`` if a non-USD
-    amount would be summed.
+    Reconstructs instrument amounts/statuses via ``instrument_state_at`` so replay can
+    evaluate any past date. Unattributed remainder and breach use state at
+    ``schedule.as_of``; ``named_active`` / ``repaid_since_schedule`` use state at
+    ``as_of``. ``new_since_schedule`` requires ``schedule.as_of < issue_date ≤ as_of``.
     """
     schedule = session.scalars(
         select(MaturitySchedule)
@@ -168,24 +185,39 @@ def maturity_wall(session: Session, issuer_id: str, as_of: date) -> dict[str, An
     if schedule.basis == "consolidated":
         issuer_ids = _subsidiary_ids(session, issuer_id)
 
-    # All instruments for the issuer scope (status filtered per category below).
     instruments = session.scalars(
         select(Instrument).where(Instrument.issuer_id.in_(issuer_ids))
     ).all()
 
-    # Also pull active post-schedule issuance that may not meet schedule-set filters.
-    # (Already included above.)
+    # Precompute states at schedule.as_of and at evaluation as_of.
+    state_at_schedule: dict[str, tuple[Decimal, str]] = {}
+    state_at_as_of: dict[str, tuple[Decimal, str]] = {}
+    for inst in instruments:
+        state_at_schedule[inst.id] = instrument_state_at(session, inst, schedule_as_of)
+        state_at_as_of[inst.id] = instrument_state_at(session, inst, as_of)
 
-    by_label_schedule: dict[str, list[Instrument]] = {}
-    by_label_new: dict[str, list[Instrument]] = {}
+    by_label_schedule: dict[str, list[tuple[Instrument, Decimal, str]]] = {}
+    by_label_new: dict[str, list[tuple[Instrument, Decimal, str]]] = {}
+
     for inst in instruments:
         label = bucket_for(inst.maturity, schedule.buckets)
         if label is None:
             continue
-        if _in_schedule_set(inst, schedule_as_of):
-            by_label_schedule.setdefault(label, []).append(inst)
-        if _is_new_since_schedule(inst, schedule_as_of, as_of):
-            by_label_new.setdefault(label, []).append(inst)
+
+        amt_s, status_s = state_at_schedule[inst.id]
+        amt_a, status_a = state_at_as_of[inst.id]
+
+        if _candidate_for_schedule(inst, schedule_as_of) and status_s == "active":
+            by_label_schedule.setdefault(label, []).append((inst, amt_s, status_s))
+
+        if (
+            inst.issue_date is not None
+            and inst.issue_date > schedule_as_of
+            and inst.issue_date <= as_of
+            and status_a == "active"
+            and inst.maturity > as_of
+        ):
+            by_label_new.setdefault(label, []).append((inst, amt_a, status_a))
 
     buckets_out: dict[str, Any] = {}
     for bucket in schedule.buckets:
@@ -196,17 +228,23 @@ def maturity_wall(session: Session, issuer_id: str, as_of: date) -> dict[str, An
         schedule_named = by_label_schedule.get(label, [])
         new_named = by_label_new.get(label, [])
 
-        named_active = [i for i in schedule_named if _is_named_active(i, as_of)]
-        repaid = [i for i in schedule_named if _is_repaid_since_schedule(i, as_of)]
+        named_active: list[tuple[Instrument, Decimal, str]] = []
+        repaid: list[tuple[Instrument, Decimal, str]] = []
+        for inst, _amt_s, _status_s in schedule_named:
+            amt_a, status_a = state_at_as_of[inst.id]
+            if status_a == "active" and inst.maturity > as_of:
+                named_active.append((inst, amt_a, status_a))
+            else:
+                repaid.append((inst, amt_a, status_a))
 
         named_active = sorted(named_active, key=_instrument_sort_key)
         repaid = sorted(repaid, key=_instrument_sort_key)
         new_named = sorted(new_named, key=_instrument_sort_key)
 
-        schedule_sum = _sum_amounts(schedule_named, context=f"bucket {label} schedule set")
-        named_active_sum = _sum_amounts(named_active, context=f"bucket {label} named_active")
-        new_sum = _sum_amounts(new_named, context=f"bucket {label} new_since_schedule")
-        repaid_sum = _sum_amounts(repaid, context=f"bucket {label} repaid_since_schedule")
+        schedule_sum = _sum_rows(schedule_named, context=f"bucket {label} schedule set")
+        named_active_sum = _sum_rows(named_active, context=f"bucket {label} named_active")
+        new_sum = _sum_rows(new_named, context=f"bucket {label} new_since_schedule")
+        repaid_sum = _sum_rows(repaid, context=f"bucket {label} repaid_since_schedule")
 
         breach = schedule_sum > schedule_amount
         unattributed = max(Decimal("0"), schedule_amount - schedule_sum)
@@ -216,11 +254,11 @@ def maturity_wall(session: Session, issuer_id: str, as_of: date) -> dict[str, An
             "label": label,
             "period_end": _period_end(bucket),
             "schedule_amount": schedule_amount,
-            "named_active": [_instrument_row(i) for i in named_active],
+            "named_active": [_instrument_row(i, amount=a, status=s) for i, a, s in named_active],
             "named_active_sum": named_active_sum,
-            "repaid_since_schedule": [_instrument_row(i) for i in repaid],
+            "repaid_since_schedule": [_instrument_row(i, amount=a, status=s) for i, a, s in repaid],
             "repaid_since_schedule_sum": repaid_sum,
-            "new_since_schedule": [_instrument_row(i) for i in new_named],
+            "new_since_schedule": [_instrument_row(i, amount=a, status=s) for i, a, s in new_named],
             "new_since_schedule_sum": new_sum,
             "unattributed": unattributed,
             "breach": breach,
