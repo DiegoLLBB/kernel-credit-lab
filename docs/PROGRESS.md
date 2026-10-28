@@ -112,6 +112,10 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
    Its 8-Ks on those dates cover a separate Frontier exchange offer. Found in review on 28 Oct, when
    the 17 Jun exhibit turned out not to contain the 2.100% 2028 row. The replay sources and seed now
    cite Verizon's own releases, and Kernel's ingestion needs an issuer-newsroom source besides EDGAR.
+   Built the same day (`app/sources/newsroom.py`, Verizon's Financial & Investor RSS feed). Limit:
+   the feed is a short rolling window, and the May/June tender releases have already dropped out.
+   Live monitoring must poll it at least daily and store each release when first seen. Replay
+   is unaffected because it reads the release URLs from `replay_events_2026.json`.
 
 ### Built and reviewed
 - Muse Wonder: schema (0002–0004), seed loader (0005) — see [META_TOOLING.md](META_TOOLING.md).

@@ -137,8 +137,10 @@ class Filing(TimestampMixin, Base):
         ForeignKey("issuer.id", ondelete="SET NULL"), index=True
     )
     form_type: Mapped[str | None] = mapped_column(String(32), index=True)
+    # Nullable so issuer press releases (no SEC accession) can be stored; unique when set.
     accession_number: Mapped[str | None] = mapped_column(String(32), unique=True)
-    url: Mapped[str] = mapped_column(Text, nullable=False)
+    # Idempotency key for press releases and a stable identity for any filing URL.
+    url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     filed_at: Mapped[date | None] = mapped_column(Date, index=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     title: Mapped[str | None] = mapped_column(String(512))

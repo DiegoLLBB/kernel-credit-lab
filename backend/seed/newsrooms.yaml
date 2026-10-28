@@ -1,0 +1,10 @@
+# Per-issuer newsroom sources for press-release ingestion (beside EDGAR).
+# Keys match snapshot issuer keys (e.g. verizon). Unlisted issuers are unconfigured.
+#
+# Prefer rss_url when present. Verizon exposes a Financial & Investor feed on the
+# RSS Feeds page (https://www.verizon.com/about/news/rss-feeds) as financial-news.xml.
+
+issuers:
+  verizon:
+    listing_url: https://www.verizon.com/about/news-category/financial
+    rss_url: https://www.verizon.com/about/rss/news/financial-news.xml

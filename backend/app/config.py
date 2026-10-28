@@ -34,9 +34,12 @@ class Settings(BaseSettings):
     # USD per 1M tokens, as JSON: {"model-id": [input_price, output_price]}. Used for cost tracking.
     model_pricing_json: str = "{}"
 
-    # SEC EDGAR: descriptive User-Agent with contact (SEC_USER_AGENT; never hardcode).
+    # SEC EDGAR / newsroom: descriptive User-Agent with contact (SEC_USER_AGENT; never hardcode).
     sec_user_agent: str = ""
     fred_api_key: str = Field(default="", repr=False)
+    # Per-issuer press-release sources (listing + optional RSS).
+    # Empty → backend/seed/newsrooms.yaml.
+    newsrooms_path: str = ""
 
 
 @lru_cache
