@@ -197,25 +197,36 @@ def test_audit_entry_update_rejected_on_postgres() -> None:
     if engine.dialect.name == "sqlite":
         pytest.skip("append-only trigger is Postgres-only")
 
-    factory = sessionmaker(bind=engine, expire_on_commit=False)
-    with factory() as session:
-        run = ResearchRun(question="audit append-only check")
-        session.add(run)
-        session.flush()
-        entry = AuditEntry(
-            run_id=run.id,
-            actor="agent",
-            action="record_fact",
-            detail={"ok": True},
-        )
-        session.add(entry)
-        session.commit()
-
-        with pytest.raises(DBAPIError) as raised:
-            session.execute(
-                text("UPDATE audit_entry SET action = 'tampered' WHERE id = :id"),
-                {"id": entry.id},
+    # Everything happens in one transaction that is rolled back, so the test leaves no rows
+    # behind (rows in an append-only table could never be cleaned up afterwards).
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            session = Session(bind=conn)
+            run = ResearchRun(question="audit append-only check")
+            session.add(run)
+            session.flush()
+            entry = AuditEntry(
+                run_id=run.id,
+                actor="agent",
+                action="record_fact",
+                detail={"ok": True},
             )
-            session.commit()
-        session.rollback()
-        assert "append-only" in str(raised.value).lower()
+            session.add(entry)
+            session.flush()
+
+            nested = conn.begin_nested()
+            with pytest.raises(DBAPIError) as raised:
+                conn.execute(
+                    text("UPDATE audit_entry SET action = 'tampered' WHERE id = :id"),
+                    {"id": entry.id},
+                )
+            nested.rollback()
+            assert "append-only" in str(raised.value).lower()
+
+            nested = conn.begin_nested()
+            with pytest.raises(DBAPIError):
+                conn.execute(text("DELETE FROM audit_entry WHERE id = :id"), {"id": entry.id})
+            nested.rollback()
+        finally:
+            trans.rollback()

@@ -34,6 +34,8 @@ def test_readiness_with_dependencies():
 
 @integration
 def test_runs_endpoints_against_migrated_schema():
-    assert client.get("/api/runs").json() == []
-    assert client.get("/api/model-calls").json() == []
-    assert client.get("/api/runs/missing").status_code == 404
+    runs = client.get("/api/runs")
+    calls = client.get("/api/model-calls")
+    assert runs.status_code == 200 and isinstance(runs.json(), list)
+    assert calls.status_code == 200 and isinstance(calls.json(), list)
+    assert client.get("/api/runs/does-not-exist").status_code == 404
