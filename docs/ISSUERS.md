@@ -127,8 +127,28 @@ $2,068,135,000 stated in its 11 May 2026 tender announcement (dated accordingly 
 (12 Mar) → $1.725bn 4.125% convertible repaid at maturity (15 Apr) → $2.0bn holdco term loan
 repaid early → $1.0bn Carolinas term loan (13 Mar) and $0.3bn Progress term loan (15 May) added.
 
-Seed file: `backend/seed/snapshot_2025-12-31.json` (9 issuers, 21 bonds, 1 loan, sources per
-instrument).
+Seed file: `backend/seed/snapshot_2025-12-31.json`: 9 issuers, 33 instruments (all 2026–2029 debt
+for the four Duke entities, plus the named bonds above for the other issuers), sources per
+instrument, and each issuer's **10-K maturity schedule** (the backbone of the maturity wall).
+
+**Reconciliation at 31 Dec 2025 (named instruments vs 10-K schedule, $M):**
+
+| Issuer | 2026 | 2027 | 2028 | 2029 |
+|---|---|---|---|---|
+| Duke family (vs consolidated) | 5,832 / 7,123 | 3,013 / 3,639 | 3,745 / 4,079 | 3,000 / 4,554 |
+| Duke Carolinas | 600 / 630 | 3 / 67 | 950 / 1,018 | 450 / 522 |
+| Duke Progress | 0 / 287 | 500 / 604 | 500 / 608 | 600 / 863 |
+| Duke Florida | 0 / 443 | 650 / 718 | 750 / 819 | 700 / 771 |
+| Verizon | 0 / 17,267 | 0 / 9,569 | 3,318 / 13,032 | 0 / 8,115 |
+| Boeing | 0 / 8,351 | 2,000 / 4,403 | 0 / 2,739 | 0 / 2,508 |
+| Intel | 0 / 2,500 | 0 / 3,826 | 1,750 / 3,173 | 0 / 3,288 |
+| Amazon | 0 / 2,752 | 0 / 8,832 | 2,250 / 4,752 | 0 / 3,000 |
+
+Named never exceeds the 10-K figure. Duke Energy Corporation's parent-level 2026 maturities derive to
+$5,224M (consolidated minus subsidiaries' schedules) against $5,225M named (2.650% notes, term loan,
+convertible). The Duke-family gap is mostly Duke Energy Ohio, Indiana, Kentucky and Piedmont (not
+on the watchlist) plus securitization bonds and finance leases. Oracle's schedule is by fiscal year
+(June–May) as of 31 May 2025.
 
 ## Open items
 

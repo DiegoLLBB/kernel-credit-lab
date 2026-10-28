@@ -88,3 +88,14 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
    `submit_alert`); 3 refusals escalate to a person; analyst confirm/dismiss as sign-off;
    append-only audit log; fake-model tests. Patterns re-implemented (repo has no license) and
    credited. See CONTEXT.md §9.
+5. **Two-layer maturity wall.** Bond-level data alone understated the walls badly (Boeing has
+   $4.4bn due in 2027; we named one $2bn bond). Backbone = each issuer's complete 10-K repayment
+   schedule (XBRL); named instruments as detail; remainder shown as "other (per 10-K)" with an
+   estimated rate. Named ≤ backbone in every year is a code check; the Duke holdco reconciles
+   to within $1M ($5,224M derived vs $5,225M named for 2026).
+6. **Seed expanded:** all 2026–2029 debt for the four Duke entities (33 instruments total, +11) and
+   10-K maturity schedules for all 9 issuers.
+
+### Built and reviewed
+- Muse Wonder: schema (0002–0004), seed loader (0005) — see [META_TOOLING.md](META_TOOLING.md).
+- Review fix: Postgres integration tests no longer leave rows behind (append-only table).

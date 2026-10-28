@@ -1,6 +1,6 @@
 {
   "snapshot_as_of": "2025-12-31",
-  "description": "Kernel seed: the watchlist's debt as an analyst would have known it at the start of 2026. 2026 changes (new issuance, repayments, tenders, redemptions) are discovered by Kernel during replay. Amounts are USD; coupons are percent. Each instrument's 'as_of' is the date of the source its amount comes from.",
+  "description": "Kernel seed: the watchlist's debt as an analyst would have known it at the start of 2026. 2026 changes (new issuance, repayments, tenders, redemptions) are discovered by Kernel during replay. Amounts are USD; coupons are percent. Each instrument's 'as_of' is the date of the source its amount comes from. 'maturity_schedules' holds each issuer's complete scheduled debt repayments from its 10-K (XBRL), the backbone of the maturity wall; instruments are the named detail within it.",
   "sources": {
     "duke_ye25": {
       "title": "Duke Energy, Debt Details as of 31 Dec 2025",
@@ -56,6 +56,36 @@
       "title": "Amazon, Form 10-K for FY2025, long-term debt table (May 2021 issuance outstanding $15.0bn)",
       "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872426000004/",
       "as_of": "2025-12-31"
+    },
+    "duk_10k_fy25": {
+      "title": "Duke Energy combined Form 10-K for FY2025 (XBRL: LongTermDebtMaturitiesRepaymentsOfPrincipal*, consolidated and by registrant)",
+      "url": "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000014/",
+      "as_of": "2025-12-31"
+    },
+    "vz_10k_fy25": {
+      "title": "Verizon Form 10-K for FY2025 (XBRL maturities of long-term debt)",
+      "url": "https://www.sec.gov/Archives/edgar/data/732712/000073271226000007/",
+      "as_of": "2025-12-31"
+    },
+    "ba_10k_fy25": {
+      "title": "Boeing Form 10-K for FY2025 (XBRL scheduled principal payments)",
+      "url": "https://www.sec.gov/Archives/edgar/data/12927/000162828026004357/",
+      "as_of": "2025-12-31"
+    },
+    "intc_10k_fy25": {
+      "title": "Intel Form 10-K for FY2025 (XBRL maturities of long-term debt)",
+      "url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000011/",
+      "as_of": "2025-12-27"
+    },
+    "amzn_10k_fy25": {
+      "title": "Amazon Form 10-K for FY2025 (XBRL future principal payments)",
+      "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872426000004/",
+      "as_of": "2025-12-31"
+    },
+    "orcl_10k_fy25": {
+      "title": "Oracle Form 10-K for FY ended 31 May 2025 (XBRL principal payments by fiscal year); latest annual schedule available at 31 Dec 2025",
+      "url": "https://www.sec.gov/Archives/edgar/data/1341439/000095017025087926/",
+      "as_of": "2025-05-31"
     }
   },
   "issuers": [
@@ -273,14 +303,14 @@
       "maturity": "2026-04-15",
       "issue_date": "2023-04-06",
       "amount_outstanding": "1725000000",
-      "cusip": null,
+      "cusip": "26441CBY0",
       "status": "active",
       "call_terms": null,
       "sources": [
         "duke_ye25"
       ],
       "as_of": "2025-12-31",
-      "note": "Convertible; matures 15 Apr 2026 (replay: refinanced by 3.000% convertible issued 12 Mar 2026). CUSIP not captured; add from source."
+      "note": "Convertible; matures 15 Apr 2026 (replay: refinanced by 3.000% convertible issued 12 Mar 2026)."
     },
     {
       "key": "duk_tl_2026",
@@ -671,6 +701,607 @@
       ],
       "as_of": "2025-12-31",
       "note": "Amount derived: May 2021 issuance outstanding $15.0bn at 31 Dec 2025 = $18.5bn issued minus 2023 and 2024 maturities."
+    },
+    {
+      "key": "duk_2650_2026",
+      "issuer": "duke_corp",
+      "name": "2.650% Senior Notes due 2026",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "2.650",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2026-09-01",
+      "issue_date": "2016-08-12",
+      "amount_outstanding": "1500000000",
+      "cusip": "26441CAS4",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "duk_4850_2029",
+      "issuer": "duke_corp",
+      "name": "4.850% Senior Notes due 2029",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "4.850",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2029-01-05",
+      "issue_date": "2024-01-05",
+      "amount_outstanding": "650000000",
+      "cusip": "26441CCC7",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "duk_eur_4750_2028",
+      "issuer": "duke_corp",
+      "name": "4.750% Senior Notes due 2028 (EUR-denominated)",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "4.750",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-06-15",
+      "issue_date": "2022-06-15",
+      "amount_outstanding": "644880000",
+      "cusip": "26441CBQ7",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": "EUR-denominated; amount is the USD equivalent reported by Duke at 31 Dec 2025."
+    },
+    {
+      "key": "duk_in_3100_2026",
+      "issuer": "duke_corp",
+      "name": "3.100% InterNotes due Dec 2026",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "3.100",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2026-12-15",
+      "issue_date": "2012-12-20",
+      "amount_outstanding": "7467000",
+      "cusip": "26442KAC0",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": "Retail InterNotes."
+    },
+    {
+      "key": "duk_in_3150_2027",
+      "issuer": "duke_corp",
+      "name": "3.150% InterNotes due Mar 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "3.150",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-03-15",
+      "issue_date": "2013-03-14",
+      "amount_outstanding": "2901000",
+      "cusip": "26442KAE6",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": "Retail InterNotes."
+    },
+    {
+      "key": "duk_in_3350_2027",
+      "issuer": "duke_corp",
+      "name": "3.350% InterNotes due Mar 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "3.350",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-03-15",
+      "issue_date": "2013-03-21",
+      "amount_outstanding": "3333000",
+      "cusip": "26442KAF3",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": "Retail InterNotes."
+    },
+    {
+      "key": "duk_in_3250_2027a",
+      "issuer": "duke_corp",
+      "name": "3.250% InterNotes due Mar 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "3.250",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-03-15",
+      "issue_date": "2013-03-28",
+      "amount_outstanding": "2430000",
+      "cusip": "26442KAG1",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": "Retail InterNotes; $2,425,000 at 30 Jun 2026."
+    },
+    {
+      "key": "duk_in_3250_2027b",
+      "issuer": "duke_corp",
+      "name": "3.250% InterNotes due Jun 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "3.250",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-06-15",
+      "issue_date": "2013-04-04",
+      "amount_outstanding": "1901000",
+      "cusip": "26442KAH9",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": "Retail InterNotes; $1,891,000 at 30 Jun 2026."
+    },
+    {
+      "key": "dec_fmb_8950_2027",
+      "issuer": "duke_carolinas",
+      "name": "8.950% First Mortgage Bonds due 2027",
+      "instrument_type": "bond",
+      "seniority": "senior_secured",
+      "security": "first_mortgage",
+      "coupon": "8.950",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2027-07-01",
+      "issue_date": "1991-07-01",
+      "amount_outstanding": "2640454",
+      "cusip": null,
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "dec_6000_2028",
+      "issuer": "duke_carolinas",
+      "name": "6.000% Senior Unsecured Notes due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "6.000",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-12-01",
+      "issue_date": "1998-12-04",
+      "amount_outstanding": "300000000",
+      "cusip": "264399DK9",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    },
+    {
+      "key": "def_mtn_6750_2028",
+      "issuer": "duke_florida",
+      "name": "6.750% Medium-Term Notes due 2028",
+      "instrument_type": "bond",
+      "seniority": "senior_unsecured",
+      "security": "unsecured",
+      "coupon": "6.750",
+      "rate_type": "fixed",
+      "reference_rate": null,
+      "spread_bps": null,
+      "maturity": "2028-02-01",
+      "issue_date": "1998-02-13",
+      "amount_outstanding": "150000000",
+      "cusip": "34110QAL2",
+      "status": "active",
+      "call_terms": null,
+      "sources": [
+        "duke_ye25"
+      ],
+      "as_of": "2025-12-31",
+      "note": null
+    }
+  ],
+  "maturity_schedules": [
+    {
+      "issuer": "duke_corp",
+      "basis": "consolidated",
+      "as_of": "2025-12-31",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-12-31",
+          "amount": "7123000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-12-31",
+          "amount": "3639000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-12-31",
+          "amount": "4079000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-12-31",
+          "amount": "4554000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-12-31",
+          "amount": "4433000000"
+        },
+        {
+          "label": "after FY2030",
+          "period_end": null,
+          "amount": "63037000000"
+        }
+      ],
+      "source": "duk_10k_fy25",
+      "note": "Consolidated Duke Energy (includes all subsidiaries). Parent and other = consolidated minus subsidiaries' own schedules."
+    },
+    {
+      "issuer": "duke_carolinas",
+      "basis": "registrant",
+      "as_of": "2025-12-31",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-12-31",
+          "amount": "630000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-12-31",
+          "amount": "67000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-12-31",
+          "amount": "1018000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-12-31",
+          "amount": "522000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-12-31",
+          "amount": "1277000000"
+        },
+        {
+          "label": "after FY2030",
+          "period_end": null,
+          "amount": "15375000000"
+        }
+      ],
+      "source": "duk_10k_fy25",
+      "note": null
+    },
+    {
+      "issuer": "duke_progress",
+      "basis": "registrant",
+      "as_of": "2025-12-31",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-12-31",
+          "amount": "287000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-12-31",
+          "amount": "604000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-12-31",
+          "amount": "608000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-12-31",
+          "amount": "863000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-12-31",
+          "amount": "371000000"
+        },
+        {
+          "label": "after FY2030",
+          "period_end": null,
+          "amount": "11265000000"
+        }
+      ],
+      "source": "duk_10k_fy25",
+      "note": null
+    },
+    {
+      "issuer": "duke_florida",
+      "basis": "registrant",
+      "as_of": "2025-12-31",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-12-31",
+          "amount": "443000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-12-31",
+          "amount": "718000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-12-31",
+          "amount": "819000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-12-31",
+          "amount": "771000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-12-31",
+          "amount": "1111000000"
+        },
+        {
+          "label": "after FY2030",
+          "period_end": null,
+          "amount": "7543000000"
+        }
+      ],
+      "source": "duk_10k_fy25",
+      "note": null
+    },
+    {
+      "issuer": "oracle",
+      "basis": "consolidated",
+      "as_of": "2025-05-31",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-05-31",
+          "amount": "7309000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-05-31",
+          "amount": "5743000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-05-31",
+          "amount": "10145000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-05-31",
+          "amount": "2000000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-05-31",
+          "amount": "7250000000"
+        },
+        {
+          "label": "after FY2030",
+          "period_end": null,
+          "amount": "60500000000"
+        }
+      ],
+      "source": "orcl_10k_fy25",
+      "note": "Oracle fiscal years end 31 May (FY2026 = Jun 2025-May 2026)."
+    },
+    {
+      "issuer": "verizon",
+      "basis": "consolidated",
+      "as_of": "2025-12-31",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-12-31",
+          "amount": "17267000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-12-31",
+          "amount": "9569000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-12-31",
+          "amount": "13032000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-12-31",
+          "amount": "8115000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-12-31",
+          "amount": "11081000000"
+        },
+        {
+          "label": "after FY2030",
+          "period_end": null,
+          "amount": "96753000000"
+        }
+      ],
+      "source": "vz_10k_fy25",
+      "note": "Excludes finance leases and unamortized issuance costs (per 10-K)."
+    },
+    {
+      "issuer": "boeing",
+      "basis": "consolidated",
+      "as_of": "2025-12-31",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-12-31",
+          "amount": "8351000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-12-31",
+          "amount": "4403000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-12-31",
+          "amount": "2739000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-12-31",
+          "amount": "2508000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-12-31",
+          "amount": "5274000000"
+        }
+      ],
+      "source": "ba_10k_fy25",
+      "note": "Boeing reports five years only; amount after FY2030 not tagged."
+    },
+    {
+      "issuer": "intel",
+      "basis": "consolidated",
+      "as_of": "2025-12-27",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-12-27",
+          "amount": "2500000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-12-27",
+          "amount": "3826000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-12-27",
+          "amount": "3173000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-12-27",
+          "amount": "3288000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-12-27",
+          "amount": "2750000000"
+        },
+        {
+          "label": "after FY2030",
+          "period_end": null,
+          "amount": "31698000000"
+        }
+      ],
+      "source": "intc_10k_fy25",
+      "note": "Intel fiscal years end on the last Saturday of December."
+    },
+    {
+      "issuer": "amazon",
+      "basis": "consolidated",
+      "as_of": "2025-12-31",
+      "buckets": [
+        {
+          "label": "FY2026",
+          "period_end": "2026-12-31",
+          "amount": "2752000000"
+        },
+        {
+          "label": "FY2027",
+          "period_end": "2027-12-31",
+          "amount": "8832000000"
+        },
+        {
+          "label": "FY2028",
+          "period_end": "2028-12-31",
+          "amount": "4752000000"
+        },
+        {
+          "label": "FY2029",
+          "period_end": "2029-12-31",
+          "amount": "3000000000"
+        },
+        {
+          "label": "FY2030",
+          "period_end": "2030-12-31",
+          "amount": "4500000000"
+        },
+        {
+          "label": "after FY2030",
+          "period_end": null,
+          "amount": "45000000000"
+        }
+      ],
+      "source": "amzn_10k_fy25",
+      "note": null
     }
   ]
 }

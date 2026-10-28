@@ -214,8 +214,26 @@ Each claim shows: source document, page or region, extracted field, confidence, 
 
 For IG issuers, refinancing pressure is mostly **rate-reset cost**, not default risk: debt issued at 2–3% coupons in 2017–21 matures into a materially higher rate environment. Per issuer:
 
-- **Maturity concentration:** debt maturing in 24 months as a share of total debt and of liquidity (bonds **and** loans).
-- **Rate-reset cost:** Σ maturing amount × (current Treasury yield at matching tenor + spread assumption − coupon), reported as incremental annual interest expense.
+**Two-layer maturity wall (decided 28 Oct).** Bond-level data alone would badly understate the
+wall (e.g. Verizon has $17.3bn due in 2026; we name none of it), so:
+
+1. **Backbone — complete:** each issuer's scheduled principal repayments for the next five years
+   and thereafter, from its 10-K (XBRL `LongTermDebtMaturitiesRepaymentsOfPrincipal*`), per
+   registrant (Duke Carolinas, Progress and Florida report their own; Duke Energy Corporation's is
+   consolidated).
+2. **Named detail:** verified instruments (bonds, loans, convertibles) with coupons, dates, call
+   terms and sources. For the Duke family, all 2026–2029 instruments are named.
+3. **Unattributed remainder:** backbone minus named, per year, shown as "other scheduled maturities
+   (per 10-K)". Its rate-reset cost uses the issuer's average cost of debt (interest expense ÷
+   average total debt), labelled as an estimate.
+4. **Reconciliation check (code):** named instruments can never exceed the backbone in any year;
+   a breach, or a change in the remainder after an event, is a critic finding (this is how
+   debt missing from the bond list is caught).
+
+Per issuer:
+
+- **Maturity concentration:** debt maturing in 24 months (backbone) as a share of total debt and of liquidity.
+- **Rate-reset cost:** for named instruments, Σ amount × (current Treasury yield at matching tenor + spread assumption − coupon); for the remainder, the same with the average cost of debt in place of the coupon. Reported as incremental annual interest expense, with the named/estimated split shown.
 - **Coverage impact:** pro-forma interest coverage after reset vs. current.
 - **Ranking:** transparent composite score; weights shown in the UI.
 
@@ -352,6 +370,7 @@ Next.js dashboard (alerts feed, brief, issuer pages, trace) → FastAPI API → 
 | **AuditEntry** | Append-only log of actions by agent, verification and analyst |
 | **Alert** | Material finding: event, before/after metrics, status (new / confirmed / dismissed), run |
 | **MetricSnapshot** | Per-issuer computed metrics at a point in time (for before/after) |
+| **MaturitySchedule** | Issuer's scheduled principal repayments by fiscal year from its 10-K (backbone of the maturity wall): basis (consolidated / registrant), as-of date, buckets, source |
 | Covenant | Extracted contractual term |
 | **CuratedSource** | Provenance for hand-entered seed fields |
 | ResearchRun | Agent run (triggered by an event or a question) |
@@ -604,7 +623,7 @@ Principles: JSON output; page/region/chunk citations; confidence scores; explici
 | snapshot_metrics, diff_metrics | Before/after metrics for an event |
 | assess_materiality | Rule results and alert decision |
 | get_macro_series | Treasury yields by tenor, policy rate |
-| calculate_maturity_wall | Concentration by period |
+| calculate_maturity_wall | Two-layer wall by period: 10-K backbone, named instruments, unattributed remainder; reconciliation check |
 | **calculate_rate_reset_cost** | Incremental annual interest expense |
 | **calculate_proforma_coverage** | Coverage before/after reset |
 | calculate_leverage_trend, calculate_coverage_trend | Trends |
