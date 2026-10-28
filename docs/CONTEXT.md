@@ -226,7 +226,10 @@ wall (e.g. Verizon has $17.3bn due in 2026; we name none of it), so:
 3. **Unattributed remainder:** backbone minus named, per year, shown as "other scheduled maturities
    (per 10-K)". Its rate-reset cost uses the issuer's average cost of debt (interest expense ÷
    average total debt), labelled as an estimate.
-4. **Reconciliation check (code):** named instruments can never exceed the backbone in any year;
+4. **Bucketing:** maturities are assigned to the issuer's **fiscal-year** buckets
+   (`app/tools/maturity.py`, `bucket_for`), after excluding instruments already matured,
+   redeemed or repaid at the evaluation date.
+5. **Reconciliation check (code):** named instruments can never exceed the backbone in any year;
    a breach, or a change in the remainder after an event, is a critic finding (this is how
    debt missing from the bond list is caught).
 
