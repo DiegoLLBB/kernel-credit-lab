@@ -228,6 +228,14 @@ def validate_seed(data: dict[str, Any]) -> None:
         if not inst.get("name"):
             errors.append(f"{ikey}: missing name")
 
+        currency = inst.get("currency")
+        if (
+            currency is not None
+            and currency != ""
+            and (not isinstance(currency, str) or len(currency) != 3 or not currency.isalpha())
+        ):
+            errors.append(f"{ikey}: currency must be a 3-letter ISO 4217 code (got {currency!r})")
+
         as_of = inst.get("as_of")
         if as_of:
             try:
@@ -448,6 +456,7 @@ def load_seed(session: Session, path: Path | str) -> LoadStats:
         instrument.amount_outstanding = _parse_decimal(
             raw["amount_outstanding"], field_name="amount_outstanding", context=key
         )
+        instrument.currency = str(raw.get("currency") or "USD").upper()
         instrument.seniority = raw.get("seniority")
         instrument.security = raw.get("security")
         instrument.cusip = str(cusip) if cusip else None

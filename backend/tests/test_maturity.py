@@ -9,8 +9,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
-from app.models import Issuer
-from app.tools.maturity import bucket_for, maturity_wall
+from app.models import Instrument, Issuer
+from app.tools.maturity import NonUsdAmountError, bucket_for, maturity_wall
 from scripts.load_seed import load_seed
 
 SEED_PATH = Path(__file__).resolve().parents[1] / "seed" / "snapshot_2025-12-31.json"
@@ -88,14 +88,16 @@ def test_maturity_wall_duke_corp_fy2026_schedule_amount(seeded_session: Session)
     assert wall["schedule_as_of"] == date(2025, 12, 31)
     fy2026 = wall["buckets"]["FY2026"]
     assert fy2026["schedule_amount"] == Decimal("7123000000")  # $7,123M
-    assert fy2026["named_sum"] > 0
-    assert fy2026["unattributed"] == fy2026["schedule_amount"] - fy2026["named_sum"]
+    assert fy2026["named_active_sum"] > 0
+    assert fy2026["unattributed"] == Decimal("1290533000")  # ~$1,290M
     assert fy2026["breach"] is False
-    assert fy2026["unattributed"] >= 0
-    # Consolidated: includes subsidiary names (e.g. Carolinas 2.950% 2026).
-    keys = {row["key"] for row in fy2026["instruments"]}
+    assert fy2026["total_outstanding"] == (
+        fy2026["named_active_sum"] + fy2026["new_since_schedule_sum"] + fy2026["unattributed"]
+    )
+    keys = {row["key"] for row in fy2026["named_active"]}
     assert "dec_fmb_2950_2026" in keys
-    assert all(row["maturity"] > date(2025, 12, 31) for row in fy2026["instruments"])
+    assert all(row["currency"] == "USD" for row in fy2026["named_active"])
+    assert all(row["maturity"] > date(2025, 12, 31) for row in fy2026["named_active"])
 
 
 def test_maturity_wall_duke_carolinas_fy2028_named(seeded_session: Session) -> None:
@@ -106,20 +108,83 @@ def test_maturity_wall_duke_carolinas_fy2028_named(seeded_session: Session) -> N
 
     assert wall["basis"] == "registrant"
     fy2028 = wall["buckets"]["FY2028"]
-    assert fy2028["named_sum"] == Decimal("950000000")  # $950M
+    assert fy2028["named_active_sum"] == Decimal("950000000")  # $950M
     assert fy2028["schedule_amount"] == Decimal("1018000000")
     assert fy2028["unattributed"] == Decimal("68000000")
     assert fy2028["breach"] is False
-    assert {row["key"] for row in fy2028["instruments"]} == {
+    assert {row["key"] for row in fy2028["named_active"]} == {
         "dec_fmb_3950_2028",
         "dec_6000_2028",
     }
 
 
-def test_maturity_wall_excludes_matured_or_inactive(seeded_session: Session) -> None:
+def test_maturity_wall_unattributed_stable_after_named_matures(
+    seeded_session: Session,
+) -> None:
+    """Remainder is fixed at schedule as_of; maturing a named bond must not inflate it."""
     duke = seeded_session.scalars(select(Issuer).where(Issuer.cik == "1326160")).one()
-    # As of after all FY2026 maturities, FY2026 named should be empty.
-    wall = maturity_wall(seeded_session, duke.id, date(2026, 12, 31))
-    assert wall["buckets"]["FY2026"]["named_sum"] == Decimal("0")
-    assert wall["buckets"]["FY2026"]["instruments"] == []
-    assert wall["buckets"]["FY2026"]["unattributed"] == Decimal("7123000000")
+    before = maturity_wall(seeded_session, duke.id, date(2025, 12, 31))
+    unattributed = before["buckets"]["FY2026"]["unattributed"]
+    assert unattributed == Decimal("1290533000")  # $1,290M
+
+    conv = seeded_session.scalars(
+        select(Instrument).where(Instrument.key == "duk_conv_4125_2026")
+    ).one()
+    conv.status = "matured"
+    seeded_session.commit()
+
+    after = maturity_wall(seeded_session, duke.id, date(2026, 6, 30))
+    fy2026 = after["buckets"]["FY2026"]
+    assert fy2026["unattributed"] == unattributed
+    assert "duk_conv_4125_2026" not in {r["key"] for r in fy2026["named_active"]}
+    assert "duk_conv_4125_2026" in {r["key"] for r in fy2026["repaid_since_schedule"]}
+    assert fy2026["breach"] is False
+    assert fy2026["named_active_sum"] == before["buckets"]["FY2026"]["named_active_sum"] - Decimal(
+        "1725000000"
+    )
+
+
+def test_maturity_wall_new_issuance_adds_to_total_without_breach(
+    seeded_session: Session,
+) -> None:
+    duke = seeded_session.scalars(select(Issuer).where(Issuer.cik == "1326160")).one()
+    before = maturity_wall(seeded_session, duke.id, date(2025, 12, 31))
+    fy2028_before = before["buckets"]["FY2028"]
+
+    seeded_session.add(
+        Instrument(
+            key="duk_new_2028_post_schedule",
+            issuer_id=duke.id,
+            name="5.000% Senior Notes due 2028 (new)",
+            instrument_type="bond",
+            coupon=Decimal("5.000"),
+            rate_type="fixed",
+            maturity=date(2028, 6, 15),
+            issue_date=date(2026, 3, 1),
+            amount_outstanding=Decimal("500000000"),
+            currency="USD",
+            status="active",
+        )
+    )
+    seeded_session.commit()
+
+    after = maturity_wall(seeded_session, duke.id, date(2026, 6, 30))
+    fy2028 = after["buckets"]["FY2028"]
+    assert fy2028["unattributed"] == fy2028_before["unattributed"]
+    assert fy2028["breach"] is False
+    assert fy2028["new_since_schedule_sum"] == Decimal("500000000")
+    assert "duk_new_2028_post_schedule" in {r["key"] for r in fy2028["new_since_schedule"]}
+    assert fy2028["total_outstanding"] == (
+        fy2028["named_active_sum"] + fy2028["new_since_schedule_sum"] + fy2028["unattributed"]
+    )
+    assert fy2028["total_outstanding"] == fy2028_before["total_outstanding"] + Decimal("500000000")
+
+
+def test_maturity_wall_non_usd_raises(seeded_session: Session) -> None:
+    duke = seeded_session.scalars(select(Issuer).where(Issuer.cik == "1326160")).one()
+    bond = seeded_session.scalars(select(Instrument).where(Instrument.key == "duk_2650_2026")).one()
+    bond.currency = "EUR"
+    seeded_session.commit()
+
+    with pytest.raises(NonUsdAmountError, match="non-USD"):
+        maturity_wall(seeded_session, duke.id, date(2025, 12, 31))

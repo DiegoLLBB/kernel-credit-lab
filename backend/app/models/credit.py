@@ -77,6 +77,7 @@ class Instrument(TimestampMixin, Base):
     maturity: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     issue_date: Mapped[date | None] = mapped_column(Date)
     amount_outstanding: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     seniority: Mapped[str | None] = mapped_column(String(64))
     security: Mapped[str | None] = mapped_column(String(64))
     cusip: Mapped[str | None] = mapped_column(String(12), index=True)
