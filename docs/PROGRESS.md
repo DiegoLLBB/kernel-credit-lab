@@ -54,9 +54,30 @@ Hackathon (building period 27 Oct – 4 Nov 2026). The plan itself lives in
 ### Open items
 - Test the chart reader on real **debt maturity profile** charts (denser, sometimes stacked).
 - Baseten credits → smoke-test `meta-models/muse-spark-open-1026`.
-- Issuer shortlist (8–10 IG issuers, anchored on Duke Energy holdco/opco structure).
+- Issuer shortlist drafted in [ISSUERS.md](ISSUERS.md): 9 entities (Duke holdco + 3 opcos, Oracle,
+  Verizon, Boeing, Intel, Amazon), 21 bonds + 2 term loans, two critique traps (Verizon 4.329% 2028
+  redeemed 21 Sep 2026; Duke opco term loans outside the bond list). Awaiting approval.
+- Seed figures verified against primary sources (EDGAR filings, issuer documents). One correction:
+  Verizon 2.100% 2028 is $925M outstanding, not $3.0bn, after a June 2026 tender offer bought back 55%.
+  Lesson for the product: an automated extraction of Duke's PDF was correct, but a second, naive
+  column-based parse misaligned rows — exactly the class of error Kernel's verifier must catch.
+- No maturity-profile *chart* found yet (AEP and Duke publish tables).
 
 ### Next (Day 2 — Wed 28 Oct)
 Full domain schema and migrations (issuers, bonds, call terms, filings, chunks, regions,
 chart readings, curated sources); issuer shortlist; hand-curated seed for ~25 bonds with
 provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00 Madrid.
+
+---
+
+## Day 2 — Wed 28 Oct 2026
+
+### Decisions
+1. **Product direction: proactive credit monitor.** Kernel watches a watchlist (SEC filings, issuer
+   announcements, Treasury yields, maturity calendar), runs an agent per event, and raises only
+   material alerts with before/after numbers and traces. Questions become a secondary drill-down.
+   Reason: closer to what analysts need (being told what changed), further from "basic RAG", and a
+   stronger agentic story. The engine is unchanged; the trigger changes.
+2. **Replay mode** over real Jan–Oct 2026 events for a deterministic demo and as the evaluation set.
+3. **Seed = pre-replay snapshot**, so the real events (Duke term loans and convertible, Intel's refinancing,
+   Verizon tender and redemption) are discovered by Kernel during replay rather than staged.

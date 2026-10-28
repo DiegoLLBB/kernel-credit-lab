@@ -1,7 +1,9 @@
 # Kernel Credit Lab — Product, Hackathon & Build Context
 
-*Living document — the single source of truth for the project. Last updated 27 Oct 2026 (end of day 1). Supersedes the v1 and v2 PDFs. Dated changes and decisions are logged in [PROGRESS.md](PROGRESS.md).*
+*Living document — the single source of truth for the project. Last updated 28 Oct 2026 (day 2: product reframed as a proactive monitor). Supersedes the v1 and v2 PDFs. Dated changes and decisions are logged in [PROGRESS.md](PROGRESS.md).*
 
+> **28 Oct 2026 — direction change:** Kernel is a **proactive credit monitor**, not a question-driven research tool. It watches a watchlist of issuers, reacts to events (filings, redemptions, tenders, rate moves, approaching maturities), updates its data, recomputes, verifies and raises only material alerts. Questions remain as a secondary drill-down. The engine (state, tools, verifier, critic, trace) is unchanged; the trigger is. See §1, §3, §7–9, §14 and Part C.
+>
 > **What changed from v1:** Startup track confirmed; official rules and rubric added; explicit defense against the "Basic RAG" anti-project; scope cut to a buildable size; investment-grade domain fixes (rate-reset refinancing, par-call windows, structural subordination instead of covenant comparison); Muse Spark Open promoted to a core role; Muse Voice Transcribe added as a stretch; Muse Image demoted; production readiness moved into the core build; 17 sequential phases replaced by a day-by-day schedule ending Nov 4.
 
 ---
@@ -10,15 +12,15 @@
 
 ## 1. Executive summary
 
-Kernel Credit Lab is an agentic research workbench for USD investment-grade (IG) corporate bonds. It turns public filings, bond documentation and macro data into a structured, cited knowledge base, then runs a constrained research loop over it: plan, gather structured data, retrieve evidence, compute with deterministic tools, verify claims with an independent model, critique, revise and publish a reproducible memo.
+Kernel Credit Lab is a **proactive credit monitor** for USD investment-grade (IG) corporate bonds. An analyst sets a watchlist once; Kernel then watches SEC filings, issuer announcements, Treasury yields and the maturity calendar on its own. Each event triggers a constrained agent run that reads the document, updates a structured, cited knowledge base, recomputes the affected credit metrics with deterministic tools, has an independent model verify every claim, critiques and corrects itself, and raises an alert **only when something material changed**.
 
 - **Track:** Startup.
 - **Problem statement:** Build for Your World (a firsthand fixed-income research problem), with a secondary Push the Frontier claim: giving an AI system the ability to conduct, verify, critique and revise credit research end to end.
 - **Not basic RAG:** "Basic RAG Applications" is an explicit anti-project in the official guide. Kernel's defense is built into the product and the demo: persistent relational state, deterministic computation, independent verification, a visible critique-and-revise step, and a measured comparison against a plain-RAG baseline.
 
-**One-sentence pitch:** Kernel turns fragmented fixed-income research into an auditable, tool-using AI research analyst.
+**One-sentence pitch:** Kernel watches your credits so you don't have to: it notices what changed, works out whether it matters, and shows its work.
 
-**Core narrative:** Credit analysts lose time reconciling filings, bond terms, events and macro data across disconnected systems. Given a question such as *"Which issuers face the greatest refinancing pressure over the next 24 months?"*, Kernel plans the research, gathers evidence, computes rate-reset exposure, has an independent model check every claim, catches its own mistakes, revises, and produces a source-linked memo, with the full trace visible.
+**Core narrative:** Credit analysts monitor dozens of issuers across filings, bond terms, announcements and rates in disconnected systems, and important changes slip through: a bond redeemed early, a new term loan, a tender that halves an issue, a rate move that changes refinancing costs. Kernel catches these as they happen. When Verizon announces it will redeem $1.25bn of 2028 notes, Kernel reads the notice, removes the bond, recomputes Verizon's maturity wall and refinancing pressure, verifies the result, and posts an alert with before/after numbers, sources and the full agent trace.
 
 ## 2. Hackathon alignment (official)
 
@@ -52,10 +54,10 @@ Kernel Credit Lab is an agentic research workbench for USD investment-grade (IG)
 
 | Category | Weight | Official question | Kernel's answer |
 |---|---|---|---|
-| Impact | 30% | Real-world potential; who benefits; could people actually use it? | A real analyst workflow (refinancing monitoring) with measured time and reproducibility gains; a credible enterprise path (self-hostable document processing). |
+| Impact | 30% | Real-world potential; who benefits; could people actually use it? | Continuous monitoring is what analysts actually need (being told what changed, not asking); measured catches on real 2026 events; credible enterprise path (self-hostable document processing). |
 | Use of Meta AI Tooling | 25% | Creative, beyond basic integration, capabilities that surprise | Hosted + open-weight hybrid: SAM 3.1 locates charts in investor decks and its geometry verifies Spark's chart readings; Spark extracts and plans; Wonder investigates; Spark Open verifies claims independently. |
 | Technical Depth & Execution | 20% | Sound, refined engineering; real craft | Relational source of truth, deterministic tools with tests, state machine, CI, eval report, observability. |
-| Demo | 25% | Working, impressive, holds up live, cool to watch | Opens on the live agent trace; a scripted, real critique moment; live URL judges can use. |
+| Demo | 25% | Working, impressive, holds up live, cool to watch | Replay of real Jan–Oct 2026 events producing a live alerts feed; each alert opens its agent trace; live URL judges can use. |
 
 **Stage Three:** top 5 per track; judges watch videos live and rank with the same rubric.
 
@@ -63,35 +65,36 @@ Kernel Credit Lab is an agentic research workbench for USD investment-grade (IG)
 
 ### Secondary targets (never at the expense of the main prize)
 
-- **Best Agentic Use-Case ($5K):** natural fit.
+- **Best Agentic Use-Case ($5K):** strong fit: an autonomous, event-driven agent that decides what matters.
 - **Best Build on Meta Open Weight Models ($10K):** Spark Open has a real core role (see Part B).
 - **Most Viral ($20K) and Community Vote ($10K):** post a 60-second cut on X immediately after submission.
 - Not targeted: Best Creative Build.
 
 ## 3. Product definition
 
-**Name:** Kernel (Kernel Credit Lab). **Category:** agentic fixed-income research.
+**Name:** Kernel (Kernel Credit Lab). **Category:** proactive, agentic credit monitoring.
 
 **Primary users:** IG credit analysts, fixed-income researchers, IG bond investors, treasury and capital-structure teams, financial intelligence platforms.
 
 **Design user:** a credit analyst monitoring a universe of USD IG issuers for changes in refinancing cost, capital structure and credit quality.
 
-**Problem:** bond terms live in prospectuses and 424B filings; financials in SEC filings and XBRL; events in 8-Ks and press releases; macro context in separate systems. Analysis is manual and hard to reproduce. Generic LLM tools retrieve text but do not maintain structured state or verify calculations.
+**Problem:** bond terms live in prospectuses and 424B filings; financials in SEC filings and XBRL; events in 8-Ks and press releases; macro context in separate systems. Monitoring is manual, so changes are noticed late or missed, and the analysis behind them is hard to reproduce. Generic LLM tools answer questions but do not watch, keep structured state or verify calculations.
 
 **Solution:**
 
-1. A structured issuer / bond / event knowledge base (relational source of truth).
-2. An evidence-linked research interface.
-3. An agent that plans and executes research inside a constrained state machine.
+1. A **watchlist** of issuers and a structured issuer / bond / loan / event knowledge base (relational source of truth).
+2. **Event watchers** for SEC filings, issuer announcements, Treasury yields and the maturity calendar.
+3. An **agent run per event**, inside a constrained state machine: read, update state, recompute, verify, critique, assess materiality.
 4. Deterministic financial tools for every number.
 5. An independent verifier and a critic.
-6. Reproducible, analyst-ready memos with full run traces.
+6. **Material alerts and a daily brief**, each linked to sources and the full run trace; analysts confirm or dismiss.
+7. Ad-hoc questions as a secondary drill-down.
 
 ## 4. What makes Kernel different (and not basic RAG)
 
 **Basic RAG:** documents → chunks → embeddings → retrieval → LLM answer. It loses structure, cannot compute reliably, has weak provenance, does not separate evidence from inference, keeps no state, and cannot verify numbers.
 
-**Kernel:** documents + APIs → structured extraction → validated knowledge base → hybrid retrieval → planning → deterministic tools → independent verification → critique → revision → reproducible memo.
+**Kernel:** events → structured extraction → validated knowledge base (state updated) → deterministic tools → independent verification → critique → revision → materiality decision → alert with trace. Nobody has to ask.
 
 ### Five differentiators
 
@@ -99,13 +102,14 @@ Kernel Credit Lab is an agentic research workbench for USD investment-grade (IG)
 2. **Hybrid evidence retrieval.** SQL over structured facts, exact document lookup, pgvector semantic search.
 3. **Tool-using reasoning.** Python computes maturity walls, rate-reset cost, leverage, coverage and rankings. The LLM never does bond math.
 4. **Independent verification and provenance.** Every material claim links to a source; every number links to a tool call; claims are checked by a different model from the one that wrote them.
-5. **Closed research loop.** Plan → compute → verify → critique → revise → report, visible in the UI.
+5. **Closed loop, triggered by events.** Detect → update → compute → verify → critique → revise → alert, visible in the UI.
+6. **Proactive.** Kernel decides when something is worth an analyst's attention; it is not waiting for a prompt.
 
 ### Measured proof
 
 The evaluation report includes a **plain-RAG baseline**: the same flagship questions answered by Spark over chunk retrieval alone, scored on numeric accuracy, citation coverage and missed facts. This is the most direct evidence against the anti-project label.
 
-**Key claim:** Kernel does not retrieve passages and summarize them. It builds research state, executes analysis, checks its evidence and revises its conclusion.
+**Key claim:** Kernel does not retrieve passages and summarize them. It keeps research state current as the world changes, executes analysis, checks its evidence and tells you what matters.
 
 ## 5. Scope
 
@@ -115,28 +119,31 @@ The evaluation report includes a **plain-RAG baseline**: the same flagship quest
 |---|---|
 | Asset class | USD investment-grade corporate bonds |
 | Geography | United States |
-| Issuers | **8–10** |
-| Sectors | **Utilities** (holdco/opco structures for Workflow 2) plus **1–2 sectors with a visible 2027–28 maturity wall**, chosen from the data |
-| Bonds | **~25** instruments, hand-curated |
+| Issuers | **9 entities** (see [ISSUERS.md](ISSUERS.md)) |
+| Sectors | Utilities (Duke holdco + 3 opcos), technology, telecom, aerospace, semiconductors |
+| Instruments | **21 bonds + 2 term loans**, hand-curated and verified against primary sources |
 | Documents | Latest 10-K/10-Q, recent 8-Ks, earnings releases, selected 424B prospectus supplements |
-| Events | Trailing 24 months |
+| Events | Watched going forward; **replay window Jan–Oct 2026** for the demo |
 | Macro | Treasury curve, policy rate, inflation; spread context where data rights allow |
 | Forward view | Maturities and par-call windows |
 
-### Workflow priority
+### Capability priority
 
-| Workflow | Depth |
+| Capability | Depth |
 |---|---|
-| 1. Refinancing-pressure scanner | **Flagship.** Built deep; the demo centerpiece. |
-| 2. Structural-subordination comparison | **Thin but memorable.** One strong utility holdco/opco comparison. |
-| 3. Event-impact memo | **Stretch / cached example.** Built only if Workflows 1–2 are solid by Nov 2. |
+| 1. **Event monitor + alerts feed** (watchers, per-event agent run, materiality, alerts, daily brief) | **Flagship.** The product. |
+| 2. **Refinancing-pressure engine** (maturity wall, rate-reset cost, pro-forma coverage, ranking) | **Core.** Recomputed on every event; powers the alerts. |
+| 3. **Replay mode** (run the monitor over real Jan–Oct 2026 events) | **Core for the demo.** |
+| 4. Structural-subordination view (holdco vs. opco) | **Thin.** Issuer page panel for Duke. |
+| 5. Ad-hoc questions | **Thin.** Drill-down from an alert or issuer page. |
 
 ### Non-goals
 
 - Global or multi-asset coverage; live executable prices; investment recommendations; trading or portfolio optimization.
 - Rating histories or any licensed ratings data.
 - Auth, billing, multi-tenancy, Kubernetes.
-- **Live dependence on Wonder or SAM during the judged demo.** Flagship runs are pre-computed and cached; the live product replays them and runs Spark-level interactions live.
+- **Live dependence on Wonder or SAM during the judged demo.** Replay runs are pre-computed and cached; the live product shows them and runs Spark-level drill-downs live.
+- Real-time streaming feeds or paid news data: watchers poll public sources on a schedule.
 
 ## 6. Data strategy
 
@@ -169,14 +176,20 @@ Use EDGAR within its access policy (declared User-Agent, rate limits) and FRED w
 
 ## 7. Product capabilities
 
+### 7.0 Alerts feed and daily brief (flagship)
+A feed of **material** findings across the watchlist, newest and most important first. Each alert card shows: what happened (with the source document), what Kernel changed in its data, the before/after metrics (e.g. 2028 maturities −$1.25bn; refinancing-pressure rank 3 → 5), confidence, and a link to the run trace. Analysts can **confirm** or **dismiss** an alert; dismissals are recorded. A **daily brief** summarizes overnight changes. Non-material events are logged on the issuer timeline without an alert.
+
+### 7.0b Watchlist and watchers
+The analyst adds issuers to a watchlist. Watchers run on a schedule in the background worker: EDGAR new filings per issuer (8-K, 10-Q, 10-K, 424B), issuer announcement pages where available, daily Treasury yields (FRED), and the maturity / par-call calendar.
+
 ### 7.1 Issuer 360
 Business profile; capital-structure summary **by issuing entity** (holdco vs. opco); bond inventory; maturity wall; par-call windows; rate-reset exposure; financial trend panel; event timeline; recent filings; cited credit thesis; data gaps; research-run history.
 
 ### 7.2 Bond view
 Terms (coupon, maturity, make-whole spread, par-call date); seniority, security and issuing entity; refinancing context (coupon vs. current reset yield); related documents; comparables within the universe; source-linked evidence.
 
-### 7.3 Research workbench (frontier component)
-The analyst asks a question. Kernel classifies it, plans, gathers data, runs tools, verifies claims independently, critiques, revises and writes a memo, with each step visible live.
+### 7.3 Drill-down questions (secondary)
+From an alert or issuer page, the analyst can ask a follow-up ("why did Verizon's rank change?"). The same agent engine answers with the same tools, verifier and trace.
 
 ### 7.4 Run trace (observability as a product feature)
 For every step: model or tool, input summary, output summary, tokens, cost, latency, citations, confidence. Total cost and latency per run. This is how judges see production craft in the product, not just in logs.
@@ -184,87 +197,103 @@ For every step: model or tool, input summary, output summary, tokens, cost, late
 ### 7.5 Citation and evidence layer
 Each claim shows: source document, page or region, extracted field, confidence, linked calculation, data timestamp and limitations.
 
-## 8. Flagship workflows (IG-correct)
+## 8. How the monitor works (IG-correct)
 
-### Workflow 1 — Refinancing-pressure scanner (flagship)
+### 8.1 Event types and what Kernel does
 
-**Question:** *Which issuers face the most material refinancing pressure over the next 24 months?*
+| Trigger | Source | Agent action | Example (real, 2026) |
+|---|---|---|---|
+| Redemption / call notice | 8-K, issuer press release | Mark bond redeemed; recompute maturity wall and pressure | Verizon redeems $1.25bn 4.329% 2028 notes (announced 20 Aug, settled 21 Sep) |
+| Tender offer results | 8-K, press release | Reduce outstanding amounts | Verizon buys back 55% of its 2.100% 2028 notes (June) |
+| New debt in a periodic filing | 10-Q / 10-K debt note | Add instruments missing from the bond list | Duke Carolinas and Progress $1.3bn term loans due Mar 2027 |
+| New issuance | 424B, 8-K | Add bond; update refinancing assumptions | Intel $6.5bn of new notes (Q2) |
+| Rate move | FRED daily Treasury yields | Recompute rate-reset cost for all maturing debt | Treasury curve changes over Jan–Oct |
+| Calendar | Bond data | Flag maturities and par-call windows entering 6/12-month horizons | Duke Energy Florida 3.200% due Jan 2027 |
 
-For IG issuers, refinancing pressure is mostly **rate-reset cost**, not default risk: debt issued at 2–3% coupons in 2020–21 matures into a materially higher rate environment.
+### 8.2 The refinancing-pressure engine (recomputed on every event)
 
-**Pipeline:**
+For IG issuers, refinancing pressure is mostly **rate-reset cost**, not default risk: debt issued at 2–3% coupons in 2017–21 matures into a materially higher rate environment. Per issuer:
 
-1. Load maturities and par-call windows within the horizon.
-2. Load debt, cash, interest expense and operating-income/EBITDA proxies from XBRL.
-3. Compute, per issuer:
-   - **Maturity concentration:** debt maturing in 24 months as a share of total debt and of liquidity.
-   - **Rate-reset cost:** Σ maturing amount × (current Treasury yield at matching tenor + spread assumption − coupon). Reported as incremental annual interest expense.
-   - **Coverage impact:** pro-forma interest coverage after reset vs. current.
-   - Leverage and coverage trends.
-4. Retrieve recent filings and events (new issuance, redemptions, guidance).
-5. Rank with a transparent composite score; weights shown in the UI.
-6. Independent verification, critique, revision.
-7. Output: ranked watchlist, maturity-wall chart, issuer risk cards, evidence table, memo, monitoring triggers, limitations.
+- **Maturity concentration:** debt maturing in 24 months as a share of total debt and of liquidity (bonds **and** loans).
+- **Rate-reset cost:** Σ maturing amount × (current Treasury yield at matching tenor + spread assumption − coupon), reported as incremental annual interest expense.
+- **Coverage impact:** pro-forma interest coverage after reset vs. current.
+- **Ranking:** transparent composite score; weights shown in the UI.
 
 **Call features:** IG bonds typically carry a **make-whole call plus a par call 1–3 months before maturity**. Kernel models the par-call window as the effective refinancing date. It does not model high-yield-style step-down call schedules.
 
-### Workflow 2 — Structural-subordination comparison
+### 8.3 Materiality
 
-**Question:** *Compare these two bonds and explain the structural differences that matter to creditors.*
+An event becomes an alert when it changes something an analyst would act on. Initial rules (configurable, shown in the UI):
+
+- issuer's 24-month maturities change by ≥ 10% or ≥ $500M;
+- rate-reset cost changes by ≥ 10%;
+- the issuer moves ≥ 2 places in the pressure ranking;
+- debt appears that was not in the bond list (always material);
+- the verifier or critic finds a contradiction with Kernel's own data (always material).
+
+Everything else goes to the issuer timeline.
+
+### 8.4 Replay mode (demo and evaluation)
+
+Kernel runs the monitor over the **real events of Jan–Oct 2026** in date order, starting from a **snapshot as of 31 Dec 2025** (year-end filings and issuer debt reports). The output is the alerts feed Kernel would have produced. This makes the demo deterministic and doubles as evaluation: each expected catch (redemption, tender, term loans, new issuance) is a test case, and **Kernel's state after replaying to 30 Jun 2026 must match the independently verified 30 Jun figures** in [ISSUERS.md](ISSUERS.md) (Duke debt details, Verizon debt portfolio).
+
+### 8.5 Structural subordination (issuer page panel)
+
+For the Duke family, the issuer page explains the structural differences that matter to creditors.
 
 IG covenant packages are thin (liens, sale-leaseback, merger), so a covenant matrix alone undersells the workflow. The demo compares a **utility operating company's first-mortgage bonds** with its **holding company's senior unsecured notes**: same corporate family, different claims on assets and cash flow.
 
 **Pipeline:** extract terms, security and issuing entity; normalize seniority, security, guarantees, call features and covenants; retrieve each entity's financial context (e.g. holdco debt as a share of consolidated debt, dividend dependence on opcos); build a side-by-side matrix; cite every term.
 
-**Output:** comparison matrix, structural-risk notes, covenant summary, source-linked evidence, comparison memo. Bond terms come from parsed filing HTML tables, each cited to its source table.
+**Output:** comparison matrix and structural-risk notes, each term cited to its source.
 
-### Workflow 3 — Event-impact memo (stretch)
-
-**Question:** *What is the credit impact of this filing or earnings release for issuer X and its bonds?*
-
-Ingest the event, classify it, retrieve prior state, compute metric deltas, assess affected bonds, write the memo with monitoring triggers. Optional: earnings-call audio via Muse Voice Transcribe, **only for audio Kernel has the rights to use.**
+Earnings-call audio via Muse Voice Transcribe remains a stretch trigger type, **only for audio Kernel has the rights to use.**
 
 ## 9. Agent architecture
 
 ### State machine
 
-INTAKE → CLASSIFY_TASK → PLAN → GATHER_STRUCTURED_DATA → RETRIEVE_EVIDENCE → EXTRACT_FACTS → RUN_TOOLS → VERIFY_CLAIMS → CRITIQUE → REVISE → SYNTHESIZE → GENERATE_MEMO → COMPLETE
+EVENT_RECEIVED → CLASSIFY_EVENT → PLAN → GATHER_STRUCTURED_DATA → RETRIEVE_EVIDENCE → EXTRACT_FACTS → PROPOSE_STATE_CHANGES → RUN_TOOLS → VERIFY_CLAIMS → CRITIQUE → REVISE → ASSESS_MATERIALITY → PUBLISH_ALERT | LOG_ONLY → COMPLETE
+
+Drill-down questions enter at CLASSIFY_EVENT with type `question` and end with an answer instead of an alert. State changes (e.g. marking a bond redeemed) are **proposals** recorded with their evidence; they are applied only after verification, and every change is reversible and auditable.
 
 The state machine is **code-driven**: transitions are decided by Python, and LLM calls are nodes within states. The agent chooses tools and arguments inside a state; it does not choose arbitrary next states.
 
 | State | Responsibility | Model / engine |
 |---|---|---|
-| Classify, Plan | Workflow type, required data, explicit plan | Spark |
+| Classify event, Plan | Event type, affected issuers/instruments, explicit plan | Spark Open (bulk) / Spark |
 | Gather, Retrieve | SQL, exact lookup, pgvector | Code |
 | Extract facts | Strict JSON with citations; chart readings verified by geometry | Spark (+ SAM for charts) |
 | Run tools | Deterministic Python | Code |
 | **Verify claims** | Check each claim against citations and tool outputs | **Spark Open (independent model)** |
 | Critique | Unsupported claims, alternative explanations, gaps | Spark; Wonder for flagship |
 | Revise | Re-query, recompute or soften claims | Spark / Wonder |
-| Synthesize, Memo | Cited narrative and artifact | Spark; Wonder for flagship |
+| Propose state changes | Structured diffs to bonds/loans with evidence | Spark |
+| Assess materiality | Apply rules to before/after metrics | Code |
+| Publish alert / brief | Cited alert card; daily brief | Spark; Wonder for the brief |
 
 ### Guardrails
 
 Allowlisted tools; sandboxed Python; max iterations; token and cost ceilings per run; mandatory citation check before COMPLETE; no LLM-generated prices or ratings; visible plan and trace; explicit uncertainty and data gaps.
 
-### The critique moment (scripted, but real)
+### The critique moments (real events, not staged)
 
-The flagship demo depends on a genuine catch. Seed the corpus with a real trap, for example:
+The seed is a snapshot built from sources dated **before** the replay window, so it contains the stale facts real analysts would have had:
 
-- a bond in the curated seed data that was **redeemed early per a later 8-K**, or
-- **commercial paper or a term loan** outstanding that is absent from the bond list but visible in the 10-K.
+- **Verizon 4.329% 2028** listed as outstanding; the replay delivers the redemption notice, and Kernel removes it and recomputes.
+- **Duke term loans** absent from the bond list; the replay delivers the 10-Q, and the critic notices the gap between bond-level and filing-level debt.
 
-The critic flags the inconsistency, the agent re-queries, recomputes and changes the ranking. The trace shows before and after.
+The trace shows the evidence, the proposed change, the verifier's check and the before/after numbers.
 
 ## 10. Technical architecture
 
-Next.js dashboard → FastAPI API → ingestion service, Postgres + pgvector, agent orchestrator, sandboxed Python runtime, background worker. Model calls go through one client layer that serves both the Meta Model API and Baseten (OpenAI-compatible).
+Next.js dashboard (alerts feed, brief, issuer pages, trace) → FastAPI API → Postgres + pgvector, agent orchestrator, sandboxed Python runtime. **Background worker (ARQ) runs the watchers on a schedule** and enqueues one agent run per event; replay mode feeds historical events through the same queue. Model calls go through one client layer that serves both the Meta Model API and Baseten (OpenAI-compatible).
 
 **Backend:** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.0, Alembic, PostgreSQL 16 + pgvector, Redis, ARQ, pandas, pdfplumber, pytest, httpx.
 
 **Frontend:** Next.js App Router, TypeScript, Tailwind, shadcn/ui, TanStack Query, Zod, ECharts.
 
-**Ops:** Docker Compose (one command locally), GitHub Actions CI, deployment of a public read-only instance (Fly.io, Railway or Render) with pre-ingested corpus and cached flagship runs.
+**Ops:** Docker Compose (one command locally), GitHub Actions CI, deployment of a public read-only instance (Fly.io, Railway or Render) with pre-ingested corpus and cached replay runs.
 
 ## 11. Data model
 
@@ -278,10 +307,15 @@ Next.js dashboard → FastAPI API → ingestion service, Postgres + pgvector, ag
 | **DocumentRegion** | Located region (SAM chart/bar box or parsed table), page, label, confidence |
 | **ChartReading** | Chart values read by Spark, SAM bar boxes, geometry-check status and deviations |
 | Metric | Time-series financial or macro metric |
-| Event | Typed corporate or macro event |
+| Event | Typed corporate or macro event, with source document and detection time |
+| **Loan** | Term loans and other non-bond debt (or `Bond` with `instrument_type`) |
+| **Watchlist** | Issuers the analyst monitors |
+| **StateChange** | Proposed/applied change to an instrument, with evidence, verifier result and run |
+| **Alert** | Material finding: event, before/after metrics, status (new / confirmed / dismissed), run |
+| **MetricSnapshot** | Per-issuer computed metrics at a point in time (for before/after) |
 | Covenant | Extracted contractual term |
 | **CuratedSource** | Provenance for hand-entered seed fields |
-| ResearchRun | Agent session |
+| ResearchRun | Agent run (triggered by an event or a question) |
 | AgentStep | Individual state execution |
 | ToolCall | Deterministic function execution, inputs and outputs |
 | **ModelCall** | Model, provider, prompt version, tokens, cost, latency, status |
@@ -296,9 +330,9 @@ Next.js dashboard → FastAPI API → ingestion service, Postgres + pgvector, ag
 |---|---|
 | Documents | ~20 |
 | Human-verified extraction fields | ~30 |
-| Research questions with expected evidence and calculations | ~10 |
-| End-to-end workflows | Workflow 1 + Workflow 2 |
-| **Plain-RAG baseline** | Same questions, Spark over chunk retrieval only |
+| **Replay catches** (expected alerts over Jan–Oct 2026) | ~8 events: redemption, tender, term loans, issuances, rate moves |
+| Drill-down questions with expected evidence and calculations | ~8 |
+| **Plain-RAG baseline** | Same events/questions, Spark over chunk retrieval only (no state, no tools) |
 
 | Metric | Target |
 |---|---|
@@ -306,8 +340,10 @@ Next.js dashboard → FastAPI API → ingestion service, Postgres + pgvector, ag
 | Financial-metric accuracy on curated fields | ≥ 95% |
 | Material claims with citation | ≥ 95% |
 | Numeric claims traced to a tool call | 100% |
-| Flagship workflow completion | 100% on benchmark questions |
-| Median research run | < 3 minutes (Spark mode) |
+| Replay recall | Expected material events alerted / total expected |
+| Replay precision | Alerts that are genuinely material / total alerts |
+| Detection-to-alert latency | Per event (minutes) |
+| Median agent run | < 3 minutes (Spark mode) |
 | Cost per research run | Reported (Spark mode and Wonder mode) |
 | Kernel vs. plain-RAG | Numeric accuracy, citation coverage, missed facts |
 
@@ -331,23 +367,25 @@ Report measured results only. Include a failure taxonomy.
 
 | Time | Content |
 |---|---|
-| 0:00–0:20 | **Open on the agent trace already running**: plan, tool calls, model badges. One line on the user and problem. |
-| 0:20–1:20 | Flagship run: data gathered, maturity wall and rate-reset cost computed, ranking forms. |
-| 1:20–1:45 | **Critique moment:** independent verifier/critic catches the redeemed bond or missing CP; agent re-queries; ranking changes. |
-| 1:45–2:15 | Memo with click-through citations; SAM-verified maturity chart from the issuer deck next to the filing-based maturity wall; Workflow 2 subordination matrix. |
-| 2:15–2:40 | Meta pipeline panel; architecture diagram; run cost and latency. |
-| 2:40–3:00 | Eval numbers including the plain-RAG comparison; live URL; close. |
+| 0:00–0:15 | Hook: "Credit analysts miss things. Here's what Kernel caught in 2026 so far, on its own." The analyst's watchlist of 9 issuers. |
+| 0:15–1:00 | **Replay** of Jan–Oct 2026: events stream in; alerts appear in the feed as Kernel processes each one. |
+| 1:00–1:45 | Open the **Verizon redemption alert**: notice → proposed change → verifier check → maturity wall before/after → rank change. Then the **Duke term-loan alert**: the critic finds debt missing from the bond list. |
+| 1:45–2:15 | Issuer page: maturity wall, rate-reset cost, SAM-verified chart from the issuer deck, holdco/opco panel. One drill-down question answered with the trace. |
+| 2:15–2:40 | Meta pipeline panel (Spark Open classifies and verifies, Spark extracts, Wonder writes the brief, SAM reads charts); cost and latency per alert. |
+| 2:40–3:00 | Eval: replay recall/precision vs. the plain-RAG baseline; live URL; close. |
 
-**Closing line:** *"Kernel doesn't retrieve passages. It conducts, verifies and explains research."*
+**Closing line:** *"Kernel doesn't wait to be asked. It watches, verifies and tells you what matters."*
 
-**Rules:** pre-ingest the corpus; cache flagship runs; record a fallback; citations on screen; never a chat-only shot; show only hackathon-built features. Produce a separate **60-second cut** for X.
+**Rules:** pre-ingest the corpus; cache replay runs; record a fallback; citations on screen; never a chat-only shot; show only hackathon-built features. Produce a separate **60-second cut** for X (the Verizon alert is the hook).
 
 ## 15. Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
 | Judges read it as basic RAG | Open video on the trace; README first line; plain-RAG baseline in eval |
-| Scope overrun | Workflow priority fixed; Workflow 3 cut if behind on Nov 2 |
+| Scope overrun | Capability priority fixed; drill-down questions and subordination panel are the first cuts |
+| Watchers miss or misparse events | Replay uses a curated event list with source documents; live watchers are a bonus on top |
+| Alert noise | Materiality rules in code, shown in the UI; precision measured in replay |
 | Model IDs / API differ from assumptions | Smoke-test every model on day 1 against the official model list |
 | SAM 3.1 weak on document pages | **Confirmed day 1:** no detections on text/tables. Tables come from filing HTML (pdfplumber for PDFs); SAM used only for charts, where it works |
 | Chart reader fails on dense or stacked maturity charts | Geometry check returns "unverified" rather than a false pass; test on real maturity-profile charts before relying on it |
@@ -369,11 +407,11 @@ Report measured results only. Include a failure taxonomy.
 
 ## 17. Submission narrative
 
-Kernel Credit Lab addresses a problem I know firsthand: fixed-income research is slowed by fragmented filings, bond documentation and macro context. Kernel turns these inputs into a structured, cited knowledge base for USD investment-grade corporate bonds and runs a verifiable research loop over it.
+Kernel Credit Lab addresses a problem I know firsthand: credit analysts monitor many issuers across filings, bond documentation, announcements and rates, and important changes are noticed late or missed. Kernel is a proactive monitor for USD investment-grade bonds that watches these sources itself.
 
-Asked which issuers face the greatest refinancing pressure, Kernel plans the investigation, gathers structured and document evidence, computes each issuer's rate-reset cost and coverage impact in deterministic Python, has an independent open-weight model verify every claim, catches and corrects its own mistakes, and returns a source-linked memo with its full trace, cost and latency.
+When something happens — a bond redeemed early, a tender offer, a new term loan in a quarterly filing, a move in Treasury yields — Kernel reads the source, proposes the change to its structured, cited data, recomputes each issuer's maturity wall, rate-reset cost and coverage in deterministic Python, has an independent open-weight model verify every claim, critiques itself, and raises an alert only when the change is material, with before/after numbers and the full trace. Replayed over real events from January to October 2026, it catches [measured results].
 
-Kernel runs on a hybrid Meta stack: SAM 3.1 locates charts in issuer presentations and its bar geometry verifies every value Muse Spark reads from them, Muse Spark extracts, plans and synthesizes, Muse Wonder runs deep investigations, and Muse Spark Open handles bulk document processing and independent verification, a path that can be self-hosted by firms whose documents cannot leave their perimeter. Built with FastAPI, PostgreSQL/pgvector, a sandboxed tool runtime and a Next.js workbench, with CI, an evaluation report and a deployed instance.
+Kernel runs on a hybrid Meta stack: Muse Spark Open classifies events and independently verifies claims (a path that can be self-hosted by firms whose documents cannot leave their perimeter), Muse Spark extracts and reasons, Muse Wonder writes the daily brief, and SAM 3.1 locates charts in issuer presentations so their bar geometry can verify every value Spark reads. Built with FastAPI, PostgreSQL/pgvector, a background event pipeline and a Next.js dashboard, with CI, an evaluation report and a deployed instance.
 
 ---
 
@@ -523,6 +561,9 @@ Principles: JSON output; page/region/chunk citations; confidence scores; explici
 | get_issuer, get_bonds, get_entity_structure | Profiles, bond list, holdco/opco tree |
 | get_maturity_schedule | Maturities and par-call windows |
 | get_financial_metrics, get_recent_events | Metric series, event timeline |
+| propose_state_change | Structured diff to an instrument with evidence (applied after verification) |
+| snapshot_metrics, diff_metrics | Before/after metrics for an event |
+| assess_materiality | Rule results and alert decision |
 | get_macro_series | Treasury yields by tenor, policy rate |
 | calculate_maturity_wall | Concentration by period |
 | **calculate_rate_reset_cost** | Incremental annual interest expense |
@@ -538,7 +579,7 @@ Principles: JSON output; page/region/chunk citations; confidence scores; explici
 
 ## 12. Meta usage in the demo
 
-Visible **Meta pipeline panel**: SAM 3.1 (charts) → Spark → Kernel tools → Spark Open (verify) → Spark/Wonder → cited memo. For each step: model, provider, task, input and output summary, tokens, cost, latency, citations, confidence.
+Visible **Meta pipeline panel** per alert: Spark Open (classify event) → Spark (extract, propose change) → Kernel tools → Spark Open (verify) → Spark (alert) / Wonder (daily brief); SAM 3.1 for charts on issuer pages. For each step: model, provider, task, input and output summary, tokens, cost, latency, citations, confidence.
 
 ## 13. Development tooling (honest attribution)
 
@@ -553,14 +594,14 @@ Times are Madrid unless noted (ET sessions are 17:00 Madrid until US clocks chan
 | Day | Deliverables | Exit condition |
 |---|---|---|
 | **Tue Oct 27** ✅ | Fresh public repo; Docker Compose (API, Postgres+pgvector, Redis, worker, web); Cursor rules; `.env.example`; CI skeleton; unified model client; **smoke tests for Spark, Wonder, SAM 3.1 (on a prospectus page), Spark Open on Baseten**; apply for Baseten credits; Agents 101 (17:00 Madrid) | All models answer with confirmed IDs; CI green; key only in `.env` |
-| **Wed Oct 28** | Full schema + migrations (incl. `ModelCall`, `DocumentRegion`, `CuratedSource`); issuer shortlist; hand-curated seed for ~25 bonds; seed loader with validation; Agents 102 (17:00 Madrid) | Universe loaded and queryable |
-| **Thu Oct 29** | EDGAR submissions + XBRL client (rate-limited, declared User-Agent); FRED client; filing ingestion with hashes; metric normalization | Filings, metrics and macro series ingested |
-| **Fri Oct 30** | PDF/HTML parsing, chunking, embeddings, pgvector; hybrid retrieval; Spark Open classification/tagging; Spark extraction with citations; HTML table parsing (pdfplumber for PDFs); chart reader on issuer maturity-profile charts | A 424B and a 10-K produce validated terms and citations |
-| **Sat Oct 31** | Deterministic tools + pytest (maturity wall, rate reset, pro-forma coverage, ranking); tool registry with `ToolCall` logging | All calculation tests pass in CI |
-| **Sun Nov 1** | State machine end to end; Spark Open verifier; critic and revise loop; seed the critique trap; Workflow 1 complete; SSE progress endpoint | Flagship run completes with a real critique-driven revision |
-| **Mon Nov 2** | Workbench UI: live trace with cost/latency, plan, citations popover, maturity-wall chart, memo view, issuer page; Workflow 2 (thin); verified maturity chart beside the maturity wall. **Cut Workflow 3 if behind.** | Question → trace → memo works in the browser |
-| **Tue Nov 3** | Wonder deep-research runs (cached); eval runner + plain-RAG baseline; deploy public instance; README (first-line non-RAG claim, architecture diagram, eval table, "Built during the hackathon", Meta tooling, setup); last day for organizer troubleshooting | Live URL works; eval numbers measured |
-| **Wed Nov 4** | Record 3-minute video and 60-second X cut; final checks (public repo, video link, team listed); **submit in the evening Madrid time**; post on X | Submitted well before 03:00 Nov 5 Madrid |
+| **Wed Oct 28** | Direction change to proactive monitor (this document); full schema + migrations incl. `Watchlist`, `Event`, `StateChange`, `Alert`, `MetricSnapshot`, loans, `CuratedSource`; seed as a **31 Dec 2025 snapshot** (Duke year-end debt details; Verizon pre-tender amounts; no 2026 loans or convertible); seed loader with validation; Agents 102 (17:00) | Universe loaded and queryable |
+| **Thu Oct 29** | EDGAR submissions + XBRL client; FRED client; filing ingestion with hashes; **curated replay event list (Jan–Oct 2026) with source documents** | Filings, metrics, yields and replay events stored |
+| **Fri Oct 30** | HTML parsing, chunking, embeddings; Spark Open event classification; Spark extraction with citations; `propose_state_change`; chart reader on issuer charts | A redemption notice and a 10-Q debt note produce verified, cited state changes |
+| **Sat Oct 31** | Deterministic tools + tests (maturity wall incl. loans, rate reset, pro-forma coverage, ranking, metric diff, materiality) | All calculation tests pass in CI |
+| **Sun Nov 1** | Event-driven state machine end to end; verifier and critic; **replay runner** through the worker queue; alerts persisted | Replay produces the expected alerts (Verizon redemption, Duke loans) |
+| **Mon Nov 2** | Dashboard: alerts feed (confirm/dismiss), alert detail with before/after and trace, issuer pages, daily brief; drill-down question (thin) | Replay → alerts → trace works in the browser |
+| **Tue Nov 3** | Wonder daily brief (cached); eval (replay recall/precision, plain-RAG baseline); live watchers on a schedule; deploy; README | Live URL works; eval numbers measured |
+| **Wed Nov 4** | Record 3-minute video and 60-second X cut; final checks; **submit in the evening Madrid time**; post on X | Submitted well before 03:00 Nov 5 Madrid |
 
 ### Security rule (non-negotiable)
 
@@ -568,7 +609,7 @@ API keys (Meta and Baseten) live only in `.env` or deployment secrets. They are 
 
 ### README skeleton
 
-1. One-line pitch + "Not basic RAG: here is the trace" GIF.
+1. One-line pitch + GIF of the replay producing alerts, with one alert opened to its trace.
 2. Live demo URL, video link, CI badge.
 3. Architecture diagram.
 4. Evaluation results (measured), including plain-RAG baseline.
