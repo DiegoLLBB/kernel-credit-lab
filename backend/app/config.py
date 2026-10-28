@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     # USD per 1M tokens, as JSON: {"model-id": [input_price, output_price]}. Used for cost tracking.
     model_pricing_json: str = "{}"
 
-    # SEC EDGAR requires a descriptive User-Agent with contact info.
-    sec_user_agent: str = "KernelCreditLab research@example.com"
+    # SEC EDGAR: descriptive User-Agent with contact (SEC_USER_AGENT; never hardcode).
+    sec_user_agent: str = ""
     fred_api_key: str = Field(default="", repr=False)
 
 
