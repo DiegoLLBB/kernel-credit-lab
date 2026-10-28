@@ -81,3 +81,10 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
 2. **Replay mode** over real Jan–Oct 2026 events for a deterministic demo and as the evaluation set.
 3. **Seed = pre-replay snapshot**, so the real events (Duke term loans and convertible, Intel's refinancing,
    Verizon tender and redemption) are discovered by Kernel during replay rather than staged.
+4. **Agent design adopts Meta's verifiable-agent patterns** (from the Agents 101/102 workshop repo
+   `meta-models/legal-agent-workshop`, read on 28 Oct): one tool per turn on `/responses`; checks
+   **inside** the tools at fixed points (coverage on `set_checklist`, exact-quote check on
+   `record_fact`, evidence check on `propose_change`, alert rules + independent claims check on
+   `submit_alert`); 3 refusals escalate to a person; analyst confirm/dismiss as sign-off;
+   append-only audit log; fake-model tests. Patterns re-implemented (repo has no license) and
+   credited. See CONTEXT.md §9.

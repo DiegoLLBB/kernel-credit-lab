@@ -251,30 +251,65 @@ Earnings-call audio via Muse Voice Transcribe remains a stretch trigger type, **
 
 ## 9. Agent architecture
 
-### State machine
+*Revised 28 Oct 2026, adopting the verifiable-agent patterns from Meta's Agents 101/102 workshop
+(`meta-models/legal-agent-workshop`). Patterns are re-implemented, not copied (the repo has no
+license); credited in the README.*
 
-EVENT_RECEIVED → CLASSIFY_EVENT → PLAN → GATHER_STRUCTURED_DATA → RETRIEVE_EVIDENCE → EXTRACT_FACTS → PROPOSE_STATE_CHANGES → RUN_TOOLS → VERIFY_CLAIMS → CRITIQUE → REVISE → ASSESS_MATERIALITY → PUBLISH_ALERT | LOG_ONLY → COMPLETE
+### 9.1 Principle: the model reasons, the checks decide
 
-Drill-down questions enter at CLASSIFY_EVENT with type `question` and end with an answer instead of an alert. State changes (e.g. marking a bond redeemed) are **proposals** recorded with their evidence; they are applied only after verification, and every change is reversible and auditable.
+The model chooses what to do next; **checks that do not trust the model** decide whether the work
+may move forward. Checks live **inside the tools at fixed points**, never as optional tools: a
+separate "verify" tool runs only if the model calls it, and a confident model skips it. Neither
+the model nor a bug in the loop can bypass a check.
 
-The state machine is **code-driven**: transitions are decided by Python, and LLM calls are nodes within states. The agent chooses tools and arguments inside a state; it does not choose arbitrary next states.
+### 9.2 The per-event loop
 
-| State | Responsibility | Model / engine |
-|---|---|---|
-| Classify event, Plan | Event type, affected issuers/instruments, explicit plan | Spark Open (bulk) / Spark |
-| Gather, Retrieve | SQL, exact lookup, pgvector | Code |
-| Extract facts | Strict JSON with citations; chart readings verified by geometry | Spark (+ SAM for charts) |
-| Run tools | Deterministic Python | Code |
-| **Verify claims** | Check each claim against citations and tool outputs | **Spark Open (independent model)** |
-| Critique | Unsupported claims, alternative explanations, gaps | Spark; Wonder for flagship |
-| Revise | Re-query, recompute or soften claims | Spark / Wonder |
-| Propose state changes | Structured diffs to bonds/loans with evidence | Spark |
-| Assess materiality | Apply rules to before/after metrics | Code |
-| Publish alert / brief | Cited alert card; daily brief | Spark; Wonder for the brief |
+One agent run per event (or drill-down question). Each turn: the model picks **exactly one tool**,
+the code runs it, the result goes back. Plain-text answers are refused. Progress is saved every
+turn, so a run can stop and resume. Uses the Meta Model API **`/responses` endpoint** with tool
+definitions; the model client gains a `responses` path alongside chat completions.
 
-### Guardrails
+Run statuses: `running` → `alerted` | `logged` (not material) | `needs_input` (a person must act)
+| `paused` (turn or cost limit, or API failure; resumable).
 
-Allowlisted tools; sandboxed Python; max iterations; token and cost ceilings per run; mandatory citation check before COMPLETE; no LLM-generated prices or ratings; visible plan and trace; explicit uncertainty and data gaps.
+### 9.3 Tools and the checks inside them
+
+| Tool | What it does | Check inside the tool (cannot be skipped) | On failure |
+|---|---|---|---|
+| `set_checklist` | The agent lists what this event must settle, each item with the evidence needed | **Coverage check:** compared with the required items for the event type (e.g. a redemption must cover instrument, amount, date, price basis, effect on maturities). In replay, also against the expected outcome, which the agent never sees | Refused with feedback that points to the gap without revealing the reference; accepted after 3 tries with the score kept for the reviewer |
+| `list_documents`, `read_document` | Lists and reads the event's source documents (8-K, press release, 10-Q debt note, 424B). Text is extracted once (HTML parsing; PDFs and images via Muse Spark), cached by SHA-256 | — | — |
+| `record_fact` | Records one piece of evidence for one checklist item: document, location, exact quote, claim | **Quote check (code):** the quote must appear word-for-word in the cached text of a document the agent has read. Max 3 facts per item | Refused: "quote not found on that page" |
+| `propose_change` | Proposes a structured change to Kernel's data (mark redeemed, reduce outstanding, add loan, add bond) | **Evidence check (code):** every changed field must cite a recorded fact; the change must be internally consistent (e.g. reduction ≤ outstanding; maturity after issue date) | Refused with the problems |
+| `compute_metrics` | Runs the deterministic tools (maturity wall incl. loans, rate-reset cost, pro-forma coverage, ranking) before and after the proposed changes | Pure code; every output is a `ToolCall` | — |
+| `request_input` | Asks a person for missing evidence on one checklist item | **Allowed only** if the item is real and unproven and every available document has been read | Refused with the reason |
+| `submit_alert` | Files the finding: summary, one finding per checklist item with citations, before/after metrics, materiality | ① **Alert rules (code):** every item settled or escalated; every citation matches a recorded fact; **every number matches a `compute_metrics` output**; materiality recomputed by code. ② **Claims check (Muse Spark Open, independent model):** does each finding say more than its quotes and numbers support? | Refused with the problems; **3 refusals → escalated to a person** |
+
+When `submit_alert` passes: proposed changes are applied, the `MetricSnapshot` is stored, and the
+alert is published (material) or logged to the issuer timeline (not material). The analyst's
+**confirm / dismiss** is the sign-off; a dismissal with a note can be sent back to the agent.
+
+### 9.4 Models in the loop
+
+| Role | Model |
+|---|---|
+| Event classification, document triage (bulk) | Muse Spark Open |
+| The agent loop (choosing tools, reading, recording facts, proposing changes, drafting the alert) | Muse Spark |
+| Coverage check and **claims check** (independent of the agent's model) | Muse Spark Open |
+| Daily brief across alerts | Muse Wonder |
+| Charts in issuer decks | SAM 3.1 + Spark, verified by geometry |
+
+### 9.5 Records and limits
+
+- **Append-only audit log** per run: every tool call, check result, refusal, escalation and human
+  action, with actor (`agent`, `verification`, `analyst`) and timestamp.
+- **Evidence vs. interpretation:** a fact is what the document says (exact quote); the claim is
+  what it means for the credit. Kept in separate fields everywhere.
+- **Counter-evidence:** every checklist includes an item for evidence pointing the other way
+  (e.g. "is any part of the redemption conditional?").
+- **Limits:** max turns, token and cost ceilings per run; max facts per item and citations per
+  finding; bounded retries before escalation. No LLM-generated prices, ratings or numbers.
+- **Testing:** a fake model drives the loop in unit tests (no API calls), so the gates are tested
+  deterministically in CI.
 
 ### The critique moments (real events, not staged)
 
@@ -283,7 +318,7 @@ The seed is a snapshot built from sources dated **before** the replay window, so
 - **Verizon 4.329% 2028** listed as outstanding; the replay delivers the redemption notice, and Kernel removes it and recomputes.
 - **Duke term loans** absent from the bond list; the replay delivers the 10-Q, and the critic notices the gap between bond-level and filing-level debt.
 
-The trace shows the evidence, the proposed change, the verifier's check and the before/after numbers.
+The trace shows the checklist, each recorded fact with its quote, the proposed change, every check (passed or refused) and the before/after numbers.
 
 ## 10. Technical architecture
 
@@ -311,6 +346,10 @@ Next.js dashboard (alerts feed, brief, issuer pages, trace) → FastAPI API → 
 | **Loan** | Term loans and other non-bond debt (or `Bond` with `instrument_type`) |
 | **Watchlist** | Issuers the analyst monitors |
 | **StateChange** | Proposed/applied change to an instrument, with evidence, verifier result and run |
+| **ChecklistItem** | What an event run must settle: question, evidence needed, status (open / proven / escalated) |
+| **Fact** | Recorded evidence: document, location, exact quote, claim, checklist item |
+| **CheckResult** | Outcome of each in-tool check (coverage, quote, evidence, alert rules, claims): passed, problems |
+| **AuditEntry** | Append-only log of actions by agent, verification and analyst |
 | **Alert** | Material finding: event, before/after metrics, status (new / confirmed / dismissed), run |
 | **MetricSnapshot** | Per-issuer computed metrics at a point in time (for before/after) |
 | Covenant | Extracted contractual term |
@@ -550,7 +589,7 @@ OPEN_MODEL=meta-models/muse-spark-open-1026
 
 ## 10. Prompts (versioned)
 
-`document_classifier_v1` (Spark Open), `chunk_tagger_v1` (Spark Open), `bond_term_extractor_v1` (Spark), `covenant_extractor_v1` (Spark), `financial_metric_extractor_v1` (Spark), `event_classifier_v1` (Spark Open/Spark), `research_planner_v1` (Spark), `tool_selector_v1` (Spark), `claim_verifier_v1` (**Spark Open**), `critic_v1` (Spark/Wonder), `memo_writer_v1` (Spark/Wonder), `deep_research_v1` (Wonder).
+`document_classifier_v1` (Spark Open), `chunk_tagger_v1` (Spark Open), `bond_term_extractor_v1` (Spark), `covenant_extractor_v1` (Spark), `financial_metric_extractor_v1` (Spark), `event_classifier_v1` (Spark Open/Spark), `research_planner_v1` (Spark), `tool_selector_v1` (Spark), `claim_verifier_v1` (**Spark Open**), `coverage_check_v1` (**Spark Open**), `event_agent_v1` (Spark, system instructions for the loop), `critic_v1` (Spark/Wonder), `memo_writer_v1` (Spark/Wonder), `deep_research_v1` (Wonder).
 
 Principles: JSON output; page/region/chunk citations; confidence scores; explicit null; no invented identifiers, prices, ratings or dates; negative examples for ambiguous fields (e.g. make-whole vs. par call).
 
@@ -561,7 +600,7 @@ Principles: JSON output; page/region/chunk citations; confidence scores; explici
 | get_issuer, get_bonds, get_entity_structure | Profiles, bond list, holdco/opco tree |
 | get_maturity_schedule | Maturities and par-call windows |
 | get_financial_metrics, get_recent_events | Metric series, event timeline |
-| propose_state_change | Structured diff to an instrument with evidence (applied after verification) |
+| set_checklist, record_fact, propose_change, request_input, submit_alert | Agent-facing gated tools (see §9.3); checks run inside them |
 | snapshot_metrics, diff_metrics | Before/after metrics for an event |
 | assess_materiality | Rule results and alert decision |
 | get_macro_series | Treasury yields by tenor, policy rate |
@@ -575,7 +614,7 @@ Principles: JSON output; page/region/chunk citations; confidence scores; explici
 | search_documents, get_citations | Chunks and sources |
 | render_chart | Chart artifact from computed data |
 
-**Rule:** the LLM decides what to compute; Python computes; the verifier checks.
+**Rule:** the LLM decides what to compute; Python computes; checks inside the tools decide whether the work moves forward.
 
 ## 12. Meta usage in the demo
 
@@ -596,9 +635,9 @@ Times are Madrid unless noted (ET sessions are 17:00 Madrid until US clocks chan
 | **Tue Oct 27** ✅ | Fresh public repo; Docker Compose (API, Postgres+pgvector, Redis, worker, web); Cursor rules; `.env.example`; CI skeleton; unified model client; **smoke tests for Spark, Wonder, SAM 3.1 (on a prospectus page), Spark Open on Baseten**; apply for Baseten credits; Agents 101 (17:00 Madrid) | All models answer with confirmed IDs; CI green; key only in `.env` |
 | **Wed Oct 28** | Direction change to proactive monitor (this document); full schema + migrations incl. `Watchlist`, `Event`, `StateChange`, `Alert`, `MetricSnapshot`, loans, `CuratedSource`; seed as a **31 Dec 2025 snapshot** (Duke year-end debt details; Verizon pre-tender amounts; no 2026 loans or convertible); seed loader with validation; Agents 102 (17:00) | Universe loaded and queryable |
 | **Thu Oct 29** | EDGAR submissions + XBRL client; FRED client; filing ingestion with hashes; **curated replay event list (Jan–Oct 2026) with source documents** | Filings, metrics, yields and replay events stored |
-| **Fri Oct 30** | HTML parsing, chunking, embeddings; Spark Open event classification; Spark extraction with citations; `propose_state_change`; chart reader on issuer charts | A redemption notice and a 10-Q debt note produce verified, cited state changes |
-| **Sat Oct 31** | Deterministic tools + tests (maturity wall incl. loans, rate reset, pro-forma coverage, ranking, metric diff, materiality) | All calculation tests pass in CI |
-| **Sun Nov 1** | Event-driven state machine end to end; verifier and critic; **replay runner** through the worker queue; alerts persisted | Replay produces the expected alerts (Verizon redemption, Duke loans) |
+| **Fri Oct 30** | HTML parsing, chunking, embeddings; Spark Open event classification; Spark extraction with citations; `propose_change`; chart reader on issuer charts | A redemption notice and a 10-Q debt note produce verified, cited state changes |
+| **Sat Oct 31** | Deterministic tools + tests (maturity wall incl. loans, rate reset, pro-forma coverage, ranking, metric diff, materiality); `record_fact` quote check and `propose_change` evidence check with tests | All calculation tests pass in CI |
+| **Sun Nov 1** | Per-event agent loop on `/responses` with the gated tools (§9.3): quote check, evidence check, alert rules, Spark Open claims and coverage checks, escalation after 3 refusals; fake-model tests; **replay runner** through the worker queue; alerts persisted | Replay produces the expected alerts (Verizon redemption, Duke loans) |
 | **Mon Nov 2** | Dashboard: alerts feed (confirm/dismiss), alert detail with before/after and trace, issuer pages, daily brief; drill-down question (thin) | Replay → alerts → trace works in the browser |
 | **Tue Nov 3** | Wonder daily brief (cached); eval (replay recall/precision, plain-RAG baseline); live watchers on a schedule; deploy; README | Live URL works; eval numbers measured |
 | **Wed Nov 4** | Record 3-minute video and 60-second X cut; final checks; **submit in the evening Madrid time**; post on X | Submitted well before 03:00 Nov 5 Madrid |
@@ -615,6 +654,6 @@ API keys (Meta and Baseten) live only in `.env` or deployment secrets. They are 
 4. Evaluation results (measured), including plain-RAG baseline.
 5. Meta AI tooling (hosted + open-weight roles; Muse Code tasks with commit links).
 6. Built during the hackathon (commit history, dates).
-7. Data sources, licensing and limitations.
+7. Data sources, licensing and limitations; credit to Meta's Agents 101/102 workshop for the verifiable-agent patterns.
 8. Local setup (one command).
 9. Disclaimer: research support, not investment advice.
