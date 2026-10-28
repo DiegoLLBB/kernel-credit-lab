@@ -61,6 +61,7 @@ class Instrument(TimestampMixin, Base):
     __tablename__ = "instrument"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     issuer_id: Mapped[str] = mapped_column(
         ForeignKey("issuer.id", ondelete="CASCADE"), index=True, nullable=False
     )

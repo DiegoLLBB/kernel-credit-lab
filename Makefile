@@ -1,4 +1,4 @@
-.PHONY: up down logs test lint smoke migrate revision
+.PHONY: up down logs test lint smoke migrate revision seed
 
 up:            ## Build and start the full stack
 	docker compose up --build -d
@@ -24,3 +24,6 @@ migrate:
 
 revision:      ## make revision m="add bonds"
 	docker compose exec api alembic revision --autogenerate -m "$(m)"
+
+seed:          ## Load the Dec 2025 snapshot (issuers, watchlist, instruments, curated sources)
+	docker compose exec api python -m scripts.load_seed seed/snapshot_2025-12-31.json
