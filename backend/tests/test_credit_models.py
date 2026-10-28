@@ -33,17 +33,24 @@ def session() -> Session:
 
 
 def test_issuer_parent_child_and_cik(session: Session) -> None:
-    holdco = Issuer(name="Duke Energy Corporation", cik="1326160")
+    holdco = Issuer(name="Duke Energy Corporation", cik="1326160", ticker="DUK", sector="Utilities")
     session.add(holdco)
     session.flush()
-    opco = Issuer(name="Duke Energy Carolinas, LLC", cik="30371", parent_id=holdco.id)
+    opco = Issuer(
+        name="Duke Energy Carolinas, LLC",
+        cik="30371",
+        parent_id=holdco.id,
+        sector="Utilities",
+    )
     session.add(opco)
     session.commit()
 
     found = session.scalars(select(Issuer).where(Issuer.cik == "30371")).one()
     assert found.parent_id == holdco.id
     assert found.parent.name == "Duke Energy Corporation"
+    assert found.parent.ticker == "DUK"
     assert holdco.subsidiaries[0].name == opco.name
+    assert holdco.sector == "Utilities"
 
 
 def test_instrument_bond_and_loan(session: Session) -> None:
@@ -71,6 +78,8 @@ def test_instrument_bond_and_loan(session: Session) -> None:
         instrument_type="loan",
         coupon=Decimal("4.475"),
         rate_type="floating",
+        reference_rate="SOFR",
+        spread_bps=85,
         maturity=date(2027, 3, 12),
         issue_date=date(2026, 3, 13),
         amount_outstanding=Decimal("1000000000"),
@@ -86,9 +95,12 @@ def test_instrument_bond_and_loan(session: Session) -> None:
     loans = session.scalars(select(Instrument).where(Instrument.instrument_type == "loan")).all()
     assert len(bonds) == 1
     assert bonds[0].cusip == "92343VER1"
+    assert bonds[0].reference_rate is None
     assert len(loans) == 1
     assert loans[0].cusip is None
     assert loans[0].rate_type == "floating"
+    assert loans[0].reference_rate == "SOFR"
+    assert loans[0].spread_bps == 85
 
 
 def test_call_terms(session: Session) -> None:
@@ -179,7 +191,8 @@ def test_filing(session: Session) -> None:
 
 def test_event(session: Session) -> None:
     issuer = Issuer(name="Verizon Communications Inc.", cik="732712")
-    session.add(issuer)
+    run = ResearchRun(question="Process Verizon redemption")
+    session.add_all([issuer, run])
     session.flush()
     filing = Filing(
         issuer_id=issuer.id,
@@ -197,6 +210,8 @@ def test_event(session: Session) -> None:
         detected_at=datetime(2026, 8, 20, 12, 0, tzinfo=UTC),
         source_filing_id=filing.id,
         summary="Verizon redeems $1.25bn 4.329% 2028 notes",
+        status="processing",
+        run_id=run.id,
     )
     session.add(event)
     session.commit()
@@ -205,6 +220,17 @@ def test_event(session: Session) -> None:
     assert found.issuer_id == issuer.id
     assert found.source_filing_id == filing.id
     assert found.event_date == date(2026, 9, 21)
+    assert found.status == "processing"
+    assert found.run_id == run.id
+
+    pending = Event(
+        event_type="tender",
+        issuer_id=issuer.id,
+        event_date=date(2026, 6, 15),
+    )
+    session.add(pending)
+    session.commit()
+    assert pending.status == "pending"
 
 
 def test_state_change(session: Session) -> None:
@@ -256,6 +282,14 @@ def test_alert(session: Session) -> None:
         issuer_id=issuer.id,
         run_id=run.id,
         title="Verizon redeems $1.25bn 2028 notes",
+        summary="Full redemption of the 4.329% notes due 2028 reduces 24-month maturities.",
+        findings=[
+            {
+                "item": "redeemed_amount",
+                "statement": "Verizon will redeem $1.25bn aggregate principal amount.",
+                "citations": ["press release ¶2"],
+            }
+        ],
         before_metrics={"maturities_24m": 2_500_000_000},
         after_metrics={"maturities_24m": 1_250_000_000},
         materiality_reasons=["maturities change >= $500M"],
@@ -266,6 +300,9 @@ def test_alert(session: Session) -> None:
 
     found = session.scalars(select(Alert).where(Alert.status == "new")).one()
     assert found.title.startswith("Verizon")
+    assert "reduces 24-month" in (found.summary or "")
+    assert found.findings[0]["item"] == "redeemed_amount"
+    assert found.findings[0]["citations"] == ["press release ¶2"]
     assert found.before_metrics["maturities_24m"] == 2_500_000_000
     assert found.after_metrics["maturities_24m"] == 1_250_000_000
     assert found.materiality_reasons == ["maturities change >= $500M"]

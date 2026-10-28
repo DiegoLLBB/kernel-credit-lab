@@ -1,11 +1,14 @@
 """Create-and-query coverage for checklist, fact, check-result and audit models."""
 
+import os
 from datetime import UTC, date, datetime
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.config import get_settings
 from app.db import Base
 from app.models import (
     AuditEntry,
@@ -15,6 +18,11 @@ from app.models import (
     Filing,
     Issuer,
     ResearchRun,
+)
+
+integration = pytest.mark.skipif(
+    os.getenv("KERNEL_INTEGRATION") != "1",
+    reason="needs Postgres (set KERNEL_INTEGRATION=1; runs in CI)",
 )
 
 
@@ -33,6 +41,7 @@ def test_checklist_item(session: Session) -> None:
     session.flush()
     item = ChecklistItem(
         run_id=run.id,
+        key="redeemed_amount",
         question="What principal amount is being redeemed?",
         evidence_needed="Exact outstanding/redeemed amount from the notice",
         status="open",
@@ -41,9 +50,36 @@ def test_checklist_item(session: Session) -> None:
     session.commit()
 
     found = session.scalars(select(ChecklistItem).where(ChecklistItem.run_id == run.id)).one()
+    assert found.key == "redeemed_amount"
     assert found.status == "open"
     assert "principal" in found.question.lower()
     assert found.evidence_needed
+
+
+def test_checklist_item_key_unique_per_run(session: Session) -> None:
+    run = ResearchRun(question="Verizon redemption")
+    session.add(run)
+    session.flush()
+    session.add(
+        ChecklistItem(
+            run_id=run.id,
+            key="redeemed_amount",
+            question="Amount?",
+            evidence_needed="Notice",
+        )
+    )
+    session.commit()
+    session.add(
+        ChecklistItem(
+            run_id=run.id,
+            key="redeemed_amount",
+            question="Amount again?",
+            evidence_needed="Notice",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
 
 
 def test_fact(session: Session) -> None:
@@ -60,6 +96,7 @@ def test_fact(session: Session) -> None:
     )
     item = ChecklistItem(
         run_id=run.id,
+        key="redeemed_amount",
         question="What principal amount is being redeemed?",
         evidence_needed="Amount from the redemption notice",
         status="open",
@@ -151,3 +188,34 @@ def test_audit_entry(session: Session) -> None:
     assert [e.actor for e in found] == ["agent", "verification", "analyst"]
     assert found[1].action == "quote_check_refused"
     assert found[1].detail["reason"] == "quote not found on that page"
+
+
+@integration
+def test_audit_entry_update_rejected_on_postgres() -> None:
+    """Postgres trigger makes audit_entry append-only; skipped on SQLite."""
+    engine = create_engine(get_settings().database_url)
+    if engine.dialect.name == "sqlite":
+        pytest.skip("append-only trigger is Postgres-only")
+
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as session:
+        run = ResearchRun(question="audit append-only check")
+        session.add(run)
+        session.flush()
+        entry = AuditEntry(
+            run_id=run.id,
+            actor="agent",
+            action="record_fact",
+            detail={"ok": True},
+        )
+        session.add(entry)
+        session.commit()
+
+        with pytest.raises(DBAPIError) as raised:
+            session.execute(
+                text("UPDATE audit_entry SET action = 'tampered' WHERE id = :id"),
+                {"id": entry.id},
+            )
+            session.commit()
+        session.rollback()
+        assert "append-only" in str(raised.value).lower()

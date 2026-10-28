@@ -42,6 +42,8 @@ class Issuer(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     cik: Mapped[str | None] = mapped_column(String(10), index=True)
+    ticker: Mapped[str | None] = mapped_column(String(16), index=True)
+    sector: Mapped[str | None] = mapped_column(String(64))
     parent_id: Mapped[str | None] = mapped_column(
         ForeignKey("issuer.id", ondelete="SET NULL"), index=True
     )
@@ -69,6 +71,8 @@ class Instrument(TimestampMixin, Base):
     coupon: Mapped[Decimal] = mapped_column(Numeric(10, 6), nullable=False)
     rate_type: Mapped[str] = mapped_column(String(16), nullable=False, default="fixed")
     # fixed | floating
+    reference_rate: Mapped[str | None] = mapped_column(String(32))  # e.g. SOFR
+    spread_bps: Mapped[int | None] = mapped_column(Integer)
     maturity: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     issue_date: Mapped[date | None] = mapped_column(Date)
     amount_outstanding: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False)
@@ -159,6 +163,12 @@ class Event(TimestampMixin, Base):
         ForeignKey("filing.id", ondelete="SET NULL"), index=True
     )
     summary: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", index=True
+    )  # pending | processing | processed | failed
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_run.id", ondelete="SET NULL"), index=True
+    )
 
     issuer: Mapped[Issuer | None] = relationship()
     source_filing: Mapped[Filing | None] = relationship(back_populates="events")
@@ -207,6 +217,9 @@ class Alert(TimestampMixin, Base):
         ForeignKey("research_run.id", ondelete="SET NULL"), index=True
     )
     title: Mapped[str] = mapped_column(String(512), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    findings: Mapped[list[Any] | None] = mapped_column(JsonType)
+    # list of {item, statement, citations}
     before_metrics: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
     after_metrics: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
     materiality_reasons: Mapped[list[Any] | None] = mapped_column(JsonType)

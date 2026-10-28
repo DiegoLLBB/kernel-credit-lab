@@ -8,7 +8,17 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,14 +36,16 @@ def _uuid() -> str:
 
 
 class ChecklistItem(TimestampMixin, Base):
-    """What an event run must settle: question, evidence needed, status."""
+    """What an event run must settle: key, question, evidence needed, status."""
 
     __tablename__ = "checklist_item"
+    __table_args__ = (UniqueConstraint("run_id", "key", name="uq_checklist_item_run_key"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     run_id: Mapped[str] = mapped_column(
         ForeignKey("research_run.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     evidence_needed: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(
