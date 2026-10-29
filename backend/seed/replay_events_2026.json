@@ -808,9 +808,9 @@
       "sources": [
         {
           "form": "debt details",
-          "filed": "2026-08",
+          "filed": "2026-08-31",
           "url": "https://s201.q4cdn.com/583395453/files/doc_downloads/2026/08/Debt-Details-06-30-26-FINAL.pdf",
-          "description": "Outstanding at 30 Jun 2026"
+          "description": "Outstanding at 30 Jun 2026; published in August 2026 (exact day not stated, so the last day of the month is used)"
         }
       ],
       "expected_changes": [

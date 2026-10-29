@@ -1,0 +1,40 @@
+{
+  "window": {
+    "from": "2026-01-01",
+    "to": "2026-10-27"
+  },
+  "description": "Intel 30 Apr notes/bridge repayment — later 10-Q is confirming only.",
+  "events": [
+    {
+      "key": "intc_notes_apr",
+      "event_date": "2026-04-30",
+      "available_from": "2026-04-30",
+      "issuer": "intel",
+      "event_type": "new_issuance",
+      "title": "Intel issues $6.5bn of notes (2031-2066) and repays the bridge loan",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-04-30",
+          "url": "https://www.sec.gov/Archives/edgar/data/50863/000119312526197845/0001193125-26-197845-index.htm",
+          "description": "Item 8.01: notes issued"
+        },
+        {
+          "form": "10-Q",
+          "filed": "2026-07-24",
+          "url": "https://www.sec.gov/Archives/edgar/data/50863/000005086326000157/0000050863-26-000157-index.htm",
+          "description": "Note 11: bridge repaid in full on 30 Apr 2026"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "mark_repaid",
+          "instrument_key": "intc_bridge_2027"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Short-dated bridge replaced by long-dated bonds",
+      "notes": "The repayment is confirmed only in the Q2 10-Q (24 Jul)."
+    }
+  ]
+}

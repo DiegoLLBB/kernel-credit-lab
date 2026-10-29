@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Date,
     DateTime,
     ForeignKey,
@@ -40,6 +41,7 @@ class Issuer(TimestampMixin, Base):
     __tablename__ = "issuer"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     cik: Mapped[str | None] = mapped_column(String(10), index=True)
     ticker: Mapped[str | None] = mapped_column(String(16), index=True)
@@ -150,11 +152,16 @@ class Filing(TimestampMixin, Base):
 
 
 class Event(TimestampMixin, Base):
-    """Typed corporate or macro event that can trigger an agent run."""
+    """Typed corporate or macro event that can trigger an agent run.
+
+    ``replay_key`` idempotently identifies seeded/calendar/rate events. Evaluation
+    fields (expected_changes, expected_alert, why) live only on ``ReplayExpectation``.
+    """
 
     __tablename__ = "event"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    replay_key: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     issuer_id: Mapped[str | None] = mapped_column(
         ForeignKey("issuer.id", ondelete="SET NULL"), index=True
@@ -176,7 +183,56 @@ class Event(TimestampMixin, Base):
 
     issuer: Mapped[Issuer | None] = relationship()
     source_filing: Mapped[Filing | None] = relationship(back_populates="events")
+    event_filings: Mapped[list["EventFiling"]] = relationship(
+        back_populates="event", cascade="all, delete-orphan"
+    )
     alerts: Mapped[list["Alert"]] = relationship(back_populates="event")
+    replay_expectation: Mapped["ReplayExpectation | None"] = relationship(
+        back_populates="event", uselist=False
+    )
+
+
+class EventFiling(TimestampMixin, Base):
+    """Many-to-many link between an Event and its eligible source Filings."""
+
+    __tablename__ = "event_filing"
+    __table_args__ = (UniqueConstraint("event_id", "filing_id", name="uq_event_filing"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    event_id: Mapped[str] = mapped_column(
+        ForeignKey("event.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filing_id: Mapped[str] = mapped_column(
+        ForeignKey("filing.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    event: Mapped[Event] = relationship(back_populates="event_filings")
+    filing: Mapped[Filing] = relationship()
+
+
+class ReplayExpectation(TimestampMixin, Base):
+    """Evaluation reference for a seeded replay event — never shown to the agent."""
+
+    __tablename__ = "replay_expectation"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    issuer_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_date: Mapped[date] = mapped_column(Date, nullable=False)
+    available_from: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    sources: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    confirming_sources: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    expected_changes: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    expected_alert: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    why: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    event_id: Mapped[str | None] = mapped_column(
+        ForeignKey("event.id", ondelete="SET NULL"), unique=True, index=True
+    )
+
+    event: Mapped[Event | None] = relationship(back_populates="replay_expectation")
 
 
 class StateChange(TimestampMixin, Base):

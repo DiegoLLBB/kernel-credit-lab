@@ -390,6 +390,7 @@ def load_seed(session: Session, path: Path | str) -> LoadStats:
             stats.issuers_created += 1
         else:
             stats.issuers_updated += 1
+        issuer.key = str(raw["key"])
         issuer.name = str(raw["name"])
         issuer.ticker = raw.get("ticker")
         issuer.sector = raw.get("sector")

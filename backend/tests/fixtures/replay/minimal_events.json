@@ -1,0 +1,60 @@
+{
+  "window": {
+    "from": "2026-01-01",
+    "to": "2026-10-27"
+  },
+  "snapshot": "snapshot_2025-12-31.json",
+  "description": "Minimal replay slice for offline tests (tender launch + results).",
+  "events": [
+    {
+      "key": "vz_tender_launch",
+      "event_date": "2026-05-11",
+      "available_from": "2026-05-11",
+      "issuer": "verizon",
+      "event_type": "tender_announced",
+      "title": "Verizon launches cash tender offers for 20 series, incl. its 2.100% notes due 2028",
+      "sources": [
+        {
+          "form": "press release",
+          "filed": "2026-05-11",
+          "url": "https://www.verizon.com/about/news/feed/verizon-debt-tender-offer-consent-solicitation",
+          "description": "Tender launch"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "announcement only"
+        }
+      ],
+      "expected_alert": false,
+      "why": "Launch; amount change lands on results"
+    },
+    {
+      "key": "vz_tender_results",
+      "event_date": "2026-06-22",
+      "available_from": "2026-06-17",
+      "issuer": "verizon",
+      "event_type": "tender_results",
+      "title": "Verizon buys back $1.14bn (55%) of its 2.100% notes due 2028 in its tender offer",
+      "sources": [
+        {
+          "form": "press release",
+          "filed": "2026-06-17",
+          "url": "https://www.verizon.com/about/node/929969",
+          "description": "Final results"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "reduce_outstanding",
+          "instrument_key": "vz_2100_2028",
+          "by": "1142981000",
+          "new_amount": "925154000"
+        }
+      ],
+      "expected_alert": true,
+      "why": "Cuts one of Verizon's cheapest 2028 bonds by more than half"
+    }
+  ]
+}
