@@ -10,6 +10,7 @@ from app.models.credit import (
     Issuer,
     MaturitySchedule,
     MetricSnapshot,
+    RateObservation,
     StateChange,
     Watchlist,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "MaturitySchedule",
     "MetricSnapshot",
     "ModelCall",
+    "RateObservation",
     "ResearchRun",
     "StateChange",
     "ToolCall",

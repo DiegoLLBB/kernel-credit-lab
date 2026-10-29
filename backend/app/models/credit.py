@@ -295,3 +295,17 @@ class MaturitySchedule(TimestampMixin, Base):
     buckets: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
 
     issuer: Mapped[Issuer] = relationship()
+
+
+class RateObservation(TimestampMixin, Base):
+    """Daily FRED observation (Treasury yield or FX) for refinancing / replay."""
+
+    __tablename__ = "rate_observation"
+    __table_args__ = (
+        UniqueConstraint("series_id", "obs_date", name="uq_rate_observation_series_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    series_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    obs_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    value: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
