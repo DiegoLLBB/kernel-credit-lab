@@ -428,6 +428,174 @@ def _fetch_source_text(clients: ReplayClients, url: str) -> str:
     return clients.newsroom.fetch_text(url)
 
 
+_EDGAR_INDEX_RE = re.compile(
+    r"/Archives/edgar/data/(\d+)/(\d+)/(\d{10}-\d{2}-\d{6})-index\.htm?$",
+    re.I,
+)
+
+_SKIP_DOC_SUFFIXES = (
+    ".xml",
+    ".xsd",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".pdf",
+    ".zip",
+    ".txt",
+)
+_SKIP_DOC_TYPES = frozenset(
+    {
+        "graphic",
+        "xml",
+        "zip",
+        "complete submission text file",
+    }
+)
+
+
+def parse_edgar_index_url(url: str) -> tuple[str, str] | None:
+    """Return ``(cik, accession)`` when ``url`` is an EDGAR ``*-index.htm`` page."""
+    path = urlparse(url).path
+    match = _EDGAR_INDEX_RE.search(path)
+    if match is None:
+        return None
+    return match.group(1), match.group(3)
+
+
+def _is_edgar_index_url(url: str) -> bool:
+    return parse_edgar_index_url(url) is not None
+
+
+def _skip_index_document(name: str, doc_type: str) -> bool:
+    """Drop XBRL, images, graphics, R*.htm viewer files, and complete submissions."""
+    lower_name = (name or "").lower()
+    lower_type = (doc_type or "").strip().lower()
+    if lower_type in _SKIP_DOC_TYPES or lower_type.startswith("ex-101"):
+        return True
+    if any(lower_name.endswith(suf) for suf in _SKIP_DOC_SUFFIXES):
+        return True
+    # iXBRL inline viewer fragments: R1.htm, R10.htm, …
+    return bool(re.fullmatch(r"r\d+\.htm", lower_name))
+
+
+def select_index_documents(docs: list[Any]) -> list[Any]:
+    """Primary filing document first, then EX-99.x press-release exhibits."""
+    kept = [
+        d for d in docs if not _skip_index_document(getattr(d, "name", ""), getattr(d, "type", ""))
+    ]
+    if not kept:
+        return []
+    primary = None
+    exhibits: list[Any] = []
+    for doc in kept:
+        dtype = str(getattr(doc, "type", "") or "").strip().upper()
+        if dtype.startswith("EX-99"):
+            exhibits.append(doc)
+        elif primary is None:
+            primary = doc
+    ordered: list[Any] = []
+    if primary is not None:
+        ordered.append(primary)
+    ordered.extend(exhibits)
+    # If the index only had EX-99s (unusual), still return them.
+    return ordered or exhibits
+
+
+def _filings_from_edgar_index(
+    session: Session,
+    clients: ReplayClients,
+    *,
+    issuer: Issuer | None,
+    index_url: str,
+    form_hint: str,
+    filed_at: date | None,
+) -> list[Filing]:
+    """Resolve an EDGAR index URL into primary + EX-99 Filing rows with body_text."""
+    parsed = parse_edgar_index_url(index_url)
+    if parsed is None:
+        raise ValueError(f"not an EDGAR index URL: {index_url}")
+    cik, accession = parsed
+    filing_documents = getattr(clients.edgar, "filing_documents", None)
+    if not callable(filing_documents):
+        raise AttributeError("edgar client has no filing_documents")
+    docs = select_index_documents(list(filing_documents(cik, accession)))
+    if not docs:
+        raise ValueError(f"no usable documents in EDGAR index {index_url}")
+
+    out: list[Filing] = []
+    for i, doc in enumerate(docs):
+        raw = clients.edgar.fetch_text(doc.url)
+        # Prefer the document's own <title>; fall back to type / filename.
+        doc_title = extract_document_title(raw) or (doc.type or doc.name or None)
+        dtype = str(doc.type or "").strip()
+        if i == 0:
+            form_type = _filing_form_type(_normalize_form(form_hint or dtype))
+        elif dtype.upper().startswith("EX-99"):
+            form_type = "press_release"
+        else:
+            form_type = _filing_form_type(_normalize_form(dtype or form_hint))
+        out.append(
+            _store_filing(
+                session,
+                issuer=issuer,
+                url=doc.url,
+                form_type=form_type,
+                filed_at=filed_at,
+                title=doc_title,
+                text=raw,
+            )
+        )
+    return out
+
+
+def _filings_for_source(
+    session: Session,
+    clients: ReplayClients,
+    *,
+    issuer: Issuer | None,
+    src: dict[str, Any],
+    available_from: date,
+) -> list[Filing]:
+    """Fetch one replay source into one or more Filing rows (index → docs)."""
+    url = str(src["url"])
+    filed = src.get("filed")
+    filed_at = date.fromisoformat(str(filed)) if filed else available_from
+    form_hint = _normalize_form(src.get("form"))
+
+    if (
+        _is_edgar_index_url(url)
+        and _is_sec_url(url)
+        and callable(getattr(clients.edgar, "filing_documents", None))
+    ):
+        try:
+            return _filings_from_edgar_index(
+                session,
+                clients,
+                issuer=issuer,
+                index_url=url,
+                form_hint=form_hint,
+                filed_at=filed_at,
+            )
+        except Exception:
+            logger.exception("edgar_index_resolve_failed", extra={"url": url})
+            # Fall through to single-URL fetch (tests that map index URL → body).
+
+    text = _fetch_source_text(clients, url)
+    doc_title = extract_document_title(text)
+    return [
+        _store_filing(
+            session,
+            issuer=issuer,
+            url=url,
+            form_type=_filing_form_type(form_hint),
+            filed_at=filed_at,
+            title=doc_title,
+            text=text,
+        )
+    ]
+
+
 def _link_event_filing(session: Session, event: Event, filing: Filing) -> None:
     existing = session.scalars(
         select(EventFiling).where(
@@ -457,21 +625,15 @@ def _create_seeded_event(
 
     filings: list[Filing] = []
     for src in expectation.sources or []:
-        url = str(src["url"])
-        filed = src.get("filed")
-        filed_at = date.fromisoformat(str(filed)) if filed else expectation.available_from
-        text = _fetch_source_text(clients, url)
-        doc_title = extract_document_title(text)
-        filing = _store_filing(
-            session,
-            issuer=issuer,
-            url=url,
-            form_type=_filing_form_type(_normalize_form(src.get("form"))),
-            filed_at=filed_at,
-            title=doc_title,
-            text=text,
+        filings.extend(
+            _filings_for_source(
+                session,
+                clients,
+                issuer=issuer,
+                src=src,
+                available_from=expectation.available_from,
+            )
         )
-        filings.append(filing)
 
     primary_form = _normalize_form(primary_src.get("form"))
     primary_filed_s = primary_src.get("filed")

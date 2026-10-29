@@ -8,10 +8,12 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
 import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.config import Settings
 from app.db import Base
 from app.ingest.replay import (
     AGENT_FORBIDDEN_FIELDS,
@@ -24,7 +26,9 @@ from app.ingest.replay import (
     load_replay_events,
     maturity_summary,
     neutral_summary,
+    parse_edgar_index_url,
     resolve_issuer,
+    select_index_documents,
     step_to_next,
 )
 from app.models import (
@@ -36,12 +40,16 @@ from app.models import (
     RateObservation,
     ReplayExpectation,
 )
+from app.sources.edgar import DocumentRef, EdgarClient
 from scripts.load_seed import load_seed
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPLAY_JSON = FIXTURES / "replay" / "minimal_events.json"
 INTEL_JSON = FIXTURES / "replay" / "intel_notes_apr.json"
+DUKE_Q1_JSON = FIXTURES / "replay" / "duke_q1_10q.json"
+VERIZON_8K_JSON = FIXTURES / "replay" / "verizon_8k_frontier.json"
 NEWSROOM = FIXTURES / "newsroom"
+EDGAR_FIX = FIXTURES / "edgar"
 SEED_PATH = Path(__file__).resolve().parents[1] / "seed" / "snapshot_2025-12-31.json"
 
 TENDER_RESULTS_URL = "https://www.verizon.com/about/node/929969"
@@ -70,6 +78,42 @@ class FakeFetcher:
         return self.mapping[url]
 
 
+def _edgar_fixture_transport() -> httpx.MockTransport:
+    mapping = {
+        "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/"
+        "0001193125-26-273410-index.htm": "verizon_0001193125-26-273410-index.htm",
+        "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000026/"
+        "0001326160-26-000026-index.htm": "duke_0001326160-26-000026-index.htm",
+        "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/"
+        "d15574dex991.htm": "verizon_ex99_1.htm",
+        "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/"
+        "d15574d8k.htm": "verizon_d15574d8k.htm",
+        "https://www.sec.gov/Archives/edgar/data/17797/000132616026000026/"
+        "duk-20260331.htm": "duke_duk-20260331.htm",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        name = mapping.get(url)
+        if name is None:
+            return httpx.Response(404, text=f"missing fixture for {url}")
+        body = (EDGAR_FIX / name).read_bytes()
+        return httpx.Response(200, content=body, headers={"content-type": "text/html"})
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.fixture()
+def edgar_client() -> EdgarClient:
+    client = EdgarClient(
+        settings=Settings(sec_user_agent="Kernel Credit Lab tests@kernel.example.edu"),
+        transport=_edgar_fixture_transport(),
+        sleeper=lambda _s: None,
+    )
+    yield client
+    client.close()
+
+
 @pytest.fixture()
 def session() -> Session:
     engine = create_engine("sqlite:///:memory:")
@@ -90,6 +134,14 @@ def verizon(session: Session) -> Issuer:
 @pytest.fixture()
 def intel(session: Session) -> Issuer:
     issuer = Issuer(key="intel", name="Intel Corporation", cik="50863", ticker="INTC")
+    session.add(issuer)
+    session.flush()
+    return issuer
+
+
+@pytest.fixture()
+def duke_corp(session: Session) -> Issuer:
+    issuer = Issuer(key="duke_corp", name="Duke Energy Corporation", cik="1326160", ticker="DUK")
     session.add(issuer)
     session.flush()
     return issuer
@@ -427,3 +479,69 @@ def test_step_stops_at_first_eventful_day(
 def test_extract_document_title() -> None:
     html = "<html><head><title>  Hello &amp; World  </title></head></html>"
     assert extract_document_title(html) == "Hello & World"
+
+
+def test_parse_edgar_index_url() -> None:
+    url = (
+        "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000026/"
+        "0001326160-26-000026-index.htm"
+    )
+    assert parse_edgar_index_url(url) == ("1326160", "0001326160-26-000026")
+    assert parse_edgar_index_url("https://www.verizon.com/about/news") is None
+
+
+def test_select_index_documents_skips_noise_keeps_primary_and_ex99() -> None:
+    docs = [
+        DocumentRef(name="d8k.htm", type="8-K", url="https://example/d8k.htm"),
+        DocumentRef(name="dex991.htm", type="EX-99.1", url="https://example/dex991.htm"),
+        DocumentRef(name="logo.jpg", type="GRAPHIC", url="https://example/logo.jpg"),
+        DocumentRef(name="R1.htm", type="XML", url="https://example/R1.htm"),
+        DocumentRef(name="schema.xsd", type="EX-101.SCH", url="https://example/schema.xsd"),
+        DocumentRef(name="full.txt", type="", url="https://example/full.txt"),
+    ]
+    selected = select_index_documents(docs)
+    assert [d.type for d in selected] == ["8-K", "EX-99.1"]
+
+
+def test_duke_q1_index_resolves_to_10q_body(
+    session: Session, duke_corp: Issuer, edgar_client: EdgarClient
+) -> None:
+    clients = ReplayClients(edgar=edgar_client, newsroom=FakeFetcher({}))
+    load_replay_events(session, DUKE_Q1_JSON)
+    session.commit()
+    created = advance_to(session, date(2026, 5, 5), clients)
+    session.commit()
+    event = next(e for e in created if e.replay_key == "duk_parent_tl_repaid")
+    links = session.scalars(select(EventFiling).where(EventFiling.event_id == event.id)).all()
+    assert len(links) == 1
+    filing = session.get(Filing, links[0].filing_id)
+    assert filing is not None
+    assert filing.url.endswith("duk-20260331.htm")
+    assert filing.form_type == "10-Q"
+    assert filing.body_text
+    assert "Term Loan Facilities" in filing.body_text or "term loan" in filing.body_text.lower()
+    assert event.source_filing_id == filing.id
+
+
+def test_verizon_8k_index_resolves_primary_and_ex99(
+    session: Session, verizon: Issuer, edgar_client: EdgarClient
+) -> None:
+    clients = ReplayClients(edgar=edgar_client, newsroom=FakeFetcher({}))
+    load_replay_events(session, VERIZON_8K_JSON)
+    session.commit()
+    created = advance_to(session, date(2026, 6, 17), clients)
+    session.commit()
+    event = next(e for e in created if e.replay_key == "vz_frontier_8k")
+    links = session.scalars(select(EventFiling).where(EventFiling.event_id == event.id)).all()
+    filings = [session.get(Filing, link.filing_id) for link in links]
+    assert len(filings) == 2
+    by_url = {f.url: f for f in filings if f is not None}
+    primary = next(f for f in by_url.values() if f.url.endswith("d15574d8k.htm"))
+    exhibit = next(f for f in by_url.values() if f.url.endswith("d15574dex991.htm"))
+    assert primary.form_type == "8-K"
+    assert primary.body_text and "Form 8-K" in primary.body_text
+    assert exhibit.form_type == "press_release"
+    assert exhibit.body_text and (
+        "Exhibit 99.1" in exhibit.body_text or "News Release" in exhibit.body_text
+    )
+    assert event.source_filing_id == primary.id

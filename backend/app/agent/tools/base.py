@@ -46,6 +46,7 @@ def refuse(
     arguments: dict[str, Any],
     reason: str,
     problems: list[str] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     run.turn_count = int(run.turn_count or 0) + 1
     count = bump_refusal(run, tool)
@@ -56,6 +57,8 @@ def refuse(
         "problems": problems or [reason],
         "refusal_count": count,
     }
+    if extra:
+        payload.update(extra)
     record_tool_call(
         session,
         run,

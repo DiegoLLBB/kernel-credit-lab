@@ -1,0 +1,25 @@
+{
+  "window": {"from": "2026-01-01", "to": "2026-12-31"},
+  "description": "Duke Q1 10-Q index → primary 10-Q body only.",
+  "events": [
+    {
+      "key": "duk_parent_tl_repaid",
+      "event_date": "2026-03-31",
+      "available_from": "2026-05-05",
+      "issuer": "duke_corp",
+      "event_type": "debt_repaid",
+      "title": "Duke parent term loan repaid (eval only)",
+      "sources": [
+        {
+          "form": "10-Q",
+          "filed": "2026-05-05",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000026/0001326160-26-000026-index.htm",
+          "description": "hidden description"
+        }
+      ],
+      "expected_changes": [{"action": "mark_repaid", "instrument_key": "duk_tl_2026"}],
+      "expected_alert": true,
+      "why": "hidden why"
+    }
+  ]
+}

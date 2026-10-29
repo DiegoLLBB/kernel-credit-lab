@@ -8,7 +8,10 @@ from pathlib import Path
 PROMPT_DIR = Path(__file__).resolve().parent
 EVENT_V1_PATH = PROMPT_DIR / "event_v1.md"
 EVENT_V2_PATH = PROMPT_DIR / "event_v2.md"
-PROMPT_VERSION = "event_v2"
+EVENT_V3_PATH = PROMPT_DIR / "event_v3.md"
+EVENT_V4_PATH = PROMPT_DIR / "event_v4.md"
+EVENT_V5_PATH = PROMPT_DIR / "event_v5.md"
+PROMPT_VERSION = "event_v5"
 
 
 def load_event_prompt(

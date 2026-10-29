@@ -21,7 +21,7 @@ from app.agent.normalize import (
     quote_has_context,
 )
 from app.agent.run import start_agent_run
-from app.agent.text import html_to_text
+from app.agent.text import PAGE_CHARS, html_to_text, page_count
 from app.agent.tools import alert as alert_mod
 from app.agent.tools import (
     compute_metrics,
@@ -31,6 +31,7 @@ from app.agent.tools import (
     read_document,
     record_fact,
     request_input,
+    search_document,
     set_checklist,
     submit_alert,
 )
@@ -478,6 +479,50 @@ def test_propose_change_refuses_amount_not_in_quote(
     )
     assert bad["ok"] is False
     assert any("not found in cited quote" in p for p in bad["problems"])
+    # Citation was present — no actionable fact list (only for missing/unknown citations).
+    assert "recorded_facts" not in bad
+
+
+def test_propose_change_missing_citation_lists_recorded_facts(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    amt = record_fact(session, run, "amount", filing.id, Q_AMOUNT, "DEC term loan is $1bn")
+    assert amt["ok"]
+    bad = propose_change(
+        session,
+        run,
+        {
+            "action": "add_instrument",
+            "instrument_key": "dec_tl_2027",
+            "effective_date": "2026-03-13",
+            "name": "Unsecured Term Loan due 2027",
+            "coupon": "4.79",
+            "maturity": "2027-03-12",
+            "issue_date": "2026-03-13",
+            "amount": "1000000000",
+            "currency": "USD",
+            "instrument_type": "loan",
+            "rate_type": "floating",
+            "evidence": {},
+        },
+    )
+    assert bad["ok"] is False
+    assert any("missing or unknown fact citation" in p for p in bad["problems"])
+    facts = bad.get("recorded_facts") or []
+    assert any(f.get("fact_id") == amt["fact_id"] for f in facts)
+    listed = next(f for f in facts if f["fact_id"] == amt["fact_id"])
+    assert listed["item_key"] == "amount"
+    assert "1,250" in listed["quote"] or "4.329" in listed["quote"]
+    assert len(listed["quote"]) <= 120
+    needed = bad.get("evidence_fields_needed") or []
+    assert "amount" in needed
+    assert "maturity" in needed
+    assert "name" in needed
+    assert "coupon_or_rate" in needed
 
 
 def test_propose_change_refuses_reduction_above_outstanding(
@@ -560,6 +605,75 @@ def test_request_input_refuses_before_all_pages_read(
     bad = request_input(session, run, "amount", "What is the amount?")
     assert bad["ok"] is False
     assert "not every page" in bad["reason"]
+
+
+def test_search_document_hits_and_does_not_count_as_read(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    result = search_document(session, run, filing.id, "4.329%")
+    assert result["ok"] is True
+    assert result["hit_count"] >= 1
+    assert len(result["hits"]) <= 10
+    hit = result["hits"][0]
+    assert "page" in hit and "snippet" in hit
+    assert "4.329%" in hit["snippet"] or "4.329" in hit["snippet"]
+    assert not (run.pages_read or {}).get(filing.id)
+    audits = session.scalars(
+        select(AuditEntry).where(
+            AuditEntry.run_id == run.id, AuditEntry.action == "search_document"
+        )
+    ).all()
+    assert len(audits) >= 1
+    assert audits[0].detail and audits[0].detail.get("query") == "4.329%"
+
+
+def test_request_input_allows_long_doc_after_three_empty_searches(session: Session) -> None:
+    load_seed(session, SEED_PATH)
+    session.commit()
+    verizon = session.scalars(select(Issuer).where(Issuer.key == "verizon")).one()
+    # More than 20 pages of filler with no matching terms for empty searches.
+    body = ("AAAA " * (PAGE_CHARS // 5 + 1)) * 22
+    assert page_count(body) > 20
+    filing = Filing(
+        issuer_id=verizon.id,
+        form_type="10-Q",
+        url="https://www.sec.gov/Archives/edgar/data/732712/fake/long.htm",
+        filed_at=date(2026, 5, 1),
+        title="Long 10-Q",
+        body_text=body,
+        content_hash="long",
+    )
+    session.add(filing)
+    session.flush()
+    event = Event(
+        replay_key="vz_long_doc",
+        event_type="10-Q",
+        issuer_id=verizon.id,
+        event_date=date(2026, 5, 1),
+        source_filing_id=filing.id,
+        summary="Verizon long filing",
+        status="pending",
+    )
+    session.add(event)
+    session.flush()
+    session.add(EventFiling(event_id=event.id, filing_id=filing.id))
+    session.commit()
+
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert request_input(session, run, "amount", "missing?")["ok"] is False
+
+    for q in ("zzzz-one", "zzzz-two", "zzzz-three"):
+        r = search_document(session, run, filing.id, q)
+        assert r["ok"] and r["nothing_new"] is True and r["hit_count"] == 0
+
+    assert not (run.pages_read or {}).get(filing.id)
+    ok_req = request_input(session, run, "amount", "Still missing after searches?")
+    assert ok_req["ok"] is True
+    assert run.status == "needs_input"
 
 
 def test_verizon_hybrids_logged_not_material_by_bucket_alone(session: Session) -> None:

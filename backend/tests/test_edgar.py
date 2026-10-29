@@ -55,6 +55,11 @@ def _mock_transport() -> httpx.MockTransport:
         "0001326160-26-000026-index.htm": "duke_0001326160-26-000026-index.htm",
         "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/"
         "d15574dex991.htm": "verizon_ex99_1.htm",
+        "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/"
+        "d15574d8k.htm": "verizon_d15574d8k.htm",
+        # iXBRL viewer link on the Duke index uses co-registrant CIK 17797.
+        "https://www.sec.gov/Archives/edgar/data/17797/000132616026000026/"
+        "duk-20260331.htm": "duke_duk-20260331.htm",
     }
 
     def handler(request: httpx.Request) -> httpx.Response:

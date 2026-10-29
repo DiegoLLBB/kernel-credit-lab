@@ -1,0 +1,25 @@
+{
+  "window": {"from": "2026-01-01", "to": "2026-12-31"},
+  "description": "Verizon 8-K index → 8-K primary + EX-99.1.",
+  "events": [
+    {
+      "key": "vz_frontier_8k",
+      "event_date": "2026-06-17",
+      "available_from": "2026-06-17",
+      "issuer": "verizon",
+      "event_type": "exchange_offer",
+      "title": "Verizon Frontier exchange (eval only)",
+      "sources": [
+        {
+          "form": "8-K",
+          "filed": "2026-06-17",
+          "url": "https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/0001193125-26-273410-index.htm",
+          "description": "hidden description"
+        }
+      ],
+      "expected_changes": [{"action": "log_only"}],
+      "expected_alert": false,
+      "why": "hidden why"
+    }
+  ]
+}

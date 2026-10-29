@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -25,7 +26,7 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.ingest.replay import agent_visible_payload
 from app.llm.client import FunctionCallItem, LLMError, Provider, ResponsesResult
-from app.models import Event, Issuer, Watchlist
+from app.models import ChecklistItem, Event, Fact, Issuer, Watchlist
 from app.models.trace import AgentRun, AgentStep, ModelCall
 
 logger = logging.getLogger(__name__)
@@ -33,9 +34,24 @@ logger = logging.getLogger(__name__)
 TERMINAL_STATUSES = frozenset({"alerted", "logged", "needs_input"})
 NO_TOOL_NUDGE = "reply with exactly one tool call"
 ONE_TOOL_MSG = "one tool per turn"
-DEFAULT_MAX_TURNS = 40
+DEFAULT_MAX_TURNS = 30
+PERIODIC_MAX_TURNS = 40
 DEFAULT_WALL_SECONDS = 600.0
 MAX_CONSECUTIVE_NO_TOOL = 3
+# Agent-visible event types that get the higher turn budget (long 10-Q / 10-K bodies).
+PERIODIC_EVENT_TYPES = frozenset(
+    {
+        "periodic_filing",
+        "10-Q",
+        "10-K",
+        "10-Q/A",
+        "10-K/A",
+        "10q",
+        "10k",
+    }
+)
+_FACT_PAGE_RE = re.compile(r"page=(\d+)", re.I)
+_CLAIM_STUB_CHARS = 100
 
 
 class ResponsesClient(Protocol):
@@ -65,6 +81,16 @@ class RunLimits:
     max_wall_seconds: float = DEFAULT_WALL_SECONDS
 
 
+def max_turns_for_event(event: Event | None) -> int:
+    """40 turns for periodic filings (10-Q / 10-K); 30 otherwise."""
+    if event is None:
+        return DEFAULT_MAX_TURNS
+    et = (event.event_type or "").strip()
+    if et in PERIODIC_EVENT_TYPES or et.upper() in PERIODIC_EVENT_TYPES:
+        return PERIODIC_MAX_TURNS
+    return DEFAULT_MAX_TURNS
+
+
 @dataclass
 class LoopState:
     run: AgentRun
@@ -73,8 +99,11 @@ class LoopState:
     consecutive_no_tool: int = 0
     total_tokens: int = 0
     last_response_id: str | None = None
+    # Wall-clock for *this* run_event/resume_run invocation only.
     started_monotonic: float = 0.0
-    started_at_iso: str = ""
+    session_started_at_iso: str = ""
+    # First invocation start (unchanged across resumes).
+    run_started_at_iso: str = ""
 
 
 def assemble_user_input(session: Session, event: Event) -> str:
@@ -185,6 +214,198 @@ def _clean_transcript(transcript: list[Any]) -> list[Any]:
     return cleaned
 
 
+# Keep the most recent N document tool results in full when building model input.
+COMPACT_KEEP_RECENT = 3
+_COMPACT_TOOLS = frozenset({"read_document", "search_document"})
+_OMIT_NOTE = "text omitted to save context; read again if needed"
+_OMIT_NOTE_SEARCH = "text omitted to save context; search again if needed"
+
+
+def _parse_tool_output(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _page_from_location(location: str | None) -> int | None:
+    if not location:
+        return None
+    match = _FACT_PAGE_RE.search(location)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def facts_by_page(session: Session, run: AgentRun) -> dict[tuple[str, int], list[dict[str, Any]]]:
+    """Map ``(filing_id, page)`` → compact fact summaries recorded this run."""
+    rows = session.scalars(select(Fact).where(Fact.run_id == run.id)).all()
+    if not rows:
+        return {}
+    item_keys = {
+        item.id: item.key
+        for item in session.scalars(
+            select(ChecklistItem).where(ChecklistItem.run_id == run.id)
+        ).all()
+    }
+    out: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for fact in rows:
+        if not fact.filing_id:
+            continue
+        page = _page_from_location(fact.location)
+        if page is None:
+            continue
+        claim = fact.claim or ""
+        if len(claim) > _CLAIM_STUB_CHARS:
+            claim = claim[:_CLAIM_STUB_CHARS]
+        key = (fact.filing_id, page)
+        out.setdefault(key, []).append(
+            {
+                "fact_id": fact.id,
+                "item_key": item_keys.get(fact.checklist_item_id) or "",
+                "claim": claim,
+            }
+        )
+    return out
+
+
+def _stub_read_output(
+    parsed: dict[str, Any],
+    *,
+    page_facts: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    filing_id = parsed.get("filing_id")
+    page = parsed.get("page")
+    stub: dict[str, Any] = {
+        "page": page,
+        "filing_id": filing_id,
+        "note": _OMIT_NOTE,
+    }
+    if page_facts is not None and isinstance(filing_id, str) and isinstance(page, int):
+        recorded = []
+        for fact in page_facts.get((filing_id, page)) or []:
+            claim = str(fact.get("claim") or "")
+            if len(claim) > _CLAIM_STUB_CHARS:
+                claim = claim[:_CLAIM_STUB_CHARS]
+            recorded.append(
+                {
+                    "fact_id": fact.get("fact_id"),
+                    "item_key": fact.get("item_key"),
+                    "claim": claim,
+                }
+            )
+        if recorded:
+            stub["recorded_facts"] = recorded
+    return stub
+
+
+def _stub_search_output(parsed: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "filing_id": parsed.get("filing_id"),
+        "query": parsed.get("query"),
+        "hit_count": parsed.get("hit_count"),
+        "note": _OMIT_NOTE_SEARCH,
+    }
+
+
+def compact_transcript_for_model(
+    transcript: list[Any],
+    *,
+    keep_recent: int = COMPACT_KEEP_RECENT,
+    page_facts: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Build model input: full recent read/search outputs; stub older ones.
+
+    The stored run transcript is left unchanged — only the list sent to the model
+    is compacted so context grows with turns, not with pages re-read. Stubs for
+    ``read_document`` list facts already recorded from that page.
+    """
+    items = _clean_transcript(transcript)
+    call_name: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "function_call":
+            continue
+        call_id = item.get("call_id")
+        name = item.get("name")
+        if isinstance(call_id, str) and isinstance(name, str):
+            call_name[call_id] = name
+
+    # Indices of function_call_output items per compactable tool, in order.
+    by_tool: dict[str, list[int]] = {name: [] for name in _COMPACT_TOOLS}
+    for i, item in enumerate(items):
+        if not isinstance(item, dict) or item.get("type") != "function_call_output":
+            continue
+        call_id = item.get("call_id")
+        name = call_name.get(call_id) if isinstance(call_id, str) else None
+        if name in _COMPACT_TOOLS:
+            by_tool[name].append(i)
+
+    stub_at: dict[int, str] = {}
+    for name, indices in by_tool.items():
+        if len(indices) <= keep_recent:
+            continue
+        for idx in indices[:-keep_recent]:
+            stub_at[idx] = name
+
+    out: list[dict[str, Any]] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        if i not in stub_at:
+            out.append(item)
+            continue
+        parsed = _parse_tool_output(item.get("output"))
+        stub = (
+            _stub_read_output(parsed, page_facts=page_facts)
+            if stub_at[i] == "read_document"
+            else _stub_search_output(parsed)
+        )
+        # Preserve ok / refused flags so the model still sees success vs failure.
+        if "ok" in parsed:
+            stub = {"ok": parsed.get("ok"), **stub}
+        out.append(
+            {
+                "type": "function_call_output",
+                "call_id": item.get("call_id"),
+                "output": json.dumps(stub, default=str),
+            }
+        )
+    return out
+
+
+def _sessions_list(run: AgentRun) -> list[dict[str, Any]]:
+    raw = _run_meta(run).get("sessions") or []
+    return [dict(s) for s in raw if isinstance(s, dict)]
+
+
+def _begin_session(run: AgentRun, state: LoopState) -> None:
+    """Record a new invocation session start on the run meta."""
+    sessions = _sessions_list(run)
+    sessions.append({"started_at": state.session_started_at_iso, "ended_at": None})
+    _save_meta(
+        run,
+        started_at=state.run_started_at_iso,
+        session_started_at=state.session_started_at_iso,
+        sessions=sessions,
+    )
+
+
+def _end_session(run: AgentRun, state: LoopState) -> None:
+    """Close the open invocation session (idempotent)."""
+    sessions = _sessions_list(run)
+    ended = datetime.now(UTC).isoformat()
+    if sessions and sessions[-1].get("ended_at") is None:
+        sessions[-1]["ended_at"] = ended
+    else:
+        sessions.append({"started_at": state.session_started_at_iso or ended, "ended_at": ended})
+    _save_meta(run, sessions=sessions, session_ended_at=ended)
+
+
 def _pause(run: AgentRun, reason: str, state: LoopState) -> None:
     run.status = "paused"
     run.error = reason
@@ -196,7 +417,8 @@ def _pause(run: AgentRun, reason: str, state: LoopState) -> None:
         tool_choice=state.tool_choice_used,
         consecutive_no_tool=state.consecutive_no_tool,
         total_tokens=state.total_tokens,
-        started_at=state.started_at_iso,
+        started_at=state.run_started_at_iso,
+        session_started_at=state.session_started_at_iso,
     )
 
 
@@ -243,6 +465,43 @@ async def _run_loop(
         limits.max_tokens if limits.max_tokens is not None else int(settings.max_run_tokens)
     )
 
+    _begin_session(run, state)
+    session.commit()
+
+    try:
+        await _run_loop_body(
+            session,
+            state,
+            client,
+            limits,
+            model=model,
+            instructions=instructions,
+            print_turns=print_turns,
+            max_cost=max_cost,
+            max_tokens=max_tokens,
+        )
+    finally:
+        _end_session(run, state)
+        session.commit()
+        session.expire(run, ["steps"])
+        session.refresh(run)
+    return run
+
+
+async def _run_loop_body(
+    session: Session,
+    state: LoopState,
+    client: ResponsesClient,
+    limits: RunLimits,
+    *,
+    model: str,
+    instructions: str,
+    print_turns: bool,
+    max_cost: float,
+    max_tokens: int,
+) -> None:
+    run = state.run
+
     while True:
         if run.status in TERMINAL_STATUSES:
             break
@@ -258,6 +517,7 @@ async def _run_loop(
             session.commit()
             break
 
+        # Per-invocation wall-clock only (resume does not inherit prior elapsed time).
         elapsed = time.monotonic() - state.started_monotonic
         if elapsed >= limits.max_wall_seconds:
             _pause(run, f"wall-clock limit ({limits.max_wall_seconds:.0f}s)", state)
@@ -287,7 +547,11 @@ async def _run_loop(
         # Commit before the model call so ModelCall.step_id FK is valid.
         session.commit()
 
-        model_input = _clean_transcript(state.transcript)
+        # Compact only the model-bound copy; state.transcript stays complete.
+        model_input = compact_transcript_for_model(
+            state.transcript,
+            page_facts=facts_by_page(session, run),
+        )
         token = current_step_id.set(step.id)
         try:
             result = await _call_model(
@@ -304,7 +568,7 @@ async def _run_loop(
             _pause(run, f"API failure: {exc}", state)
             session.commit()
             if print_turns:
-                print(f"turn={sequence} tool=None result=error status=paused")
+                print(f"turn={sequence} tool=None result=error status=paused tokens=in=?/out=?")
             break
         finally:
             with contextlib.suppress(ValueError):
@@ -314,6 +578,8 @@ async def _run_loop(
         state.tool_choice_used = result.tool_choice
         _apply_usage(run, state, result)
         _record_model_call(session, run, step, result)
+        in_tok = int(result.input_tokens or 0)
+        out_tok = int(result.output_tokens or 0)
 
         calls = list(result.function_calls)
         step.output = {
@@ -342,17 +608,24 @@ async def _run_loop(
                 tool_choice=state.tool_choice_used,
                 consecutive_no_tool=state.consecutive_no_tool,
                 total_tokens=state.total_tokens,
-                started_at=state.started_at_iso,
+                started_at=state.run_started_at_iso,
+                session_started_at=state.session_started_at_iso,
             )
             session.commit()
             if print_turns:
-                print(f"turn={sequence} tool=None result={NO_TOOL_NUDGE!r} status={run.status}")
+                print(
+                    f"turn={sequence} tool=None result={NO_TOOL_NUDGE!r} "
+                    f"status={run.status} tokens=in={in_tok}/out={out_tok}"
+                )
             if state.consecutive_no_tool >= MAX_CONSECUTIVE_NO_TOOL:
                 reason = f"{MAX_CONSECUTIVE_NO_TOOL} consecutive turns without a tool call"
                 _pause(run, reason, state)
                 session.commit()
                 if print_turns:
-                    print(f"turn={sequence} tool=None result=paused status=paused")
+                    print(
+                        f"turn={sequence} tool=None result=paused status=paused "
+                        f"tokens=in={in_tok}/out={out_tok}"
+                    )
                 break
             if state.total_tokens >= max_tokens:
                 _pause(run, f"token ceiling ({max_tokens})", state)
@@ -409,7 +682,8 @@ async def _run_loop(
             tool_choice=state.tool_choice_used,
             consecutive_no_tool=0,
             total_tokens=state.total_tokens,
-            started_at=state.started_at_iso,
+            started_at=state.run_started_at_iso,
+            session_started_at=state.session_started_at_iso,
         )
         session.commit()
         session.refresh(run)
@@ -421,7 +695,10 @@ async def _run_loop(
                 "reason": tool_result.get("reason"),
                 "status": tool_result.get("status"),
             }
-            print(f"turn={sequence} tool={tool_name} result={brief} status={run.status}")
+            print(
+                f"turn={sequence} tool={tool_name} result={brief} "
+                f"status={run.status} tokens=in={in_tok}/out={out_tok}"
+            )
 
         if run.status in TERMINAL_STATUSES:
             break
@@ -436,24 +713,15 @@ async def _run_loop(
             session.commit()
             break
 
-    session.expire(run, ["steps"])
-    session.refresh(run)
-    return run
-
 
 def _init_state(run: AgentRun, user_input: str, *, resume: bool) -> LoopState:
+    """Build loop state. Wall-clock always starts now (per invocation)."""
     meta = _run_meta(run)
     now_iso = datetime.now(UTC).isoformat()
+    now_mono = time.monotonic()
     if resume:
         transcript = _clean_transcript(list(meta.get("transcript") or []))
-        started_at = meta.get("started_at") or now_iso
-        try:
-            started_dt = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
-            elapsed = (datetime.now(UTC) - started_dt).total_seconds()
-            started_monotonic = time.monotonic() - max(0.0, elapsed)
-        except ValueError:
-            started_monotonic = time.monotonic()
-            started_at = now_iso
+        run_started = str(meta.get("started_at") or now_iso)
         return LoopState(
             run=run,
             transcript=transcript,
@@ -461,16 +729,18 @@ def _init_state(run: AgentRun, user_input: str, *, resume: bool) -> LoopState:
             consecutive_no_tool=int(meta.get("consecutive_no_tool") or 0),
             total_tokens=int(meta.get("total_tokens") or 0),
             last_response_id=meta.get("last_response_id"),
-            started_monotonic=started_monotonic,
-            started_at_iso=str(started_at),
+            started_monotonic=now_mono,
+            session_started_at_iso=now_iso,
+            run_started_at_iso=run_started,
         )
 
     transcript = [{"type": "message", "role": "user", "content": user_input}]
     return LoopState(
         run=run,
         transcript=transcript,
-        started_monotonic=time.monotonic(),
-        started_at_iso=now_iso,
+        started_monotonic=now_mono,
+        session_started_at_iso=now_iso,
+        run_started_at_iso=now_iso,
     )
 
 
@@ -502,7 +772,8 @@ async def run_event(
     _save_meta(
         run,
         transcript=state.transcript,
-        started_at=state.started_at_iso,
+        started_at=state.run_started_at_iso,
+        session_started_at=state.session_started_at_iso,
         user_input=user_input,
         prompt_version=PROMPT_VERSION,
         available_from=as_of.isoformat(),

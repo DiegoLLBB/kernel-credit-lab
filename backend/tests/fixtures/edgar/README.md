@@ -7,6 +7,8 @@ test (or add a different real source) — never alter a fixture to make the asse
 | File | Source URL | Recorded | Trimmed? |
 |---|---|---|---|
 | `verizon_ex99_1.htm` | https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/d15574dex991.htm | 2026-10-28 | **No** — full HTTP body as returned by SEC (`EDGAR_LIVE=1`), byte-for-byte |
+| `verizon_d15574d8k.htm` | *(minimal stub for `d15574d8k.htm`)* | 2026-10-29 | **Yes** — short HTML stand-in so index→document replay tests stay offline |
+| `duke_duk-20260331.htm` | *(minimal stub for `duk-20260331.htm`)* | 2026-10-29 | **Yes** — short HTML stand-in for the Q1 10-Q primary document |
 | `verizon_0001193125-26-273410-index.htm` | https://www.sec.gov/Archives/edgar/data/732712/000119312526273410/0001193125-26-273410-index.htm | 2026-10-28 | **No** — full filing index HTML |
 | `duke_0001326160-26-000026-index.htm` | https://www.sec.gov/Archives/edgar/data/1326160/000132616026000026/0001326160-26-000026-index.htm | 2026-10-28 | **No** — full filing index HTML |
 | `verizon_submissions.json` | https://data.sec.gov/submissions/CIK0000732712.json | 2026-10-28 | **Yes** — kept only a short `filings.recent` slice (5 rows) that includes accession `0001193125-26-273410`, plus a stub `filings.files[]` entry pointing at the overflow fixture; dropped company metadata not needed for `list_filings` |

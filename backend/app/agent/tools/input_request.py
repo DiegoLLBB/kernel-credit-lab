@@ -1,4 +1,4 @@
-"""request_input — only after every page of every event document has been read."""
+"""request_input — after every page is read, or after enough empty searches on a long filing."""
 
 from __future__ import annotations
 
@@ -11,8 +11,54 @@ from app.agent.run import get_event
 from app.agent.text import page_count
 from app.agent.tools.base import ok, refuse
 from app.agent.tools.documents import _event_filings
-from app.models import ChecklistItem, Fact
+from app.models import AuditEntry, ChecklistItem, Fact, Filing
 from app.models.trace import AgentRun
+
+LONG_DOC_PAGES = 20
+MIN_EMPTY_SEARCHES = 3
+
+
+def _nothing_new_search_count(session: Session, run: AgentRun, filing_id: str) -> int:
+    """Count searches on ``filing_id`` that added no new hit pages (incl. empty)."""
+    entries = session.scalars(
+        select(AuditEntry)
+        .where(AuditEntry.run_id == run.id, AuditEntry.action == "search_document")
+        .order_by(AuditEntry.timestamp)
+    ).all()
+    count = 0
+    for entry in entries:
+        detail = entry.detail or {}
+        if detail.get("filing_id") != filing_id:
+            continue
+        if detail.get("nothing_new"):
+            count += 1
+    return count
+
+
+def _filing_satisfied(session: Session, run: AgentRun, filing: Filing) -> tuple[bool, str | None]:
+    """Return (ok, problem) — problem describes unread pages when not satisfied."""
+    text = filing.body_text or ""
+    total = page_count(text)
+    if total == 0:
+        return True, None
+    seen = set((run.pages_read or {}).get(filing.id) or [])
+    missing = [p for p in range(total) if p not in seen]
+    if not missing:
+        return True, None
+    if total > LONG_DOC_PAGES:
+        nn = _nothing_new_search_count(session, run, filing.id)
+        if nn >= MIN_EMPTY_SEARCHES:
+            return True, None
+        return (
+            False,
+            (
+                f"{filing.id}: pages {missing} unread; "
+                f"long filing needs all pages read or "
+                f"{MIN_EMPTY_SEARCHES} searches that returned nothing new "
+                f"(have {nn})"
+            ),
+        )
+    return False, f"{filing.id}: pages {missing}"
 
 
 def request_input(
@@ -60,14 +106,10 @@ def request_input(
         )
 
     unread: list[str] = []
-    pages_read = run.pages_read or {}
     for filing in filings:
-        text = filing.body_text or ""
-        total = page_count(text)
-        seen = set(pages_read.get(filing.id) or [])
-        missing = [p for p in range(total) if p not in seen]
-        if missing:
-            unread.append(f"{filing.id}: pages {missing}")
+        ok_filing, problem = _filing_satisfied(session, run, filing)
+        if not ok_filing and problem:
+            unread.append(problem)
 
     if unread:
         return refuse(

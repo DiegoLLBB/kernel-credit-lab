@@ -12,8 +12,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.agent.fake import FakeModel, function_call, multi_call, plain_text
 from app.agent.loop import (
+    DEFAULT_MAX_TURNS,
+    PERIODIC_MAX_TURNS,
     RunLimits,
     assemble_user_input,
+    compact_transcript_for_model,
+    max_turns_for_event,
     resume_run,
     run_event,
 )
@@ -121,7 +125,7 @@ def test_assemble_user_input_excludes_expectation_text(
     assert payload["watchlist"]["on_watchlist"] is True
 
 
-def test_event_v2_prompt_inserts_available_from(
+def test_event_v5_prompt_inserts_available_from(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
     from app.agent.prompts import PROMPT_VERSION, load_event_prompt
@@ -130,10 +134,27 @@ def test_event_v2_prompt_inserts_available_from(
     event, _filing, _bond = verizon_event
     as_of = available_from_for_event(session, event)
     text = load_event_prompt(today=as_of)
-    assert PROMPT_VERSION == "event_v2"
+    assert PROMPT_VERSION == "event_v5"
     assert "2026-08-20" in text
     assert "{available_from}" not in text
     assert "do not use knowledge of anything after today" in text
+    assert "search for the terms you need" in text
+    assert "one short factual sentence" in text
+    assert "cite their IDs in" in text and "propose_change.evidence" in text
+    assert "do not re-read pages you have already quoted" in text
+
+
+def test_max_turns_for_event_periodic_vs_other(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, _filing, _bond = verizon_event
+    assert event.event_type == "press_release"
+    assert max_turns_for_event(event) == DEFAULT_MAX_TURNS
+    event.event_type = "10-Q"
+    assert max_turns_for_event(event) == PERIODIC_MAX_TURNS
+    event.event_type = "periodic_filing"
+    assert max_turns_for_event(event) == PERIODIC_MAX_TURNS
+    assert max_turns_for_event(None) == DEFAULT_MAX_TURNS
 
 
 def _verizon_script(filing_id: str) -> list:
@@ -265,7 +286,7 @@ async def test_plain_text_three_times_pauses(
     assert run.status == "paused"
     assert "without a tool call" in (run.error or "")
     assert len(run.steps) == 3
-    assert (run.result or {}).get("prompt_version") == "event_v2"
+    assert (run.result or {}).get("prompt_version") == "event_v5"
     assert (run.result or {}).get("available_from") == "2026-08-20"
 
 
@@ -327,6 +348,11 @@ async def test_resume_after_pause(
     run = await run_event(session, event.id, client, RunLimits(max_turns=1))
     assert run.status == "paused"
     run_id = run.id
+    steps_before = len(run.steps)
+    sessions_after_first = list((run.result or {}).get("sessions") or [])
+    assert len(sessions_after_first) == 1
+    assert sessions_after_first[0].get("started_at")
+    assert sessions_after_first[0].get("ended_at")
 
     # Resume with read + then three plain texts → pause again.
     client2 = FakeModel(
@@ -350,6 +376,73 @@ async def test_resume_after_pause(
     assert isinstance(client2.requests[0]["input"], list)
     assert len(client2.requests[0]["input"]) >= 2
     assert any(s.output and s.output.get("tool") == "read_document" for s in run2.steps)
+    assert len(run2.steps) > steps_before
+    sessions = list((run2.result or {}).get("sessions") or [])
+    assert len(sessions) == 2
+    assert all(s.get("started_at") and s.get("ended_at") for s in sessions)
+
+
+@pytest.mark.asyncio
+async def test_resume_after_hour_ignores_original_wall_clock(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    """Wall-clock is per invocation: a run paused an hour ago can still resume."""
+    from datetime import UTC, datetime, timedelta
+
+    event, filing, _bond = verizon_event
+    client = FakeModel([function_call("list_documents", {})])
+    run = await run_event(
+        session,
+        event.id,
+        client,
+        RunLimits(max_turns=1, max_wall_seconds=600),
+    )
+    assert run.status == "paused"
+    steps_before = len(run.steps)
+    original_started = (run.result or {}).get("started_at")
+    assert original_started
+
+    # Pretend the first session started and ended an hour ago.
+    hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    almost_hour = (datetime.now(UTC) - timedelta(hours=1) + timedelta(seconds=30)).isoformat()
+    meta = dict(run.result or {})
+    meta["started_at"] = hour_ago
+    meta["sessions"] = [{"started_at": hour_ago, "ended_at": almost_hour}]
+    meta["session_started_at"] = hour_ago
+    meta["session_ended_at"] = almost_hour
+    run.result = meta
+    session.commit()
+
+    client2 = FakeModel(
+        [
+            function_call(
+                "read_document",
+                {"filing_id": filing.id, "page": 0},
+                commentary="resume after an hour",
+            ),
+            function_call("list_documents", {}, commentary="list again"),
+            plain_text("x"),
+            plain_text("y"),
+            plain_text("z"),
+        ]
+    )
+    run2 = await resume_run(
+        session,
+        run.id,
+        client2,
+        RunLimits(max_turns=40, max_wall_seconds=600),
+    )
+    assert run2.status == "paused"
+    assert "wall-clock" not in (run2.error or "")
+    assert "without a tool call" in (run2.error or "")
+    assert len(run2.steps) > steps_before + 1
+    # Original run start preserved; a new session was recorded.
+    assert (run2.result or {}).get("started_at") == hour_ago
+    sessions = list((run2.result or {}).get("sessions") or [])
+    assert len(sessions) == 2
+    assert sessions[0]["started_at"] == hour_ago
+    assert sessions[1].get("started_at") != hour_ago
+    assert sessions[1].get("ended_at")
 
 
 @pytest.mark.asyncio
@@ -364,3 +457,188 @@ async def test_token_ceiling_pauses(
     assert run.status == "paused"
     assert "token ceiling" in (run.error or "")
     assert (run.result or {}).get("total_tokens", 0) >= 400_000
+
+
+def _read_call(call_id: str, page: int, filing_id: str, text: str) -> list[dict]:
+    return [
+        {
+            "type": "function_call",
+            "call_id": call_id,
+            "name": "read_document",
+            "arguments": json.dumps({"filing_id": filing_id, "page": page}),
+        },
+        {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": json.dumps(
+                {
+                    "ok": True,
+                    "filing_id": filing_id,
+                    "page": page,
+                    "pages": 100,
+                    "text": text,
+                }
+            ),
+        },
+    ]
+
+
+def _search_call(call_id: str, filing_id: str, query: str, snippet: str) -> list[dict]:
+    return [
+        {
+            "type": "function_call",
+            "call_id": call_id,
+            "name": "search_document",
+            "arguments": json.dumps({"filing_id": filing_id, "query": query}),
+        },
+        {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": json.dumps(
+                {
+                    "ok": True,
+                    "filing_id": filing_id,
+                    "query": query,
+                    "hit_count": 1,
+                    "hits": [{"page": 0, "snippet": snippet}],
+                }
+            ),
+        },
+    ]
+
+
+def test_compact_transcript_stubs_old_reads_and_searches() -> None:
+    filing_id = "filing-abc"
+    page_body = "X" * 8000
+    transcript: list[dict] = [
+        {"type": "message", "role": "user", "content": "event"},
+    ]
+    for i in range(6):
+        transcript.extend(_read_call(f"read-{i}", i, filing_id, page_body))
+    for i in range(5):
+        transcript.extend(_search_call(f"search-{i}", filing_id, f"q{i}", "Y" * 400))
+
+    page_facts = {
+        (filing_id, 0): [
+            {
+                "fact_id": "fact-1",
+                "item_key": "amount",
+                "claim": "Carolinas term loan $1bn" + ("!" * 80),
+            }
+        ],
+        (filing_id, 1): [{"fact_id": "fact-2", "item_key": "name", "claim": "DEC TL"}],
+    }
+    stored_before = json.dumps(transcript)
+    compacted = compact_transcript_for_model(transcript, page_facts=page_facts)
+    # Stored transcript unchanged.
+    assert json.dumps(transcript) == stored_before
+
+    read_outputs = [
+        json.loads(item["output"])
+        for item in compacted
+        if item.get("type") == "function_call_output"
+        and str(item.get("call_id", "")).startswith("read-")
+    ]
+    assert len(read_outputs) == 6
+    stubbed_reads = [o for o in read_outputs if o.get("note")]
+    full_reads = [o for o in read_outputs if "text" in o]
+    assert len(stubbed_reads) == 3
+    assert len(full_reads) == 3
+    assert {o["page"] for o in stubbed_reads} == {0, 1, 2}
+    assert {o["page"] for o in full_reads} == {3, 4, 5}
+    by_page = {o["page"]: o for o in stubbed_reads}
+    for stub in stubbed_reads:
+        assert stub["filing_id"] == filing_id
+        assert "text omitted to save context" in stub["note"]
+        assert "text" not in stub
+    assert by_page[0]["recorded_facts"][0]["fact_id"] == "fact-1"
+    assert by_page[0]["recorded_facts"][0]["item_key"] == "amount"
+    assert len(by_page[0]["recorded_facts"][0]["claim"]) == 100
+    assert by_page[1]["recorded_facts"][0]["fact_id"] == "fact-2"
+    assert "recorded_facts" not in by_page[2]
+
+    search_outputs = [
+        json.loads(item["output"])
+        for item in compacted
+        if item.get("type") == "function_call_output"
+        and item.get("call_id", "").startswith("search-")
+    ]
+    assert len(search_outputs) == 5
+    stubbed_searches = [o for o in search_outputs if o.get("note")]
+    full_searches = [o for o in search_outputs if "hits" in o]
+    assert len(stubbed_searches) == 2
+    assert len(full_searches) == 3
+
+
+def test_compact_input_size_grows_with_turns_not_pages() -> None:
+    """After the keep window, each extra read adds only a stub — not another page."""
+    filing_id = "f1"
+    page_body = "P" * 8000
+    base: list[dict] = [{"type": "message", "role": "user", "content": "start"}]
+    sizes: list[int] = []
+    for n_reads in range(1, 12):
+        transcript = list(base)
+        for i in range(n_reads):
+            transcript.extend(_read_call(f"r{i}", i, filing_id, page_body))
+        compacted = compact_transcript_for_model(transcript)
+        sizes.append(len(json.dumps(compacted)))
+
+    # First 3 reads: size grows roughly with full pages.
+    growth_early = sizes[2] - sizes[0]
+    # Later reads (4→11): only stubs — growth much smaller per turn than a full page.
+    growth_late = (sizes[10] - sizes[3]) / 7
+    assert growth_early > 10_000
+    assert growth_late < 2_000
+    # Uncompacted would grow ~8k per page; compacted late growth is stub-sized.
+    uncompacted_per_page = len(json.dumps(_read_call("x", 0, filing_id, page_body)))
+    assert growth_late < uncompacted_per_page / 3
+
+
+@pytest.mark.asyncio
+async def test_loop_sends_compacted_input_keeps_full_transcript(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    # Four reads → model input should stub the oldest; stored meta keeps all text.
+    script = [
+        function_call("read_document", {"filing_id": filing.id, "page": 0}),
+        function_call("read_document", {"filing_id": filing.id, "page": 0}),
+        function_call("read_document", {"filing_id": filing.id, "page": 0}),
+        function_call("read_document", {"filing_id": filing.id, "page": 0}),
+        plain_text("a"),
+        plain_text("b"),
+        plain_text("c"),
+    ]
+    client = FakeModel(script)
+    run = await run_event(session, event.id, client, RunLimits(max_turns=40))
+    assert run.status == "paused"
+
+    # Fifth model request (after 4 tool turns) is the first plain-text turn —
+    # its input should include stubbed early reads.
+    assert len(client.requests) >= 5
+    req_after_reads = client.requests[4]["input"]
+    assert isinstance(req_after_reads, list)
+    read_outs = [
+        json.loads(item["output"])
+        for item in req_after_reads
+        if isinstance(item, dict)
+        and item.get("type") == "function_call_output"
+        and "filing_id" in json.loads(item.get("output") or "{}")
+    ]
+    # Four read outputs in the compacted input; exactly one stubbed.
+    assert len(read_outs) == 4
+    assert sum(1 for o in read_outs if o.get("note")) == 1
+    assert sum(1 for o in read_outs if "text" in o) == 3
+
+    # Stored transcript on the run still has full page text for every read.
+    stored = (run.result or {}).get("transcript") or []
+    stored_reads = [
+        json.loads(item["output"])
+        for item in stored
+        if isinstance(item, dict)
+        and item.get("type") == "function_call_output"
+        and isinstance(item.get("output"), str)
+        and '"text"' in item["output"]
+    ]
+    assert len(stored_reads) == 4
+    assert all(len(o.get("text") or "") > 100 for o in stored_reads)

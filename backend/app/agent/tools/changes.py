@@ -18,7 +18,7 @@ from app.agent.normalize import (
 )
 from app.agent.run import get_event
 from app.agent.tools.base import ok, refuse
-from app.models import Fact, Instrument, StateChange
+from app.models import ChecklistItem, Fact, Instrument, StateChange
 from app.models.trace import AgentRun
 
 CHANGE_ACTIONS = frozenset(
@@ -32,9 +32,54 @@ CHANGE_ACTIONS = frozenset(
     }
 )
 
+# Evidence map fields the model should cite (fact IDs) for each action.
+EVIDENCE_FIELDS_NEEDED: dict[str, list[str]] = {
+    "mark_redeemed": ["instrument", "effective_date"],
+    "mark_repaid": ["instrument", "effective_date"],
+    "mark_matured": ["instrument", "effective_date"],
+    "reduce_outstanding": ["instrument", "amount"],
+    "update_amount": ["instrument", "amount"],
+    "add_instrument": [
+        "name",
+        "amount",
+        "maturity",
+        "issue_date",
+        "coupon_or_rate",
+        "currency",
+    ],
+}
+_QUOTE_PREVIEW_CHARS = 120
+_MISSING_CITATION = "missing or unknown fact citation"
+
 
 def _facts(session: Session, run: AgentRun) -> dict[str, Fact]:
     return {f.id: f for f in session.scalars(select(Fact).where(Fact.run_id == run.id)).all()}
+
+
+def _recorded_fact_summaries(session: Session, run: AgentRun) -> list[dict[str, Any]]:
+    """Compact fact list for actionable refusals (ID, item key, quote preview)."""
+    facts = session.scalars(select(Fact).where(Fact.run_id == run.id)).all()
+    if not facts:
+        return []
+    item_keys = {
+        item.id: item.key
+        for item in session.scalars(
+            select(ChecklistItem).where(ChecklistItem.run_id == run.id)
+        ).all()
+    }
+    out: list[dict[str, Any]] = []
+    for fact in facts:
+        quote = fact.exact_quote or ""
+        if len(quote) > _QUOTE_PREVIEW_CHARS:
+            quote = quote[:_QUOTE_PREVIEW_CHARS]
+        out.append(
+            {
+                "fact_id": fact.id,
+                "item_key": item_keys.get(fact.checklist_item_id) or "",
+                "quote": quote,
+            }
+        )
+    return out
 
 
 def _resolve_instrument(session: Session, change: dict[str, Any]) -> Instrument | None:
@@ -50,7 +95,7 @@ def _require_fact(
     facts: dict[str, Fact], fact_id: Any, label: str
 ) -> tuple[Fact | None, str | None]:
     if not fact_id or str(fact_id) not in facts:
-        return None, f"missing or unknown fact citation for {label}"
+        return None, f"{_MISSING_CITATION} for {label}"
     return facts[str(fact_id)], None
 
 
@@ -307,6 +352,14 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
             problems=problems,
             attempt=attempt,
         )
+        extra: dict[str, Any] | None = None
+        if any(_MISSING_CITATION in p for p in problems):
+            # Actionable hint: which facts exist and which evidence keys this action needs.
+            # The evidence check itself is unchanged — only the refusal payload is richer.
+            extra = {
+                "recorded_facts": _recorded_fact_summaries(session, run),
+                "evidence_fields_needed": list(EVIDENCE_FIELDS_NEEDED.get(action, [])),
+            }
         return refuse(
             session,
             run,
@@ -314,6 +367,7 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
             arguments=args,
             reason="; ".join(problems),
             problems=problems,
+            extra=extra,
         )
 
     record_check(session, run, check_name="evidence", passed=True, problems=None, attempt=attempt)

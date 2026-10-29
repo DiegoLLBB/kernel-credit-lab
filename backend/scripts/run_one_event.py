@@ -2,14 +2,16 @@
 
 Loads the replay list (if needed), advances to that event's ``available_from`` with
 live EDGAR / newsroom clients so source documents are fetched, then runs
-``run_event`` with Muse Spark (prompt event_v2).
+``run_event`` with Muse Spark (prompt event_v4).
 
 Usage (from backend/, with .env and seed loaded):
 
     python -m scripts.run_one_event --replay-key vz_redemption_notice
     python -m scripts.run_one_event --replay-key vz_redemption_notice --dry-run
+    python -m scripts.run_one_event --resume <run_id> [--max-tokens N] [--max-seconds N]
 
 ``--dry-run`` still fetches real documents; only the model is replaced by FakeModel.
+``--resume`` continues a paused run (optionally with new token / wall-clock limits).
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agent.fake import FakeModel, function_call, plain_text
-from app.agent.loop import RunLimits, run_event
+from app.agent.loop import RunLimits, max_turns_for_event, resume_run, run_event
 from app.agent.text import html_to_text
 from app.config import get_settings
 from app.db import SessionLocal
@@ -39,7 +41,6 @@ from app.llm import LLMClient
 from app.models import Alert, Event, EventFiling, Filing, Issuer, ReplayExpectation
 from app.models.trace import AgentRun, AgentStep, ModelCall
 
-MAX_TURNS = 30
 ARGS_MAX_CHARS = 180
 
 # Checklist for the Verizon redemption dry-run path.
@@ -319,13 +320,18 @@ def _dry_run_client(session: Session, event: Event, replay_key: str) -> FakeMode
 
 
 def print_turns(session: Session, run: AgentRun) -> None:
-    """One stdout line per turn: n | commentary | tool | args | result."""
+    """One stdout line per turn: n | commentary | tool | args | result | tokens."""
     steps = session.scalars(
         select(AgentStep).where(AgentStep.run_id == run.id).order_by(AgentStep.sequence)
     ).all()
     if not steps:
         print("(no agent steps recorded)")
         return
+    calls_by_step = {
+        c.step_id: c
+        for c in session.scalars(select(ModelCall).where(ModelCall.run_id == run.id)).all()
+        if c.step_id
+    }
     for step in steps:
         out = step.output or {}
         commentary = _short((out.get("commentary") or "").replace("\n", " "), 80)
@@ -343,7 +349,12 @@ def print_turns(session: Session, run: AgentRun) -> None:
             outcome = step.status
         extras = out.get("extra_calls_refused") or 0
         extra_s = f" extras={extras}" if extras else ""
-        print(f"{step.sequence}\t{commentary}\t{tool}\t{args}\t{outcome}{extra_s}")
+        mc = calls_by_step.get(step.id)
+        if mc is not None:
+            tok_s = f"\tin={mc.input_tokens or 0}\tout={mc.output_tokens or 0}"
+        else:
+            tok_s = "\tin=?\tout=?"
+        print(f"{step.sequence}\t{commentary}\t{tool}\t{args}\t{outcome}{extra_s}{tok_s}")
 
 
 def _issuer_wall(metrics: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -445,10 +456,32 @@ def print_summary(session: Session, run: AgentRun, *, wall_started: float) -> No
     print(f"model_calls\t{len(calls)}")
 
 
-async def _run(
+def _build_limits(
+    *,
+    max_tokens: int | None,
+    max_turns: int | None,
+    max_seconds: float | None,
+    event: Event | None = None,
+) -> RunLimits:
+    settings = get_settings()
+    turns = max_turns if max_turns is not None else max_turns_for_event(event)
+    limits = RunLimits(
+        max_turns=turns,
+        max_cost_usd=float(settings.max_run_cost_usd),
+        max_tokens=max_tokens if max_tokens is not None else int(settings.max_run_tokens),
+    )
+    if max_seconds is not None:
+        limits.max_wall_seconds = float(max_seconds)
+    return limits
+
+
+async def _run_fresh(
     *,
     replay_key: str,
     dry_run: bool,
+    max_tokens: int | None,
+    max_turns: int | None,
+    max_seconds: float | None,
 ) -> int:
     settings = get_settings()
     clients = default_clients()
@@ -476,9 +509,16 @@ async def _run(
 
             event = _event_for_key(session, replay_key)
             filing = _primary_filing(session, event)
+            limits = _build_limits(
+                max_tokens=max_tokens,
+                max_turns=max_turns,
+                max_seconds=max_seconds,
+                event=event,
+            )
             _log(
                 f"Event {event.id} status={event.status} "
-                f"date={event.event_date} filing={filing.id if filing else None}"
+                f"date={event.event_date} type={event.event_type} "
+                f"filing={filing.id if filing else None}"
             )
 
             if dry_run:
@@ -488,19 +528,13 @@ async def _run(
                 if not settings.model_api_key or not settings.meta_model_api_base_url:
                     _log("FAILED: MODEL_API_KEY / META_MODEL_API_BASE_URL not set")
                     return 1
-                # Loop persists ModelCall after committing AgentStep; log-only recorder here.
                 model_client = LLMClient(settings=settings)
                 model_label = settings.default_model or "muse-spark-1.3"
 
-            limits = RunLimits(
-                max_turns=MAX_TURNS,
-                max_cost_usd=float(settings.max_run_cost_usd),
-                max_tokens=int(settings.max_run_tokens),
-            )
             _log(
                 f"Starting run_event with {model_label}, "
                 f"max_turns={limits.max_turns}, max_cost_usd={limits.max_cost_usd}, "
-                f"max_tokens={limits.max_tokens}"
+                f"max_tokens={limits.max_tokens}, max_seconds={limits.max_wall_seconds:.0f}"
             )
 
             try:
@@ -543,6 +577,88 @@ async def _run(
                 close()
 
 
+async def _run_resume(
+    *,
+    run_id: str,
+    dry_run: bool,
+    max_tokens: int | None,
+    max_turns: int | None,
+    max_seconds: float | None,
+) -> int:
+    settings = get_settings()
+    wall_started = time.perf_counter()
+
+    with SessionLocal() as session:
+        existing = session.get(AgentRun, run_id)
+        if existing is None:
+            raise SystemExit(f"No research_run with id={run_id!r}")
+        event = session.get(Event, existing.event_id) if existing.event_id else None
+        limits = _build_limits(
+            max_tokens=max_tokens,
+            max_turns=max_turns,
+            max_seconds=max_seconds,
+            event=event,
+        )
+        _log(
+            f"Resuming run {run_id} (status={existing.status}, "
+            f"error={existing.error!r}, event_type={event.event_type if event else None}, "
+            f"max_tokens={limits.max_tokens}, "
+            f"max_turns={limits.max_turns}, max_seconds={limits.max_wall_seconds:.0f})"
+        )
+
+        if dry_run:
+            # Resume dry-run: short continuation that pauses again (no full script).
+            model_client: Any = FakeModel(
+                [
+                    function_call("list_documents", {}, commentary="resume: listing documents"),
+                    plain_text("dry-run resume: no further tools"),
+                    plain_text("dry-run resume: still no tool"),
+                    plain_text("dry-run resume: pausing"),
+                ]
+            )
+            model_label = "FakeModel"
+        else:
+            if not settings.model_api_key or not settings.meta_model_api_base_url:
+                _log("FAILED: MODEL_API_KEY / META_MODEL_API_BASE_URL not set")
+                return 1
+            model_client = LLMClient(settings=settings)
+            model_label = settings.default_model or "muse-spark-1.3"
+
+        _log(f"Calling resume_run with {model_label}")
+        try:
+            run = await resume_run(
+                session,
+                run_id,
+                model_client,
+                limits,
+                model=(None if dry_run else (settings.default_model or "muse-spark-1.3")),
+                print_turns=False,
+            )
+        except Exception as exc:
+            session.commit()
+            _log(f"FAILED during resume_run: {type(exc).__name__}: {exc}")
+            traceback.print_exc(file=sys.stderr)
+            run = session.get(AgentRun, run_id)
+            if run is not None:
+                session.refresh(run)
+                print_turns(session, run)
+                print_summary(session, run, wall_started=wall_started)
+            return 1
+        finally:
+            close = getattr(model_client, "aclose", None)
+            if callable(close):
+                await close()
+
+        session.refresh(run)
+        print_turns(session, run)
+        print_summary(session, run, wall_started=wall_started)
+
+        if run.status not in {"alerted", "logged", "needs_input"}:
+            _log(f"Run did not finish cleanly (status={run.status}).")
+            return 1
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _configure_logging()
     parser = argparse.ArgumentParser(
@@ -550,8 +666,32 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--replay-key",
-        required=True,
-        help="ReplayExpectation.key (e.g. vz_redemption_notice)",
+        default=None,
+        help="ReplayExpectation.key (e.g. vz_redemption_notice); required unless --resume",
+    )
+    parser.add_argument(
+        "--resume",
+        metavar="RUN_ID",
+        default=None,
+        help="Resume a paused research_run by id (skips advance_to)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Override MAX_RUN_TOKENS for this run / resume",
+    )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=None,
+        help="Override turn limit (default 40 for 10-Q/10-K, else 30); also applies on --resume",
+    )
+    parser.add_argument(
+        "--max-seconds",
+        type=float,
+        default=None,
+        help="Wall-clock limit for this invocation only (default 600)",
     )
     parser.add_argument(
         "--dry-run",
@@ -559,7 +699,30 @@ def main(argv: list[str] | None = None) -> int:
         help="Use FakeModel instead of the Meta API (still fetches real documents)",
     )
     args = parser.parse_args(argv)
-    return asyncio.run(_run(replay_key=args.replay_key, dry_run=args.dry_run))
+    if not args.resume and not args.replay_key:
+        parser.error("one of --replay-key or --resume is required")
+    if args.resume and args.replay_key:
+        parser.error("use either --replay-key or --resume, not both")
+
+    if args.resume:
+        return asyncio.run(
+            _run_resume(
+                run_id=args.resume,
+                dry_run=args.dry_run,
+                max_tokens=args.max_tokens,
+                max_turns=args.max_turns,
+                max_seconds=args.max_seconds,
+            )
+        )
+    return asyncio.run(
+        _run_fresh(
+            replay_key=args.replay_key,
+            dry_run=args.dry_run,
+            max_tokens=args.max_tokens,
+            max_turns=args.max_turns,
+            max_seconds=args.max_seconds,
+        )
+    )
 
 
 if __name__ == "__main__":

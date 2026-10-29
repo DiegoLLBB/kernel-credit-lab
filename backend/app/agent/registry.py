@@ -18,6 +18,7 @@ from app.agent.tools import (
     read_document,
     record_fact,
     request_input,
+    search_document,
     set_checklist,
     submit_alert,
 )
@@ -133,18 +134,38 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool(
         "list_documents",
-        "List filings attached to this event (id, title, form, pages). No arguments.",
+        "List filings attached to this event (id, title, form, page count). No arguments.",
         _object({}),
     ),
     _tool(
         "read_document",
-        "Read one page of an event filing. Page text is cached; quote checks require a prior read.",
+        (
+            "Read one page of an event filing (at most 8000 characters). "
+            "Page text is cached; quote checks require a prior read."
+        ),
         _object(
             {
                 "filing_id": {"type": "string"},
                 "page": {
                     **_NULLABLE_INT,
                     "description": "0-based page index; null reads page 0",
+                },
+            }
+        ),
+    ),
+    _tool(
+        "search_document",
+        (
+            "Case-insensitive search over a filing's stored text. Returns up to 10 hits "
+            "with page number and a ±200-character snippet. Searching does not count as "
+            "reading — call read_document on a page before quoting from it."
+        ),
+        _object(
+            {
+                "filing_id": {"type": "string"},
+                "query": {
+                    "type": "string",
+                    "description": "Substring to find (case-insensitive)",
                 },
             }
         ),
@@ -176,7 +197,11 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool(
         "request_input",
-        "Ask a person for missing evidence on one unproven item after every page is read.",
+        (
+            "Ask a person for missing evidence on one unproven item. Allowed after every "
+            "page is read, or on a filing with more than 20 pages after at least 3 "
+            "searches that returned nothing new."
+        ),
         _object(
             {
                 "item_key": {"type": "string"},
@@ -223,6 +248,13 @@ def dispatch_tool(
             run,
             arguments["filing_id"],
             arguments.get("page"),
+        )
+    if name == "search_document":
+        return search_document(
+            session,
+            run,
+            arguments["filing_id"],
+            arguments["query"],
         )
     if name == "record_fact":
         return record_fact(
