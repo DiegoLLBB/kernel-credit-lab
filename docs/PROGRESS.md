@@ -120,3 +120,21 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
 ### Built and reviewed
 - Muse Wonder: schema (0002–0004), seed loader (0005) — see [META_TOOLING.md](META_TOOLING.md).
 - Review fix: Postgres integration tests no longer leave rows behind (append-only table).
+
+## Day 3 — Thu 29 Oct 2026
+
+### Built and reviewed
+- **All four data sources are done:** EDGAR (`8bf6f9d`, `2dc107c`), issuer newsrooms (`53b068d`), FRED
+  re-recorded from the live API (`4d19e4f`, `2eadff7`), and the year-end seed.
+- **Replay driver** (`e1e046f`): replay list → events day by day, with no answers visible to the
+  agent (checked over the full replay), and only documents already published on each date.
+
+### Decisions
+10. **The agent sees only what a monitor knew that day:** issuer, discovery date, and the source
+    documents published by then. Event types come from the source (8-K, 10-Q, press release,
+    maturity, rate update). Titles, explanations and expected outcomes are for evaluation only.
+11. **The replay advances one day at a time.** The agent processes each day's events before the next
+    day, so calendar events reflect what the agent has already learned (e.g. no maturity event for
+    a loan the agent found repaid).
+12. **Pull the agent loop forward.** Extraction tools and a minimal loop come together, so one event
+    (the Verizon redemption notice) runs end to end by Saturday; Sunday onwards is improvement.
