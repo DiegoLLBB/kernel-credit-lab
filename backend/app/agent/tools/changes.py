@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -11,13 +11,16 @@ from sqlalchemy.orm import Session
 
 from app.agent.audit import record_check, refusal_count
 from app.agent.normalize import (
+    AMOUNT_FORMAT_HINT,
+    RATE_FORMAT_HINT,
     amount_in_quote,
+    coerce_amount,
     date_in_quote,
     detect_amount_scale,
     instrument_identified_in_quote,
-    parse_amount,
     parse_date_loose,
     parse_date_with_precision,
+    parse_rate,
 )
 from app.agent.run import get_event
 from app.agent.tools.base import ok, refuse
@@ -255,15 +258,11 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
 
             if action == "reduce_outstanding":
                 raw = change.get("reduce_by") or change.get("amount")
-                try:
-                    reduce_dec = (
-                        raw
-                        if isinstance(raw, Decimal)
-                        else parse_amount(str(raw)) or Decimal(str(raw))
+                reduce_dec = coerce_amount(raw) if raw is not None else None
+                if raw is not None and reduce_dec is None:
+                    problems.append(
+                        f"reduce_by={raw!r} is not a valid amount; expected {AMOUNT_FORMAT_HINT}"
                     )
-                except (InvalidOperation, TypeError):
-                    reduce_dec = None
-                    problems.append("reduce_by is not a number")
                 amt_fid = evidence.get("reduce_by") or evidence.get("amount")
                 amt_fact, err = _require_fact(facts, amt_fid, "amount")
                 if err:
@@ -283,15 +282,11 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
                 )
             else:
                 raw = change.get("new_amount") or change.get("amount")
-                try:
-                    new_amount = (
-                        raw
-                        if isinstance(raw, Decimal)
-                        else parse_amount(str(raw)) or Decimal(str(raw))
+                new_amount = coerce_amount(raw) if raw is not None else None
+                if raw is not None and new_amount is None:
+                    problems.append(
+                        f"new_amount={raw!r} is not a valid amount; expected {AMOUNT_FORMAT_HINT}"
                     )
-                except (InvalidOperation, TypeError):
-                    new_amount = None
-                    problems.append("new_amount is not a number")
                 amt_fid = evidence.get("new_amount") or evidence.get("amount")
                 amt_fact, err = _require_fact(facts, amt_fid, "amount")
                 if err:
@@ -318,7 +313,7 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
             problems.append("instrument already exists")
 
         name = change.get("name")
-        coupon = change.get("coupon")
+        coupon_raw = change.get("coupon")
         maturity_raw = change.get("maturity")
         issue_raw = change.get("issue_date")
         amount_raw = change.get("amount_outstanding") or change.get("amount")
@@ -327,13 +322,26 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
 
         for field, value in [
             ("name", name),
-            ("coupon", coupon),
+            ("coupon", coupon_raw),
             ("maturity", maturity_raw),
             ("amount_outstanding", amount_raw),
             ("currency", currency),
         ]:
             if value is None or value == "":
                 problems.append(f"missing field {field}")
+
+        coupon_dec = parse_rate(coupon_raw) if coupon_raw not in (None, "") else None
+        if coupon_raw not in (None, "") and coupon_dec is None:
+            problems.append(
+                f"coupon={coupon_raw!r} is not a valid rate; expected {RATE_FORMAT_HINT}"
+            )
+
+        amount_dec = coerce_amount(amount_raw) if amount_raw not in (None, "") else None
+        if amount_raw not in (None, "") and amount_dec is None:
+            problems.append(
+                f"amount_outstanding={amount_raw!r} is not a valid amount; "
+                f"expected {AMOUNT_FORMAT_HINT}"
+            )
 
         maturity, maturity_precision = (
             parse_date_with_precision(str(maturity_raw)) if maturity_raw else (None, None)
@@ -352,16 +360,16 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
 
         scale = _resolve_amount_scale(facts, evidence, problems)
 
-        if amount_raw is not None:
+        if amount_dec is not None:
             amt_fact, err = _require_fact(
                 facts, evidence.get("amount") or evidence.get("amount_outstanding"), "amount"
             )
             if err:
                 problems.append(err)
             elif amt_fact is not None and not _amount_in_quote(
-                amount_raw, amt_fact.exact_quote, scale=scale
+                amount_dec, amt_fact.exact_quote, scale=scale
             ):
-                problems.append(f"amount {amount_raw!r} not found in cited quote")
+                problems.append(f"amount {amount_dec!r} not found in cited quote")
 
         if maturity is not None:
             mat_fact, err = _require_fact(facts, evidence.get("maturity"), "maturity")
@@ -374,11 +382,11 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
             "action": "add_instrument",
             "instrument_key": key,
             "name": name,
-            "coupon": str(coupon) if coupon is not None else None,
+            "coupon": str(coupon_dec) if coupon_dec is not None else None,
             "maturity": maturity.isoformat() if maturity else None,
             "maturity_precision": maturity_precision or "day",
             "issue_date": issue.isoformat() if issue else None,
-            "amount_outstanding": str(amount_raw) if amount_raw is not None else None,
+            "amount_outstanding": str(amount_dec) if amount_dec is not None else None,
             "currency": currency,
             "instrument_type": instrument_type,
             "issuer_id": change.get("issuer_id") or event.issuer_id,

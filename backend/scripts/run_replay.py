@@ -82,6 +82,9 @@ def _write_eval(session: Session, result: ReplayResult, *, replay_path: Path | N
     print(f"recall\t{rec if rec is not None else 'n/a'}")
     if report.incomplete:
         print(f"incomplete\t{report.incomplete}")
+    failed_n = report.alert.failed_total
+    if failed_n:
+        print(f"failed\t{failed_n}")
     if report.error:
         print(f"error\t{report.error}")
 

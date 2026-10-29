@@ -12,7 +12,13 @@ from sqlalchemy.orm import Session
 from app.agent.audit import record_check, refusal_count
 from app.agent.claims import ClaimsResult, claims_check
 from app.agent.materiality import assess_materiality, is_missing_from_bond_list
-from app.agent.normalize import detect_amount_scale, extract_numbers, parse_date_loose
+from app.agent.normalize import (
+    coerce_amount,
+    detect_amount_scale,
+    extract_numbers,
+    parse_date_loose,
+    parse_rate,
+)
 from app.agent.run import get_event
 from app.agent.tools.base import ok, refuse
 from app.models import (
@@ -283,15 +289,27 @@ async def submit_alert(
         elif action in {"reduce_outstanding", "update_amount"} and change.instrument_id:
             inst = session.get(Instrument, change.instrument_id)
             if inst is not None and diff.get("after") is not None:
-                inst.amount_outstanding = Decimal(str(diff["after"]))
+                after = coerce_amount(diff["after"])
+                if after is None:
+                    raise ValueError(f"invalid amount in proposed change: {diff.get('after')!r}")
+                inst.amount_outstanding = after
         elif action == "add_instrument":
             issuer_id = diff.get("issuer_id") or event.issuer_id
+            coupon = parse_rate(diff.get("coupon") or "0")
+            if coupon is None:
+                raise ValueError(f"invalid coupon in proposed change: {diff.get('coupon')!r}")
+            amount = coerce_amount(diff.get("amount_outstanding") or "0")
+            if amount is None:
+                raise ValueError(
+                    f"invalid amount_outstanding in proposed change: "
+                    f"{diff.get('amount_outstanding')!r}"
+                )
             session.add(
                 Instrument(
                     key=diff.get("instrument_key"),
                     issuer_id=str(issuer_id),
                     name=str(diff.get("name") or "New instrument"),
-                    coupon=Decimal(str(diff.get("coupon") or "0")),
+                    coupon=coupon,
                     maturity=date.fromisoformat(str(diff["maturity"])),
                     maturity_precision=str(diff.get("maturity_precision") or "day"),
                     issue_date=(
@@ -299,7 +317,7 @@ async def submit_alert(
                         if diff.get("issue_date")
                         else None
                     ),
-                    amount_outstanding=Decimal(str(diff.get("amount_outstanding") or "0")),
+                    amount_outstanding=amount,
                     currency=str(diff.get("currency") or "USD"),
                     instrument_type=str(diff.get("instrument_type") or "bond"),
                     rate_type=str(diff.get("rate_type") or "fixed"),

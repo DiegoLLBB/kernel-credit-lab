@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -249,6 +251,8 @@ def _outcome_from_run(
     detail = None
     if run.status == "needs_input":
         detail = _request_input_question(session, run)
+    elif run.status == "failed":
+        detail = (run.error or "").strip() or None
     return EventOutcome(
         replay_key=event.replay_key,
         event_id=event.id,
@@ -297,7 +301,7 @@ def format_event_line(outcome: EventOutcome) -> str:
     )
     if outcome.skipped:
         return f"{line}\tskipped (not selected)"
-    if outcome.status == "needs_input" and outcome.detail:
+    if outcome.status in {"needs_input", "failed"} and outcome.detail:
         q = outcome.detail.replace("\n", " ").strip()
         if len(q) > QUESTION_PREVIEW_CHARS:
             q = q[: QUESTION_PREVIEW_CHARS - 1] + "…"
@@ -342,6 +346,48 @@ def _resume_after_date(session: Session, window_start: date) -> date:
 def _mark_incomplete(result: ReplayResult) -> None:
     if result.stopped_reason and result.stopped_reason != "complete":
         result.incomplete = True
+
+
+def _mark_event_failed(
+    session: Session,
+    event: Event,
+    exc: BaseException,
+    *,
+    duration_s: float,
+) -> EventOutcome:
+    """Persist a failed run for ``event`` and return a log outcome."""
+    tb = traceback.format_exc()
+    run: AgentRun | None = None
+    if event.run_id:
+        run = session.get(AgentRun, event.run_id)
+    if run is None:
+        run = start_agent_run(session, event)
+    run.status = "failed"
+    run.error = str(exc)
+    run.result = {
+        **(run.result or {}),
+        "error": str(exc),
+        "traceback": tb,
+        "status": "failed",
+    }
+    run.completed_at = datetime.now(UTC)
+    event.status = "failed"
+    session.commit()
+    return EventOutcome(
+        replay_key=event.replay_key,
+        event_id=event.id,
+        event_date=event.event_date.isoformat(),
+        issuer=_issuer_label(session, event),
+        event_type=event.event_type,
+        status="failed",
+        material=None,
+        turns=int(run.turn_count or 0),
+        tokens=_run_tokens(session, run),
+        cost_usd=float(run.total_cost_usd or 0),
+        duration_s=round(duration_s, 3),
+        run_id=run.id,
+        detail=str(exc),
+    )
 
 
 async def process_one_event(
@@ -471,6 +517,8 @@ async def run_replay(
                         _write_log(result)
                         continue
 
+                    started = time.perf_counter()
+                    event_id = event.id
                     try:
                         client = client_factory(event)
                         outcome = await process_one_event(
@@ -481,10 +529,16 @@ async def run_replay(
                             model=model,
                         )
                     except Exception as exc:
-                        result.stopped_reason = "error"
-                        result.error = f"{event.replay_key or event.id}: {exc}"
-                        handled_ids.add(event.id)
-                        break
+                        # Isolate the failure: mark this event failed and continue.
+                        with contextlib.suppress(Exception):
+                            session.rollback()
+                        failed_event = session.get(Event, event_id) or event
+                        outcome = _mark_event_failed(
+                            session,
+                            failed_event,
+                            exc,
+                            duration_s=time.perf_counter() - started,
+                        )
 
                     handled_ids.add(event.id)
                     result.events.append(outcome)
@@ -496,10 +550,12 @@ async def run_replay(
                     if max_cost_usd is not None and result.total_cost_usd >= max_cost_usd:
                         result.stopped_reason = "cost_limit"
                         break
+                    # Paused mid-run: stop this invocation; a fresh call resumes.
+                    # Failed events do not stop the replay.
                     if outcome.status == "paused":
                         result.stopped_reason = "paused"
                         break
-                if result.stopped_reason in {"cost_limit", "paused", "error"}:
+                if result.stopped_reason in {"cost_limit", "paused"}:
                     break
                 continue
 
@@ -546,7 +602,12 @@ async def run_replay(
 
         if result.stopped_reason is None:
             result.stopped_reason = "complete"
+    except KeyboardInterrupt:
+        result.stopped_reason = "interrupted"
+        result.error = "interrupted by Ctrl+C"
+        raise
     except Exception as exc:
+        # Unexpected runner-level failure (not per-event).
         result.stopped_reason = "error"
         result.error = str(exc)
     finally:

@@ -6,19 +6,22 @@ import json
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.agent.fake import FakeModel, function_call
-from app.agent.loop import RunLimits
+from app.agent.loop import RunLimits, run_event
+from app.agent.registry import dispatch_tool
+from app.agent.run import start_agent_run
 from app.agent.text import html_to_text
 from app.db import Base
 from app.eval.replay_eval import evaluate_replay, write_eval_reports
 from app.ingest.replay import ReplayClients, load_replay_events
-from app.models import Alert, Event, Instrument
-from app.models.trace import AgentRun
+from app.models import Alert, AuditEntry, Event, EventFiling, Filing, Instrument, Issuer
+from app.models.trace import AgentRun, ToolCall
 from app.replay.runner import run_replay
 from scripts.load_seed import load_seed
 from tests.test_agent_loop import _verizon_script
@@ -427,3 +430,187 @@ def test_needs_input_line_includes_question() -> None:
     )
     assert "needs_input" in line
     assert "What is the maturity date of the bridge facility" in line
+
+
+def _minimal_event(
+    session: Session, *, replay_key: str = "tool_error_probe", with_filing: bool = False
+) -> tuple[Event, Filing | None]:
+    verizon = session.scalars(select(Issuer).where(Issuer.key == "verizon")).one()
+    event = Event(
+        replay_key=replay_key,
+        event_type="other",
+        issuer_id=verizon.id,
+        event_date=date(2026, 5, 11),
+        summary="Minimal event for tool-error tests",
+        status="pending",
+    )
+    session.add(event)
+    session.flush()
+    filing: Filing | None = None
+    if with_filing:
+        filing = Filing(
+            issuer_id=verizon.id,
+            form_type="press_release",
+            url=f"https://example.test/{replay_key}",
+            filed_at=date(2026, 5, 11),
+            title="Fixture notice",
+            body_text=LOG_QUOTES["subject"] + " " + LOG_QUOTES["effect"],
+            content_hash=replay_key,
+        )
+        session.add(filing)
+        session.flush()
+        session.add(EventFiling(event_id=event.id, filing_id=filing.id))
+    session.commit()
+    return event, filing
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tool_catches_exception(seeded: Session) -> None:
+    """Tools never raise: exceptions become refusals with audit + ToolCall."""
+    session = seeded
+    event, _ = _minimal_event(session)
+    run = start_agent_run(session, event)
+    session.commit()
+
+    with patch(
+        "app.agent.registry.list_documents",
+        side_effect=RuntimeError("boom"),
+    ):
+        result = await dispatch_tool(session, run, "list_documents", {})
+
+    assert result["ok"] is False
+    assert result["refused"] is True
+    assert result["error"] == "internal error in list_documents: boom"
+    tc = session.scalars(
+        select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at.desc())
+    ).first()
+    assert tc is not None
+    assert tc.status == "error"
+    assert "boom" in (tc.error or "")
+    assert "traceback" in (tc.result or {})
+    audit = session.scalars(
+        select(AuditEntry)
+        .where(AuditEntry.run_id == run.id, AuditEntry.action == "tool:list_documents:error")
+        .order_by(AuditEntry.timestamp.desc())
+    ).first()
+    assert audit is not None
+
+
+@pytest.mark.asyncio
+async def test_tool_raise_mid_run_continues(seeded: Session) -> None:
+    """A tool exception returns an error result to the agent; the run continues."""
+    session = seeded
+    event, filing = _minimal_event(session, replay_key="tool_raise_mid_run", with_filing=True)
+    assert filing is not None
+
+    from app.agent.tools import list_documents as real_list_documents
+
+    calls = {"n": 0}
+
+    def flaky_list(session_: Session, run_: AgentRun) -> dict:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient tool failure")
+        return real_list_documents(session_, run_)
+
+    script = [
+        function_call(
+            "set_checklist",
+            {"kind": "other", "items": OTHER_ITEMS},
+            commentary="checklist",
+        ),
+        function_call("list_documents", {}, commentary="first list (will fail)"),
+        function_call("list_documents", {}, commentary="retry list"),
+        function_call(
+            "read_document",
+            {"filing_id": filing.id, "page": 0},
+            commentary="read after recovery",
+        ),
+        function_call(
+            "request_input",
+            {"item_key": "subject", "question": "Need human help after tool error?"},
+            commentary="asking",
+        ),
+    ]
+    client = FakeModel(script)
+
+    with patch("app.agent.registry.list_documents", side_effect=flaky_list):
+        run = await run_event(
+            session,
+            event.id,
+            client,
+            RunLimits(max_turns=20, max_cost_usd=100.0, max_tokens=10_000_000),
+        )
+    session.commit()
+
+    assert calls["n"] == 2
+    assert run.status == "needs_input"
+    errors = session.scalars(
+        select(ToolCall).where(ToolCall.run_id == run.id, ToolCall.status == "error")
+    ).all()
+    assert len(errors) == 1
+    assert "transient tool failure" in (errors[0].error or "")
+    ok_lists = session.scalars(
+        select(ToolCall).where(
+            ToolCall.run_id == run.id,
+            ToolCall.tool_name == "list_documents",
+            ToolCall.status == "success",
+        )
+    ).all()
+    assert len(ok_lists) == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_isolates_event_failure_and_continues(
+    seeded: Session, clients: ReplayClients, tmp_path: Path
+) -> None:
+    """An exception while processing one event marks it failed; later events still run."""
+    session = seeded
+    load_replay_events(session, MINI_JSON)
+    session.commit()
+
+    real_factory = _client_factory(session)
+    crash_keys = {"vz_log_a"}
+
+    def factory(event: Event) -> FakeModel:
+        if event.replay_key in crash_keys:
+            raise RuntimeError("simulated event crash")
+        return real_factory(event)
+
+    lines: list[str] = []
+    result = await run_replay(
+        session,
+        clients,
+        factory,
+        window_from=date(2026, 5, 11),
+        window_until=date(2026, 5, 13),
+        replay_path=MINI_JSON,
+        runs_dir=tmp_path,
+        limits=RunLimits(max_turns=40, max_cost_usd=100.0, max_tokens=10_000_000),
+        print_line=lines.append,
+    )
+
+    assert result.stopped_reason == "complete"
+    by_key = {e.replay_key: e for e in result.events}
+    assert by_key["vz_log_a"].status == "failed"
+    assert "simulated event crash" in (by_key["vz_log_a"].detail or "")
+    assert by_key["vz_redemption_mini"].status == "alerted"
+    assert by_key["vz_log_b"].status == "logged"
+    assert any("failed" in line and "simulated event crash" in line for line in lines)
+
+    failed_event = session.scalars(select(Event).where(Event.replay_key == "vz_log_a")).one()
+    assert failed_event.status == "failed"
+    failed_run = session.get(AgentRun, failed_event.run_id)
+    assert failed_run is not None
+    assert failed_run.status == "failed"
+    assert "simulated event crash" in (failed_run.error or "")
+    assert "traceback" in (failed_run.result or {})
+
+    log = json.loads(result.log_path.read_text(encoding="utf-8"))
+    report = evaluate_replay(session, replay_path=MINI_JSON, log=log)
+    assert report.alert.failed_expected_no_alert == 1
+    assert report.alert.failed_expected_alert == 0
+    assert report.alert.true_positive == 1
+    assert report.alert.true_negative == 1
+    assert report.alert.incomplete_expected_alert == 0
+    assert report.alert.incomplete_expected_no_alert == 0

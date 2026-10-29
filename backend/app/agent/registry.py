@@ -6,10 +6,12 @@ plus a short description written for the model.
 
 from __future__ import annotations
 
+import traceback
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.agent.audit import audit, bump_refusal, record_tool_call
 from app.agent.tools import (
     compute_metrics,
     get_issuer_debt,
@@ -22,6 +24,7 @@ from app.agent.tools import (
     set_checklist,
     submit_alert,
 )
+from app.agent.tools.base import current_step_id
 from app.models.trace import AgentRun
 
 # Nullable string for optional fields under strict mode.
@@ -242,13 +245,12 @@ TOOLS: list[dict[str, Any]] = [
 TOOL_NAMES: frozenset[str] = frozenset(t["name"] for t in TOOLS)
 
 
-async def dispatch_tool(
+async def _dispatch_tool_body(
     session: Session,
     run: AgentRun,
     name: str,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Execute one registered tool; async tools are awaited on the caller's event loop."""
     if name == "get_issuer_debt":
         return get_issuer_debt(session, run)
     if name == "set_checklist":
@@ -305,3 +307,46 @@ async def dispatch_tool(
         "reason": f"unknown tool {name!r}",
         "problems": [f"unknown tool {name!r}"],
     }
+
+
+async def dispatch_tool(
+    session: Session,
+    run: AgentRun,
+    name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute one registered tool; never raises — exceptions become refusals."""
+    try:
+        return await _dispatch_tool_body(session, run, name, arguments)
+    except Exception as exc:
+        tb = traceback.format_exc()
+        message = f"internal error in {name}: {exc}"
+        run.turn_count = int(run.turn_count or 0) + 1
+        count = bump_refusal(run, name)
+        payload = {
+            "ok": False,
+            "refused": True,
+            "error": message,
+            "reason": message,
+            "problems": [message],
+            "refusal_count": count,
+        }
+        record_tool_call(
+            session,
+            run,
+            tool_name=name,
+            arguments=arguments,
+            result={**payload, "traceback": tb},
+            status="error",
+            error=message,
+            step_id=current_step_id.get(),
+        )
+        audit(
+            session,
+            run,
+            actor="agent",
+            action=f"tool:{name}:error",
+            detail={"error": message, "traceback": tb, "refusal_count": count},
+        )
+        session.flush()
+        return payload

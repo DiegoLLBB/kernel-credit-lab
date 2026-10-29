@@ -19,6 +19,7 @@ from app.models.trace import AgentRun, ModelCall, ToolCall
 from app.tools.maturity import instrument_state_at
 
 INCOMPLETE_STATUSES = frozenset({"needs_input", "paused"})
+FAILED_STATUSES = frozenset({"failed"})
 AMOUNT_TOLERANCE = Decimal("0.01")  # 1%
 
 
@@ -44,6 +45,8 @@ class AlertConfusion:
     false_negative: int = 0
     incomplete_expected_alert: int = 0
     incomplete_expected_no_alert: int = 0
+    failed_expected_alert: int = 0
+    failed_expected_no_alert: int = 0
 
     @property
     def precision(self) -> float | None:
@@ -59,6 +62,14 @@ class AlertConfusion:
             return None
         return self.true_positive / denom
 
+    @property
+    def failed_total(self) -> int:
+        return self.failed_expected_alert + self.failed_expected_no_alert
+
+    @property
+    def incomplete_total(self) -> int:
+        return self.incomplete_expected_alert + self.incomplete_expected_no_alert
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "true_positive": self.true_positive,
@@ -67,6 +78,8 @@ class AlertConfusion:
             "false_negative": self.false_negative,
             "incomplete_expected_alert": self.incomplete_expected_alert,
             "incomplete_expected_no_alert": self.incomplete_expected_no_alert,
+            "failed_expected_alert": self.failed_expected_alert,
+            "failed_expected_no_alert": self.failed_expected_no_alert,
             "precision": self.precision,
             "recall": self.recall,
         }
@@ -439,11 +452,23 @@ def _eval_end_state_check(
     )
 
 
+def _event_failed(
+    event: Event | None, run: AgentRun | None, log_row: dict[str, Any] | None
+) -> bool:
+    if run is not None and run.status in FAILED_STATUSES:
+        return True
+    if event is not None and event.status in FAILED_STATUSES:
+        return True
+    return bool(log_row is not None and str(log_row.get("status") or "") in FAILED_STATUSES)
+
+
 def _event_alerted_material(session: Session, event: Event, run: AgentRun | None) -> bool | None:
-    """True if material alert filed; False if logged; None if incomplete."""
+    """True if material alert filed; False if logged; None if incomplete/failed."""
     if run is None:
         if event.status == "processed":
             return False
+        return None
+    if run.status in FAILED_STATUSES:
         return None
     if run.status in INCOMPLETE_STATUSES or run.status == "running":
         return None
@@ -509,6 +534,7 @@ def evaluate_replay(
 
         alerted = _event_alerted_material(session, event, run) if event else None
         expected_alert = bool(exp.expected_alert)
+        failed = _event_failed(event, run, log_row)
         status = (
             (run.status if run else None)
             or (str(log_row["status"]) if log_row and log_row.get("status") else None)
@@ -516,10 +542,15 @@ def evaluate_replay(
             or "missing"
         )
         got = _got_label(alerted, status)
-        # Miss = wrong terminal alert decision (not incomplete).
+        # Miss = wrong terminal alert decision (not incomplete/failed).
         miss = alerted is not None and (alerted != expected_alert)
 
-        if alerted is None:
+        if failed:
+            if expected_alert:
+                report.alert.failed_expected_alert += 1
+            else:
+                report.alert.failed_expected_no_alert += 1
+        elif alerted is None:
             if expected_alert:
                 report.alert.incomplete_expected_alert += 1
             else:
@@ -683,9 +714,8 @@ def render_eval_markdown(report: EvalReport) -> str:
             "",
             f"- Precision: **{prec}** (TP / (TP+FP))",
             f"- Recall: **{rec}** (TP / (TP+FN))",
-            f"- Incomplete (needs_input / paused): "
-            f"{a.incomplete_expected_alert + a.incomplete_expected_no_alert} "
-            f"(not counted as misses)",
+            f"- Incomplete (needs_input / paused): {a.incomplete_total} (not counted as misses)",
+            f"- Failed (runner error): {a.failed_total} (not counted as misses)",
             "",
             "### Confusion table",
             "",
@@ -694,6 +724,7 @@ def render_eval_markdown(report: EvalReport) -> str:
             f"| Alerted (material) | {a.true_positive} | {a.false_positive} |",
             f"| Logged / not material | {a.false_negative} | {a.true_negative} |",
             f"| Incomplete | {a.incomplete_expected_alert} | {a.incomplete_expected_no_alert} |",
+            f"| Failed | {a.failed_expected_alert} | {a.failed_expected_no_alert} |",
             "",
             "## Per-event outcomes",
             "",

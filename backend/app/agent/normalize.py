@@ -93,6 +93,12 @@ MIN_QUOTE_CHARS = 40
 SCALE_MILLIONS = Decimal("1000000")
 SCALE_BILLIONS = Decimal("1000000000")
 
+# Coupon / spread / percentage: "3.000%", "4.522", " 3.0 % ".
+_RATE_RE = re.compile(r"^\s*(?P<num>-?\d+(?:\.\d+)?)\s*%?\s*$")
+
+AMOUNT_FORMAT_HINT = "USD face amount (e.g. 1300000000, $1.3 billion, or 1,300,000,000)"
+RATE_FORMAT_HINT = "percent as a number or with % (e.g. 3.000 or 3.000%)"
+
 
 def normalize_for_quote_match(text: str) -> str:
     """Collapse whitespace; map curly quotes and dashes; keep case."""
@@ -192,6 +198,30 @@ def coerce_amount(value: str | Decimal | int | float) -> Decimal | None:
     try:
         return Decimal(str(value).replace(",", "").replace("$", "").strip())
     except (InvalidOperation, ValueError):
+        return None
+
+
+def parse_rate(value: str | Decimal | int | float | None) -> Decimal | None:
+    """Parse a coupon, spread or percentage (``3.000%`` or ``4.522``) to a Decimal.
+
+    Returns ``None`` when the value is not a plain number with an optional ``%``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, (int, float)):
+        try:
+            return Decimal(str(value))
+        except InvalidOperation:
+            return None
+    text = str(value).strip().replace(",", "").replace("\u00a0", " ")
+    match = _RATE_RE.match(text)
+    if not match:
+        return None
+    try:
+        return Decimal(match.group("num"))
+    except InvalidOperation:
         return None
 
 
@@ -370,7 +400,11 @@ def dates_equal(a: str | date, b: str | date) -> bool:
 
 def format_coupon_pct(coupon: Decimal | str | float) -> str:
     """Coupon as ``4.329%`` (strip DB Numeric padding, keep meaningful decimals)."""
-    text = f"{Decimal(str(coupon)):.6f}".rstrip("0").rstrip(".")
+    parsed = parse_rate(coupon)
+    if parsed is None:
+        raw = str(coupon).strip()
+        return raw if raw.endswith("%") else f"{raw}%"
+    text = f"{parsed:.6f}".rstrip("0").rstrip(".")
     return f"{text}%"
 
 

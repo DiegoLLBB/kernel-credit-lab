@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.normalize import coerce_amount, parse_rate
 from app.agent.run import get_event
 from app.agent.tools.base import ok, refuse
 from app.models import Instrument, Issuer, StateChange
@@ -90,25 +91,36 @@ def _apply_proposed(session: Session, change: StateChange) -> None:
         inst = session.get(Instrument, change.instrument_id) if change.instrument_id else None
         if inst is None:
             return
-        inst.amount_outstanding = Decimal(str(diff.get("after")))
+        after = coerce_amount(diff.get("after"))
+        if after is None:
+            raise ValueError(f"invalid amount in proposed change: {diff.get('after')!r}")
+        inst.amount_outstanding = after
         change.status = "applied"
         return
     if action == "add_instrument":
         issuer_id = diff.get("issuer_id")
         if not issuer_id:
             return
+        coupon = parse_rate(diff.get("coupon") or "0")
+        if coupon is None:
+            raise ValueError(f"invalid coupon in proposed change: {diff.get('coupon')!r}")
+        amount = coerce_amount(diff.get("amount_outstanding") or "0")
+        if amount is None:
+            raise ValueError(
+                f"invalid amount_outstanding in proposed change: {diff.get('amount_outstanding')!r}"
+            )
         session.add(
             Instrument(
                 key=diff.get("instrument_key"),
                 issuer_id=str(issuer_id),
                 name=str(diff.get("name") or "New instrument"),
-                coupon=Decimal(str(diff.get("coupon") or "0")),
+                coupon=coupon,
                 maturity=date.fromisoformat(str(diff["maturity"])),
                 maturity_precision=str(diff.get("maturity_precision") or "day"),
                 issue_date=(
                     date.fromisoformat(str(diff["issue_date"])) if diff.get("issue_date") else None
                 ),
-                amount_outstanding=Decimal(str(diff.get("amount_outstanding") or "0")),
+                amount_outstanding=amount,
                 currency=str(diff.get("currency") or "USD"),
                 instrument_type=str(diff.get("instrument_type") or "bond"),
                 rate_type=str(diff.get("rate_type") or "fixed"),

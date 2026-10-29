@@ -16,7 +16,10 @@ from app.agent.claims import ClaimsResult
 from app.agent.fake import FakeClaimsClient
 from app.agent.materiality import assess_materiality, is_missing_from_bond_list
 from app.agent.normalize import (
+    AMOUNT_FORMAT_HINT,
+    RATE_FORMAT_HINT,
     amount_in_quote,
+    coerce_amount,
     date_in_quote,
     detect_amount_scale,
     extract_dates,
@@ -24,6 +27,7 @@ from app.agent.normalize import (
     extract_numbers,
     instrument_identified_in_quote,
     parse_date_with_precision,
+    parse_rate,
     quote_has_context,
 )
 from app.agent.run import start_agent_run
@@ -460,6 +464,97 @@ def test_record_fact_refuses_too_short(
     bad = record_fact(session, run, "amount", filing.id, "$1,250,000,000", "lone amount")
     assert bad["ok"] is False
     assert "too short" in bad["reason"]
+
+
+def test_parse_rate_and_amount_formats() -> None:
+    assert parse_rate("3.000%") == Decimal("3.000")
+    assert parse_rate("4.522") == Decimal("4.522")
+    assert parse_rate(" 3.0 % ") == Decimal("3.0")
+    assert parse_rate("not-a-rate") is None
+    assert coerce_amount("$1.3 billion") == Decimal("1300000000")
+    assert coerce_amount("nope") is None
+
+
+def test_propose_change_normalizes_coupon_percent(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    """Agent may pass ``3.000%``; proposed_diff stores a plain Decimal string."""
+    event, filing, _bond = verizon_event
+    amount_quote = (
+        "Issuer priced a new 3.000% senior note due 2031 with principal amount "
+        "of $500,000,000 as described in the offering circular"
+    )
+    maturity_quote = (
+        "The 3.000% senior notes mature on May 15, 2031 under the indenture "
+        "governing the newly issued securities described herein"
+    )
+    filing.body_text = f"{amount_quote}\n{maturity_quote}\n{filing.body_text or ''}"
+    session.flush()
+
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    amt = record_fact(session, run, "amount", filing.id, amount_quote, "face")
+    mat = record_fact(session, run, "maturity_effect", filing.id, maturity_quote, "mat")
+    assert amt["ok"] and mat["ok"]
+
+    ok_change = propose_change(
+        session,
+        run,
+        {
+            "action": "add_instrument",
+            "instrument_key": "test_3000_2031",
+            "effective_date": "2026-05-01",
+            "name": "3.000% Senior Notes due 2031",
+            "coupon": "3.000%",
+            "maturity": "2031-05-15",
+            "issue_date": "2026-05-01",
+            "amount": "500000000",
+            "currency": "USD",
+            "instrument_type": "bond",
+            "evidence": {
+                "amount": amt["fact_id"],
+                "maturity": mat["fact_id"],
+            },
+        },
+    )
+    assert ok_change["ok"], ok_change
+    row = session.get(StateChange, ok_change["state_change_id"])
+    assert row is not None
+    assert row.proposed_diff["coupon"] == "3.000"
+    # compute_metrics must accept the stored coupon (no ConversionSyntax).
+    assert compute_metrics(session, run)["ok"]
+
+
+def test_propose_change_refuses_invalid_coupon_and_amount(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    amt = record_fact(session, run, "amount", filing.id, Q_AMOUNT, "amount")
+    assert amt["ok"]
+    bad = propose_change(
+        session,
+        run,
+        {
+            "action": "add_instrument",
+            "instrument_key": "bad_coupon_loan",
+            "effective_date": "2026-05-01",
+            "name": "Bad coupon loan",
+            "coupon": "three percent",
+            "maturity": "2031-05-15",
+            "issue_date": "2026-05-01",
+            "amount": "not-money",
+            "currency": "USD",
+            "instrument_type": "loan",
+            "evidence": {"amount": amt["fact_id"]},
+        },
+    )
+    assert bad["ok"] is False
+    assert any("coupon=" in p and RATE_FORMAT_HINT in p for p in bad["problems"])
+    assert any("amount_outstanding=" in p and AMOUNT_FORMAT_HINT in p for p in bad["problems"])
 
 
 def test_propose_change_refuses_coupon_without_year(
