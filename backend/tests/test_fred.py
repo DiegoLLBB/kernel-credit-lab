@@ -115,19 +115,19 @@ def test_parse_dot_as_missing() -> None:
 def test_series_observations_dgs5(fred: FredClient) -> None:
     rows = fred.series_observations("DGS5", date(2026, 1, 1), date(2026, 10, 31))
     assert rows
-    assert rows[0][0] == date(2026, 1, 2)
-    assert rows[0][1] == Decimal("3.74")
-    # Holiday row is present as None (FRED ".").
+    # Live API includes New Year's Day as a missing "." row before the first print.
+    assert rows[0] == (date(2026, 1, 1), None)
     by_date = dict(rows)
-    assert date(2026, 1, 19) in by_date
+    assert by_date[date(2026, 1, 2)] == Decimal("3.74")
     assert by_date[date(2026, 1, 19)] is None
     assert by_date[date(2026, 6, 15)] == Decimal("4.18")
 
 
 def test_series_observations_dexuseu(fred: FredClient) -> None:
     rows = fred.series_observations("DEXUSEU", date(2026, 1, 1), date(2026, 10, 31))
-    assert rows[0][1] == Decimal("1.1738")
     by_date = dict(rows)
+    assert by_date[date(2026, 1, 1)] is None
+    assert by_date[date(2026, 1, 2)] == Decimal("1.1738")
     assert by_date[date(2026, 6, 15)] == Decimal("1.1599")
 
 

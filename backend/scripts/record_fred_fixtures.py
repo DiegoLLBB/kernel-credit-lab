@@ -31,10 +31,26 @@ def _strip_key_from_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
+def _load_dotenv_candidates() -> None:
+    """Populate os.environ from nearby .env files without overriding existing vars."""
+    here = Path(__file__).resolve()
+    for candidate in (here.parents[1] / ".env", here.parents[2] / ".env", Path.cwd() / ".env"):
+        if not candidate.is_file():
+            continue
+        for line in candidate.read_text().splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
 def main() -> int:
     if os.getenv("FRED_LIVE") != "1":
         print("Refusing to run: set FRED_LIVE=1 to hit api.stlouisfed.org", file=sys.stderr)
         return 2
+    _load_dotenv_candidates()
     get_settings.cache_clear()
     settings = get_settings()
     FIXTURES.mkdir(parents=True, exist_ok=True)
