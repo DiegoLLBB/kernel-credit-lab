@@ -5,6 +5,7 @@ Usage (from backend/, with .env and seed loaded):
     python -m scripts.run_replay
     python -m scripts.run_replay --from 2026-01-01 --until 2026-10-27
     python -m scripts.run_replay --only vz_redemption_notice,vz_tender_results
+    python -m scripts.run_replay --rerun intc_bridge,duk_conv_priced_closed
     python -m scripts.run_replay --max-cost-usd 40
     python -m scripts.run_replay --eval-only replay_runs/20260101T120000Z.json
 """
@@ -99,6 +100,14 @@ async def _async_main(argv: list[str] | None = None) -> int:
         help="Comma-separated ReplayExpectation keys to run (others left pending)",
     )
     parser.add_argument(
+        "--rerun",
+        default=None,
+        help=(
+            "Comma-separated replay keys to re-run from scratch: prior AgentRuns are marked "
+            "superseded, events reset to pending; other events are left as-is (implied --only)"
+        ),
+    )
+    parser.add_argument(
         "--max-cost-usd",
         type=float,
         default=None,
@@ -155,6 +164,9 @@ async def _async_main(argv: list[str] | None = None) -> int:
     only_keys = None
     if args.only:
         only_keys = {k.strip() for k in args.only.split(",") if k.strip()}
+    rerun_keys = None
+    if args.rerun:
+        rerun_keys = {k.strip() for k in args.rerun.split(",") if k.strip()}
 
     clients = default_clients()
     llm = LLMClient(settings)
@@ -177,6 +189,7 @@ async def _async_main(argv: list[str] | None = None) -> int:
                     window_from=_parse_date(args.window_from, flag="--from"),
                     window_until=_parse_date(args.window_until, flag="--until"),
                     only_keys=only_keys,
+                    rerun_keys=rerun_keys,
                     max_cost_usd=args.max_cost_usd,
                     replay_path=args.replay_path,
                     runs_dir=args.runs_dir,

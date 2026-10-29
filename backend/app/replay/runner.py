@@ -16,15 +16,23 @@ from typing import Any, Protocol
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.agent.loop import TERMINAL_STATUSES, RunLimits, max_turns_for_event, resume_run, run_event
-from app.agent.run import start_agent_run
+from app.agent.loop import (
+    TERMINAL_STATUSES,
+    RunLimits,
+    max_tokens_for_event,
+    max_turns_for_event,
+    resume_run,
+    run_event,
+)
+from app.agent.run import prepare_rerun, start_agent_run
+from app.agent.tools.metrics import compute_metrics
 from app.ingest.replay import (
     DEFAULT_REPLAY_PATH,
     ReplayClients,
     load_replay_events,
     step_to_next,
 )
-from app.models import Event, Issuer, ReplayExpectation
+from app.models import Event, Instrument, Issuer, ReplayExpectation, StateChange
 from app.models.trace import AgentRun, ModelCall, ToolCall
 
 ClientFactory = Callable[[Event], Any]
@@ -91,6 +99,7 @@ class ReplayResult:
     stopped_reason: str | None = None
     total_cost_usd: float = 0.0
     only_keys: list[str] | None = None
+    rerun_keys: list[str] | None = None
     incomplete: bool = False
     error: str | None = None
 
@@ -100,6 +109,7 @@ class ReplayResult:
             "from": self.window_from.isoformat(),
             "until": self.window_until.isoformat(),
             "only_keys": self.only_keys,
+            "rerun_keys": self.rerun_keys,
             "incomplete": self.incomplete,
             "error": self.error,
             "checkpoint": {
@@ -166,7 +176,11 @@ def _is_paused(session: Session, event: Event) -> bool:
 
 
 def _unfinished_events(session: Session, *, until: date) -> list[Event]:
-    """Pending/processing events and paused runs, in calendar then key order."""
+    """Pending/processing events and paused runs, in calendar then key order.
+
+    Terminal runs (alerted / logged / needs_input / failed) are excluded even when
+    ``event.status`` is still ``processing``.
+    """
     events = session.scalars(
         select(Event).where(Event.event_date <= until).order_by(Event.event_date, Event.replay_key)
     ).all()
@@ -174,6 +188,8 @@ def _unfinished_events(session: Session, *, until: date) -> list[Event]:
     for event in events:
         if _is_paused(session, event):
             out.append(event)
+            continue
+        if _is_terminal_event(session, event):
             continue
         if event.status in {"pending", "processing"}:
             out.append(event)
@@ -209,27 +225,131 @@ def complete_rate_update_by_code(session: Session, event: Event) -> AgentRun:
     return run
 
 
-def _request_input_question(session: Session, run: AgentRun) -> str | None:
+def _instrument_for_maturity_event(session: Session, event: Event) -> Instrument | None:
+    """Resolve the instrument for a calendar ``maturity:…`` event."""
+    key = event.replay_key or ""
+    if key.startswith("maturity:"):
+        # maturity:{instrument_key}:{YYYY-MM-DD}
+        parts = key.split(":")
+        if len(parts) >= 3:
+            inst_key = ":".join(parts[1:-1])
+            inst = session.scalars(select(Instrument).where(Instrument.key == inst_key)).first()
+            if inst is not None:
+                return inst
+    if event.issuer_id and event.event_date:
+        return session.scalars(
+            select(Instrument).where(
+                Instrument.issuer_id == event.issuer_id,
+                Instrument.maturity == event.event_date,
+            )
+        ).first()
+    return None
+
+
+def complete_maturity_by_code(session: Session, event: Event) -> AgentRun:
+    """Apply scheduled maturity without a model call.
+
+    Active instruments get ``mark_matured`` (effective on the maturity date, source
+    \"scheduled maturity per Kernel records\"), metrics are recomputed, and the event
+    is logged. Already matured / redeemed / repaid instruments log \"already updated\".
+    """
+    if event.run_id:
+        run = session.get(AgentRun, event.run_id)
+        if run is not None and run.status in TERMINAL_STATUSES:
+            return run
+    run = start_agent_run(session, event)
+    inst = _instrument_for_maturity_event(session, event)
+    already = {"matured", "redeemed", "repaid"}
+    if inst is None:
+        run.status = "logged"
+        run.result = {
+            "logged": True,
+            "by": "code",
+            "reason": "no instrument matched this maturity event",
+            "event_type": "maturity",
+        }
+    elif (inst.status or "").lower() in already:
+        run.status = "logged"
+        run.result = {
+            "logged": True,
+            "by": "code",
+            "reason": "already updated",
+            "event_type": "maturity",
+            "instrument_key": inst.key,
+            "instrument_status": inst.status,
+        }
+    else:
+        before = inst.status
+        effective = inst.maturity or event.event_date
+        inst.status = "matured"
+        change = StateChange(
+            instrument_id=inst.id,
+            event_id=event.id,
+            run_id=run.id,
+            proposed_diff={
+                "action": "mark_matured",
+                "field": "status",
+                "before": before,
+                "after": "matured",
+                "instrument_key": inst.key,
+                "source": "scheduled maturity per Kernel records",
+            },
+            evidence={"source": "scheduled maturity per Kernel records"},
+            status="applied",
+            effective_date=effective,
+        )
+        session.add(change)
+        session.flush()
+        metrics = compute_metrics(session, run)
+        run.status = "logged"
+        run.result = {
+            "logged": True,
+            "by": "code",
+            "reason": "scheduled maturity per Kernel records",
+            "event_type": "maturity",
+            "instrument_key": inst.key,
+            "state_change_id": change.id,
+            "metrics_ok": bool(metrics.get("ok")),
+        }
+    run.completed_at = datetime.now(UTC)
+    event.status = "processed"
+    session.flush()
+    return run
+
+
+def _needs_input_detail(session: Session, run: AgentRun) -> str | None:
+    """Best-effort question / refusal text for the run line."""
     meta = run.result or {}
     question = meta.get("question")
     if isinstance(question, str) and question.strip():
         return question.strip()
-    # Fall back to the last successful request_input tool call.
-    row = session.scalars(
-        select(ToolCall)
-        .where(ToolCall.run_id == run.id, ToolCall.tool_name == "request_input")
-        .order_by(ToolCall.created_at.desc())
-    ).first()
-    if row is None:
-        return None
-    args = row.arguments or {}
-    q = args.get("question")
-    if isinstance(q, str) and q.strip():
-        return q.strip()
-    result = row.result or {}
-    q2 = result.get("question")
-    if isinstance(q2, str) and q2.strip():
-        return q2.strip()
+    # Prefer request_input arguments (any status — refused calls still carry the question).
+    for tool_name in ("request_input", "submit_alert"):
+        row = session.scalars(
+            select(ToolCall)
+            .where(ToolCall.run_id == run.id, ToolCall.tool_name == tool_name)
+            .order_by(ToolCall.created_at.desc())
+        ).first()
+        if row is None:
+            continue
+        args = row.arguments or {}
+        if tool_name == "request_input":
+            q = args.get("question")
+            if isinstance(q, str) and q.strip():
+                return q.strip()
+            result = row.result or {}
+            q2 = result.get("question")
+            if isinstance(q2, str) and q2.strip():
+                return q2.strip()
+        else:
+            # submit_alert → needs_input after max refusals: surface the refusal reason.
+            err = (row.error or "").strip()
+            if err:
+                return err
+            result = row.result or {}
+            reason = result.get("reason")
+            if isinstance(reason, str) and reason.strip():
+                return reason.strip()
     return None
 
 
@@ -250,9 +370,11 @@ def _outcome_from_run(
         material = None
     detail = None
     if run.status == "needs_input":
-        detail = _request_input_question(session, run)
+        detail = _needs_input_detail(session, run)
     elif run.status == "failed":
         detail = (run.error or "").strip() or None
+    elif run.status == "paused":
+        detail = (run.error or "").strip() or "paused"
     return EventOutcome(
         replay_key=event.replay_key,
         event_id=event.id,
@@ -301,11 +423,13 @@ def format_event_line(outcome: EventOutcome) -> str:
     )
     if outcome.skipped:
         return f"{line}\tskipped (not selected)"
-    if outcome.status in {"needs_input", "failed"} and outcome.detail:
+    if outcome.status in {"needs_input", "failed", "paused"} and outcome.detail:
         q = outcome.detail.replace("\n", " ").strip()
         if len(q) > QUESTION_PREVIEW_CHARS:
             q = q[: QUESTION_PREVIEW_CHARS - 1] + "…"
         return f"{line}\t{q}"
+    if outcome.status == "needs_input":
+        return f"{line}\t(needs_input; question not recorded)"
     return line
 
 
@@ -410,8 +534,30 @@ async def process_one_event(
             duration_s=time.perf_counter() - started,
             by_code=True,
         )
+    if event.event_type == "maturity":
+        started = time.perf_counter()
+        run = complete_maturity_by_code(session, event)
+        session.commit()
+        return _outcome_from_run(
+            session,
+            event,
+            run,
+            duration_s=time.perf_counter() - started,
+            by_code=True,
+        )
 
-    limits = limits or RunLimits(max_turns=max_turns_for_event(event))
+    if limits is None:
+        limits = RunLimits(
+            max_turns=max_turns_for_event(event),
+            max_tokens=max_tokens_for_event(event),
+        )
+    elif limits.max_tokens is None:
+        limits = RunLimits(
+            max_turns=limits.max_turns,
+            max_cost_usd=limits.max_cost_usd,
+            max_tokens=max_tokens_for_event(event),
+            max_wall_seconds=limits.max_wall_seconds,
+        )
     started = time.perf_counter()
     if _is_paused(session, event) and event.run_id:
         run = await resume_run(session, event.run_id, client, limits, model=model)
@@ -429,6 +575,7 @@ async def run_replay(
     window_from: date | None = None,
     window_until: date | None = None,
     only_keys: set[str] | None = None,
+    rerun_keys: set[str] | None = None,
     max_cost_usd: float | None = None,
     replay_path: Path | str | None = None,
     runs_dir: Path | None = None,
@@ -440,14 +587,25 @@ async def run_replay(
     """Step day by day with ``step_to_next``, running the agent on each pending event.
 
     Resumable from DB state: finished events are skipped, paused runs are resumed.
-    Stops cleanly when ``max_cost_usd`` is reached (total across event-linked runs).
+    ``paused`` / ``needs_input`` / ``failed`` are reported and the replay continues;
+    only ``max_cost_usd`` or Ctrl+C stops the whole run.
 
     With ``only_keys``, non-matching events stay ``pending`` (logged as skipped) so a
-    later full replay can still process them. Always writes the JSON log (try/finally).
+    later full replay can still process them.
+
+    With ``rerun_keys``, prior runs for those replay keys are marked ``superseded``, the
+    events are reset to ``pending``, and only those keys are selected (same skip behaviour
+    as ``only_keys`` for everything else). Always writes the JSON log (try/finally).
     """
     path = Path(replay_path) if replay_path is not None else DEFAULT_REPLAY_PATH
     load_replay_events(session, path)
     session.commit()
+
+    if rerun_keys:
+        prepare_rerun(session, rerun_keys)
+        session.commit()
+        # Rerun implies selecting only those keys (keep other finished events untouched).
+        only_keys = set(rerun_keys) if only_keys is None else (only_keys | set(rerun_keys))
 
     with path.open(encoding="utf-8") as fh:
         meta = json.load(fh)
@@ -467,6 +625,7 @@ async def run_replay(
         after_date=_resume_after_date(session, start),
         total_cost_usd=float(_cost_from_db(session)),
         only_keys=sorted(only_keys) if only_keys is not None else None,
+        rerun_keys=sorted(rerun_keys) if rerun_keys is not None else None,
     )
     _write_log(result)
     handled_ids: set[str] = set()
@@ -550,12 +709,9 @@ async def run_replay(
                     if max_cost_usd is not None and result.total_cost_usd >= max_cost_usd:
                         result.stopped_reason = "cost_limit"
                         break
-                    # Paused mid-run: stop this invocation; a fresh call resumes.
-                    # Failed events do not stop the replay.
-                    if outcome.status == "paused":
-                        result.stopped_reason = "paused"
-                        break
-                if result.stopped_reason in {"cost_limit", "paused"}:
+                    # paused / needs_input / failed: report and continue. Only cost_limit
+                    # (or Ctrl+C) stops the replay.
+                if result.stopped_reason == "cost_limit":
                     break
                 continue
 

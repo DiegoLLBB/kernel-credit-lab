@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     llm_max_retries: int = 3
     max_run_cost_usd: float = 2.0
     # Input + output tokens per run (works without MODEL_PRICING_JSON).
+    # Short docs (8-K, press releases); long 10-Q / 10-K use max_run_tokens_long.
     max_run_tokens: int = 400_000
+    max_run_tokens_long: int = 900_000
     # USD per 1M tokens, as JSON: {"model-id": [input_price, output_price]}. Used for cost tracking.
     model_pricing_json: str = "{}"
 

@@ -32,7 +32,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agent.fake import FakeModel, function_call, plain_text
-from app.agent.loop import RunLimits, max_turns_for_event, resume_run, run_event
+from app.agent.loop import (
+    RunLimits,
+    max_tokens_for_event,
+    max_turns_for_event,
+    resume_run,
+    run_event,
+)
 from app.agent.text import html_to_text
 from app.config import get_settings
 from app.db import SessionLocal
@@ -465,10 +471,11 @@ def _build_limits(
 ) -> RunLimits:
     settings = get_settings()
     turns = max_turns if max_turns is not None else max_turns_for_event(event)
+    tokens = max_tokens if max_tokens is not None else max_tokens_for_event(event, settings)
     limits = RunLimits(
         max_turns=turns,
         max_cost_usd=float(settings.max_run_cost_usd),
-        max_tokens=max_tokens if max_tokens is not None else int(settings.max_run_tokens),
+        max_tokens=tokens,
     )
     if max_seconds is not None:
         limits.max_wall_seconds = float(max_seconds)

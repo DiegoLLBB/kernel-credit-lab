@@ -620,12 +620,10 @@ def evaluate_replay(
         for event in extra_events:
             if event.replay_key in seen or event.replay_key in skipped_keys:
                 continue
-            if (
-                event.replay_key
-                and str(event.replay_key).startswith("rate_update:")
-                and event.status != "processed"
-            ):
+            rk = str(event.replay_key or "")
+            if rk.startswith("rate_update:") and event.status != "processed":
                 continue
+            # Calendar maturity / rate_update: cost rows only — never scored as alerts.
             run = session.get(AgentRun, event.run_id) if event.run_id else None
             tokens = 0
             cost = 0.0

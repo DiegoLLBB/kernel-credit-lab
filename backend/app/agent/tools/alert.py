@@ -34,6 +34,20 @@ from app.models.trace import AgentRun
 MAX_REFUSALS = 3
 
 
+def _escalate_needs_input(run: AgentRun, *, reason: str) -> None:
+    """Terminal needs_input after repeated submit_alert refusals; store a printable question."""
+    run.status = "needs_input"
+    q = (reason or "submit_alert refused repeatedly; human review needed").strip()
+    if len(q) > 400:
+        q = q[:399] + "…"
+    run.result = {
+        **(run.result or {}),
+        "status": "needs_input",
+        "question": q,
+        "item_key": "submit_alert",
+    }
+
+
 def _collect_metric_numbers(metrics_outputs: list[Any]) -> set[Decimal]:
     found: set[Decimal] = set()
 
@@ -197,8 +211,7 @@ async def submit_alert(
             problems=problems,
         )
         if int(result.get("refusal_count") or 0) >= MAX_REFUSALS:
-            run.status = "needs_input"
-            session.flush()
+            _escalate_needs_input(run, reason=str(result.get("reason") or "; ".join(problems)))
             result = {**result, "status": "needs_input"}
         return result
 
@@ -274,8 +287,9 @@ async def submit_alert(
             problems=claims_problems,
         )
         if int(result.get("refusal_count") or 0) >= MAX_REFUSALS:
-            run.status = "needs_input"
-            session.flush()
+            _escalate_needs_input(
+                run, reason=str(result.get("reason") or "; ".join(claims_problems))
+            )
             result = {**result, "status": "needs_input"}
         return result
 

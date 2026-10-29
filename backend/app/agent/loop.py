@@ -39,7 +39,10 @@ DEFAULT_MAX_TURNS = 30
 PERIODIC_MAX_TURNS = 40
 DEFAULT_WALL_SECONDS = 600.0
 MAX_CONSECUTIVE_NO_TOOL = 3
-# Agent-visible event types that get the higher turn budget (long 10-Q / 10-K bodies).
+# Defaults mirrored from Settings (tests / callers may override via RunLimits).
+MAX_RUN_TOKENS = 400_000
+MAX_RUN_TOKENS_LONG = 900_000
+# Agent-visible event types that get the higher turn / token budget (long 10-Q / 10-K bodies).
 PERIODIC_EVENT_TYPES = frozenset(
     {
         "periodic_filing",
@@ -82,14 +85,28 @@ class RunLimits:
     max_wall_seconds: float = DEFAULT_WALL_SECONDS
 
 
+def _is_periodic_event(event: Event | None) -> bool:
+    if event is None:
+        return False
+    et = (event.event_type or "").strip()
+    return et in PERIODIC_EVENT_TYPES or et.upper() in PERIODIC_EVENT_TYPES
+
+
 def max_turns_for_event(event: Event | None) -> int:
     """40 turns for periodic filings (10-Q / 10-K); 30 otherwise."""
-    if event is None:
-        return DEFAULT_MAX_TURNS
-    et = (event.event_type or "").strip()
-    if et in PERIODIC_EVENT_TYPES or et.upper() in PERIODIC_EVENT_TYPES:
+    if _is_periodic_event(event):
         return PERIODIC_MAX_TURNS
     return DEFAULT_MAX_TURNS
+
+
+def max_tokens_for_event(event: Event | None, settings: Any | None = None) -> int:
+    """``MAX_RUN_TOKENS`` for short docs; ``MAX_RUN_TOKENS_LONG`` for 10-Q / 10-K."""
+    cfg = settings if settings is not None else get_settings()
+    short = int(getattr(cfg, "max_run_tokens", MAX_RUN_TOKENS) or MAX_RUN_TOKENS)
+    long = int(getattr(cfg, "max_run_tokens_long", MAX_RUN_TOKENS_LONG) or MAX_RUN_TOKENS_LONG)
+    if _is_periodic_event(event):
+        return long
+    return short
 
 
 @dataclass
@@ -462,9 +479,11 @@ async def _run_loop(
     max_cost = (
         limits.max_cost_usd if limits.max_cost_usd is not None else float(settings.max_run_cost_usd)
     )
-    max_tokens = (
-        limits.max_tokens if limits.max_tokens is not None else int(settings.max_run_tokens)
-    )
+    if limits.max_tokens is not None:
+        max_tokens = int(limits.max_tokens)
+    else:
+        event = session.get(Event, run.event_id) if run.event_id else None
+        max_tokens = max_tokens_for_event(event, settings)
 
     _begin_session(run, state)
     session.commit()

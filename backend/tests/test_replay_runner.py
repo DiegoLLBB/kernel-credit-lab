@@ -260,7 +260,7 @@ async def test_replay_resumes_after_interrupt(
     session.commit()
     factory = _client_factory(session, reuse=True)
 
-    # First pass: only enough turns for the first event to pause mid-script.
+    # First pass: only enough turns for events to pause mid-script — replay continues.
     result1 = await run_replay(
         session,
         clients,
@@ -273,11 +273,16 @@ async def test_replay_resumes_after_interrupt(
         print_line=None,
     )
     assert result1.events
-    first = result1.events[0]
-    assert first.replay_key == "vz_log_a"
+    assert result1.stopped_reason == "complete"
+    first = next(e for e in result1.events if e.replay_key == "vz_log_a")
     assert first.status == "paused"
+    assert {e.replay_key for e in result1.events} >= {
+        "vz_log_a",
+        "vz_redemption_mini",
+        "vz_log_b",
+    }
 
-    # Second pass: higher turn limit; resumes paused run then continues.
+    # Second pass: higher turn limit; resumes paused runs then continues.
     result2 = await run_replay(
         session,
         clients,
@@ -359,6 +364,163 @@ async def test_rate_update_logged_by_code(seeded: Session, tmp_path: Path) -> No
     assert (run.result or {}).get("by") == "code"
     assert event.status == "processed"
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_maturity_handled_by_code(seeded: Session) -> None:
+    """Calendar maturity events mark active instruments matured with no model call."""
+    from app.models import Issuer, StateChange
+    from app.replay.runner import complete_maturity_by_code, process_one_event
+
+    session = seeded
+    verizon = session.scalars(select(Issuer).where(Issuer.key == "verizon")).one()
+    bond = Instrument(
+        key="vz_mat_test_2026",
+        issuer_id=verizon.id,
+        name="Test Notes due 2026",
+        coupon=Decimal("3.000"),
+        maturity=date(2026, 6, 15),
+        amount_outstanding=Decimal("1000000000"),
+        currency="USD",
+        instrument_type="bond",
+        status="active",
+    )
+    session.add(bond)
+    session.flush()
+    event = Event(
+        replay_key=f"maturity:{bond.key}:2026-06-15",
+        event_type="maturity",
+        issuer_id=verizon.id,
+        event_date=date(2026, 6, 15),
+        summary="Test maturity",
+        status="pending",
+    )
+    session.add(event)
+    session.commit()
+
+    # Client must not be used for maturity (code path).
+    client = FakeModel([])
+    outcome = await process_one_event(session, event, client)
+    assert outcome.by_code is True
+    assert outcome.status == "logged"
+    assert client._index == 0  # noqa: SLF001 — no model turns consumed
+    session.refresh(bond)
+    assert bond.status == "matured"
+    change = session.scalars(
+        select(StateChange).where(StateChange.event_id == event.id, StateChange.status == "applied")
+    ).one()
+    assert change.proposed_diff["action"] == "mark_matured"
+    assert change.proposed_diff["source"] == "scheduled maturity per Kernel records"
+    assert change.effective_date == date(2026, 6, 15)
+
+    # Already matured → log "already updated"
+    event2 = Event(
+        replay_key=f"maturity:{bond.key}:2026-06-15:again",
+        event_type="maturity",
+        issuer_id=verizon.id,
+        event_date=date(2026, 6, 15),
+        summary="Repeat maturity",
+        status="pending",
+    )
+    session.add(event2)
+    session.commit()
+    run2 = complete_maturity_by_code(session, event2)
+    session.commit()
+    assert run2.status == "logged"
+    assert (run2.result or {}).get("reason") == "already updated"
+
+
+def test_max_tokens_for_event_short_vs_long() -> None:
+    from app.agent.loop import MAX_RUN_TOKENS, MAX_RUN_TOKENS_LONG, max_tokens_for_event
+
+    short = Event(
+        replay_key="x",
+        event_type="8-K",
+        event_date=date(2026, 1, 1),
+        summary="s",
+        status="pending",
+    )
+    long = Event(
+        replay_key="y",
+        event_type="10-Q",
+        event_date=date(2026, 1, 1),
+        summary="s",
+        status="pending",
+    )
+    assert max_tokens_for_event(short) == MAX_RUN_TOKENS
+    assert max_tokens_for_event(long) == MAX_RUN_TOKENS_LONG
+
+
+def test_start_agent_run_abandons_stale_running(seeded: Session) -> None:
+    session = seeded
+    event, _ = _minimal_event(session, replay_key="abandon_probe")
+    first = start_agent_run(session, event)
+    session.commit()
+    assert first.status == "running"
+    second = start_agent_run(session, event)
+    session.commit()
+    session.refresh(first)
+    assert first.status == "abandoned"
+    assert second.status == "running"
+    assert event.run_id == second.id
+
+
+@pytest.mark.asyncio
+async def test_rerun_supersedes_prior_and_keeps_others(
+    seeded: Session, clients: ReplayClients, tmp_path: Path
+) -> None:
+    """``--rerun`` marks old runs superseded, resets those events, leaves others alone."""
+    session = seeded
+    # Full mini pass first.
+    result1 = await run_replay(
+        session,
+        clients,
+        _client_factory(session),
+        window_from=date(2026, 5, 11),
+        window_until=date(2026, 5, 13),
+        replay_path=MINI_JSON,
+        runs_dir=tmp_path / "pass1",
+        limits=RunLimits(max_turns=40, max_cost_usd=100.0, max_tokens=10_000_000),
+        print_line=None,
+    )
+    assert result1.stopped_reason == "complete"
+    log_a = session.scalars(select(Event).where(Event.replay_key == "vz_log_a")).one()
+    redemption = session.scalars(
+        select(Event).where(Event.replay_key == "vz_redemption_mini")
+    ).one()
+    old_log_run_id = log_a.run_id
+    old_redemption_run_id = redemption.run_id
+    assert old_log_run_id and old_redemption_run_id
+    old_log_run = session.get(AgentRun, old_log_run_id)
+    assert old_log_run is not None and old_log_run.status == "logged"
+
+    result2 = await run_replay(
+        session,
+        clients,
+        _client_factory(session),
+        window_from=date(2026, 5, 11),
+        window_until=date(2026, 5, 13),
+        rerun_keys={"vz_log_a"},
+        replay_path=MINI_JSON,
+        runs_dir=tmp_path / "pass2",
+        limits=RunLimits(max_turns=40, max_cost_usd=100.0, max_tokens=10_000_000),
+        print_line=None,
+    )
+    assert result2.stopped_reason == "complete"
+    assert result2.rerun_keys == ["vz_log_a"]
+    session.refresh(log_a)
+    session.refresh(redemption)
+    session.refresh(old_log_run)
+    assert old_log_run.status == "superseded"
+    assert log_a.run_id != old_log_run_id
+    new_run = session.get(AgentRun, log_a.run_id)
+    assert new_run is not None and new_run.status == "logged"
+    # Other events untouched.
+    assert redemption.run_id == old_redemption_run_id
+    red_run = session.get(AgentRun, old_redemption_run_id)
+    assert red_run is not None and red_run.status == "alerted"
+    selected = [e for e in result2.events if not e.skipped]
+    assert [e.replay_key for e in selected] == ["vz_log_a"]
 
 
 @pytest.mark.asyncio

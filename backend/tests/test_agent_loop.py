@@ -15,10 +15,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.agent.fake import FakeModel, function_call, multi_call, plain_text
 from app.agent.loop import (
     DEFAULT_MAX_TURNS,
+    MAX_RUN_TOKENS,
+    MAX_RUN_TOKENS_LONG,
     PERIODIC_MAX_TURNS,
     RunLimits,
     assemble_user_input,
     compact_transcript_for_model,
+    max_tokens_for_event,
     max_turns_for_event,
     resume_run,
     run_event,
@@ -129,7 +132,7 @@ def test_assemble_user_input_excludes_expectation_text(
     assert payload["watchlist"]["on_watchlist"] is True
 
 
-def test_event_v7_prompt_inserts_available_from(
+def test_event_v8_prompt_inserts_available_from(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
     from app.agent.prompts import PROMPT_VERSION, load_event_prompt
@@ -138,7 +141,7 @@ def test_event_v7_prompt_inserts_available_from(
     event, _filing, _bond = verizon_event
     as_of = available_from_for_event(session, event)
     text = load_event_prompt(today=as_of)
-    assert PROMPT_VERSION == "event_v7"
+    assert PROMPT_VERSION == "event_v8"
     assert "2026-08-20" in text
     assert "{available_from}" not in text
     assert "do not use knowledge of anything after today" in text
@@ -151,6 +154,11 @@ def test_event_v7_prompt_inserts_available_from(
     assert "Never add or combine figures yourself" in text
     assert "settlement date" in text
     assert "don't wait for settlement" in text
+    assert "bridge facilities" in text
+    assert "announced / priced / closed / settled" in text
+    # v7 kept on disk for history
+    v7 = load_event_prompt(version="event_v7", today=as_of)
+    assert "bridge facilities" not in v7
 
 
 def test_max_turns_for_event_periodic_vs_other(
@@ -159,11 +167,14 @@ def test_max_turns_for_event_periodic_vs_other(
     event, _filing, _bond = verizon_event
     assert event.event_type == "press_release"
     assert max_turns_for_event(event) == DEFAULT_MAX_TURNS
+    assert max_tokens_for_event(event) == MAX_RUN_TOKENS
     event.event_type = "10-Q"
     assert max_turns_for_event(event) == PERIODIC_MAX_TURNS
+    assert max_tokens_for_event(event) == MAX_RUN_TOKENS_LONG
     event.event_type = "periodic_filing"
     assert max_turns_for_event(event) == PERIODIC_MAX_TURNS
     assert max_turns_for_event(None) == DEFAULT_MAX_TURNS
+    assert max_tokens_for_event(None) == MAX_RUN_TOKENS
 
 
 def _verizon_script(filing_id: str) -> list:
@@ -400,7 +411,7 @@ async def test_plain_text_three_times_pauses(
     assert run.status == "paused"
     assert "without a tool call" in (run.error or "")
     assert len(run.steps) == 3
-    assert (run.result or {}).get("prompt_version") == "event_v7"
+    assert (run.result or {}).get("prompt_version") == "event_v8"
     assert (run.result or {}).get("available_from") == "2026-08-20"
 
 
