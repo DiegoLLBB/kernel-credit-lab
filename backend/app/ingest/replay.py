@@ -406,7 +406,9 @@ def _store_filing(
     title: str | None,
     text: str,
 ) -> Filing:
-    content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    # Postgres text rejects NUL; strip defensively (PDF/binary mishaps).
+    clean = (text or "").replace("\x00", "")
+    content_hash = hashlib.sha256(clean.encode("utf-8")).hexdigest()
     row = session.scalars(select(Filing).where(Filing.url == url)).first()
     if row is None:
         row = Filing(url=url)
@@ -417,7 +419,7 @@ def _store_filing(
     row.filed_at = filed_at
     row.title = (title or "")[:512] or None
     row.content_hash = content_hash
-    row.body_text = text
+    row.body_text = clean
     session.flush()
     return row
 

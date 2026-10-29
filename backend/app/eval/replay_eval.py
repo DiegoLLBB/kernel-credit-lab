@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.ingest.replay import DEFAULT_REPLAY_PATH
 from app.models import Alert, Event, Instrument, ReplayExpectation, StateChange
-from app.models.trace import AgentRun, ModelCall
+from app.models.trace import AgentRun, ModelCall, ToolCall
 from app.tools.maturity import instrument_state_at
 
 INCOMPLETE_STATUSES = frozenset({"needs_input", "paused"})
@@ -117,6 +117,10 @@ class EventCostRow:
     tokens: int
     turns: int
     coverage_score: float | None
+    expected_alert: bool | None = None
+    got: str | None = None
+    miss: bool = False
+    last_tool: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,6 +131,10 @@ class EventCostRow:
             "tokens": self.tokens,
             "turns": self.turns,
             "coverage_score": self.coverage_score,
+            "expected_alert": self.expected_alert,
+            "got": self.got,
+            "miss": self.miss,
+            "last_tool": self.last_tool,
         }
 
 
@@ -138,9 +146,13 @@ class EvalReport:
     coverage: list[dict[str, Any]] = field(default_factory=list)
     per_event: list[EventCostRow] = field(default_factory=list)
     totals: dict[str, Any] = field(default_factory=dict)
+    incomplete: bool = False
+    error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "incomplete": self.incomplete,
+            "error": self.error,
             "alert": self.alert.to_dict(),
             "changes": [c.to_dict() for c in self.changes],
             "end_state": [e.to_dict() for e in self.end_state],
@@ -148,6 +160,33 @@ class EvalReport:
             "per_event": [r.to_dict() for r in self.per_event],
             "totals": self.totals,
         }
+
+
+def _got_label(alerted: bool | None, status: str | None) -> str:
+    if alerted is True:
+        return "alerted"
+    if alerted is False:
+        return "logged"
+    if status:
+        return str(status)
+    return "missing"
+
+
+def _last_tool_call(session: Session, run: AgentRun | None) -> dict[str, Any] | None:
+    if run is None:
+        return None
+    row = session.scalars(
+        select(ToolCall).where(ToolCall.run_id == run.id).order_by(ToolCall.created_at.desc())
+    ).first()
+    if row is None:
+        return None
+    return {
+        "tool_name": row.tool_name,
+        "arguments": row.arguments,
+        "result": row.result,
+        "status": row.status,
+        "error": row.error,
+    }
 
 
 def load_end_state_checks(path: Path | str | None = None) -> list[dict[str, Any]]:
@@ -422,33 +461,63 @@ def evaluate_replay(
     replay_path: Path | str | None = None,
     log: dict[str, Any] | None = None,
     end_state_as_of: date | None = None,
+    only_keys: set[str] | None = None,
 ) -> EvalReport:
-    """Compare agent outcomes with ``ReplayExpectation`` and end-state checks."""
+    """Compare agent outcomes with ``ReplayExpectation`` and end-state checks.
+
+    Skipped ``--only`` events (still pending / logged as skipped) are excluded.
+    """
     report = EvalReport()
+    if log:
+        report.incomplete = bool(log.get("incomplete"))
+        report.error = log.get("error")
+        if only_keys is None and log.get("only_keys"):
+            only_keys = {str(k) for k in log["only_keys"]}
+
     expectations = session.scalars(
         select(ReplayExpectation).order_by(ReplayExpectation.available_from, ReplayExpectation.key)
     ).all()
 
     log_by_key: dict[str, dict[str, Any]] = {}
+    skipped_keys: set[str] = set()
     if log:
         for row in log.get("events") or []:
             key = row.get("replay_key")
-            if key:
-                log_by_key[str(key)] = row
+            if not key:
+                continue
+            key_s = str(key)
+            log_by_key[key_s] = row
+            if row.get("skipped") or row.get("status") == "skipped":
+                skipped_keys.add(key_s)
 
     for exp in expectations:
+        if only_keys is not None and exp.key not in only_keys:
+            continue
+        if exp.key in skipped_keys:
+            continue
+
         event = None
         if exp.event_id:
             event = session.get(Event, exp.event_id)
         if event is None and exp.key:
             event = session.scalars(select(Event).where(Event.replay_key == exp.key)).first()
 
+        log_row = log_by_key.get(exp.key)
         run: AgentRun | None = None
         if event and event.run_id:
             run = session.get(AgentRun, event.run_id)
 
         alerted = _event_alerted_material(session, event, run) if event else None
         expected_alert = bool(exp.expected_alert)
+        status = (
+            (run.status if run else None)
+            or (str(log_row["status"]) if log_row and log_row.get("status") else None)
+            or (event.status if event else None)
+            or "missing"
+        )
+        got = _got_label(alerted, status)
+        # Miss = wrong terminal alert decision (not incomplete).
+        miss = alerted is not None and (alerted != expected_alert)
 
         if alerted is None:
             if expected_alert:
@@ -471,92 +540,105 @@ def evaluate_replay(
                     continue
                 report.changes.append(_match_change(session, exp.key, change, applied))
 
-            coverage = _coverage_score_value(run.coverage_score if run else None)
-            report.coverage.append(
-                {
-                    "key": exp.key,
-                    "coverage_score": coverage,
-                    "status": run.status if run else (event.status if event else None),
-                }
-            )
+        coverage = _coverage_score_value(run.coverage_score if run else None)
+        report.coverage.append(
+            {
+                "key": exp.key,
+                "coverage_score": coverage,
+                "status": status,
+            }
+        )
 
-            tokens = 0
-            cost = 0.0
-            turns = 0
-            status = event.status
-            if run is not None:
-                status = run.status
-                cost = float(run.total_cost_usd or 0)
-                turns = int(run.turn_count or 0)
-                for mc in session.scalars(
-                    select(ModelCall).where(ModelCall.run_id == run.id)
-                ).all():
-                    tokens += int(mc.input_tokens or 0) + int(mc.output_tokens or 0)
-            elif exp.key in log_by_key:
-                row = log_by_key[exp.key]
-                cost = float(row.get("cost_usd") or 0)
-                tokens = int(row.get("tokens") or 0)
-                turns = int(row.get("turns") or 0)
-                status = str(row.get("status") or status)
-
-            report.per_event.append(
-                EventCostRow(
-                    replay_key=exp.key,
-                    event_date=(
-                        event.event_date.isoformat() if event else exp.available_from.isoformat()
-                    ),
-                    status=status,
-                    cost_usd=cost,
-                    tokens=tokens,
-                    turns=turns,
-                    coverage_score=coverage,
-                )
-            )
-
-    # Calendar / rate events not in expectations — still include cost rows from log / DB.
-    seen = {r.replay_key for r in report.per_event}
-    extra_events = session.scalars(
-        select(Event).where(Event.replay_key.is_not(None)).order_by(Event.event_date)
-    ).all()
-    for event in extra_events:
-        if event.replay_key in seen:
-            continue
-        run = session.get(AgentRun, event.run_id) if event.run_id else None
         tokens = 0
         cost = 0.0
         turns = 0
-        status = event.status
-        coverage = None
         if run is not None:
-            status = run.status
             cost = float(run.total_cost_usd or 0)
             turns = int(run.turn_count or 0)
-            coverage = _coverage_score_value(run.coverage_score)
             for mc in session.scalars(select(ModelCall).where(ModelCall.run_id == run.id)).all():
                 tokens += int(mc.input_tokens or 0) + int(mc.output_tokens or 0)
+        elif log_row:
+            cost = float(log_row.get("cost_usd") or 0)
+            tokens = int(log_row.get("tokens") or 0)
+            turns = int(log_row.get("turns") or 0)
+
         report.per_event.append(
             EventCostRow(
-                replay_key=event.replay_key,
-                event_date=event.event_date.isoformat(),
+                replay_key=exp.key,
+                event_date=(
+                    event.event_date.isoformat() if event else exp.available_from.isoformat()
+                ),
                 status=status,
                 cost_usd=cost,
                 tokens=tokens,
                 turns=turns,
                 coverage_score=coverage,
+                expected_alert=expected_alert,
+                got=got,
+                miss=miss,
+                last_tool=_last_tool_call(session, run) if miss else None,
             )
         )
 
-    checks = load_end_state_checks(replay_path)
-    for block in checks:
-        as_of_s = block.get("as_of")
-        if not as_of_s:
-            continue
-        as_of = date.fromisoformat(str(as_of_s))
-        if end_state_as_of is not None and as_of != end_state_as_of:
-            continue
-        source = block.get("source")
-        for check in block.get("checks") or []:
-            report.end_state.append(_eval_end_state_check(session, as_of, source, str(check)))
+    # Calendar / rate events — include when not skipped and (no only filter).
+    if only_keys is None:
+        seen = {r.replay_key for r in report.per_event}
+        extra_events = session.scalars(
+            select(Event).where(Event.replay_key.is_not(None)).order_by(Event.event_date)
+        ).all()
+        for event in extra_events:
+            if event.replay_key in seen or event.replay_key in skipped_keys:
+                continue
+            if (
+                event.replay_key
+                and str(event.replay_key).startswith("rate_update:")
+                and event.status != "processed"
+            ):
+                continue
+            run = session.get(AgentRun, event.run_id) if event.run_id else None
+            tokens = 0
+            cost = 0.0
+            turns = 0
+            status = event.status
+            coverage = None
+            if run is not None:
+                status = run.status
+                cost = float(run.total_cost_usd or 0)
+                turns = int(run.turn_count or 0)
+                coverage = _coverage_score_value(run.coverage_score)
+                for mc in session.scalars(
+                    select(ModelCall).where(ModelCall.run_id == run.id)
+                ).all():
+                    tokens += int(mc.input_tokens or 0) + int(mc.output_tokens or 0)
+            report.per_event.append(
+                EventCostRow(
+                    replay_key=event.replay_key,
+                    event_date=event.event_date.isoformat(),
+                    status=status,
+                    cost_usd=cost,
+                    tokens=tokens,
+                    turns=turns,
+                    coverage_score=coverage,
+                    expected_alert=None,
+                    got=status,
+                    miss=False,
+                    last_tool=None,
+                )
+            )
+
+    # End-state checks only on a full (non --only) evaluation.
+    if only_keys is None:
+        checks = load_end_state_checks(replay_path)
+        for block in checks:
+            as_of_s = block.get("as_of")
+            if not as_of_s:
+                continue
+            as_of = date.fromisoformat(str(as_of_s))
+            if end_state_as_of is not None and as_of != end_state_as_of:
+                continue
+            source = block.get("source")
+            for check in block.get("checks") or []:
+                report.end_state.append(_eval_end_state_check(session, as_of, source, str(check)))
 
     report.totals = {
         "events": len(report.per_event),
@@ -587,25 +669,70 @@ def render_eval_markdown(report: EvalReport) -> str:
     lines = [
         "# Replay evaluation",
         "",
-        "## Alert precision / recall",
-        "",
-        f"- Precision: **{prec}** (TP / (TP+FP))",
-        f"- Recall: **{rec}** (TP / (TP+FN))",
-        f"- Incomplete (needs_input / paused): "
-        f"{a.incomplete_expected_alert + a.incomplete_expected_no_alert} "
-        f"(not counted as misses)",
-        "",
-        "### Confusion table",
-        "",
-        "| | Expected alert | Expected no alert |",
-        "|---|---:|---:|",
-        f"| Alerted (material) | {a.true_positive} | {a.false_positive} |",
-        f"| Logged / not material | {a.false_negative} | {a.true_negative} |",
-        f"| Incomplete | {a.incomplete_expected_alert} | {a.incomplete_expected_no_alert} |",
-        "",
-        "## Expected changes",
-        "",
     ]
+    if report.incomplete or report.error:
+        lines.append("## Run status")
+        lines.append("")
+        lines.append(f"- Incomplete: **{report.incomplete}**")
+        if report.error:
+            lines.append(f"- Error: `{report.error}`")
+        lines.append("")
+    lines.extend(
+        [
+            "## Alert precision / recall",
+            "",
+            f"- Precision: **{prec}** (TP / (TP+FP))",
+            f"- Recall: **{rec}** (TP / (TP+FN))",
+            f"- Incomplete (needs_input / paused): "
+            f"{a.incomplete_expected_alert + a.incomplete_expected_no_alert} "
+            f"(not counted as misses)",
+            "",
+            "### Confusion table",
+            "",
+            "| | Expected alert | Expected no alert |",
+            "|---|---:|---:|",
+            f"| Alerted (material) | {a.true_positive} | {a.false_positive} |",
+            f"| Logged / not material | {a.false_negative} | {a.true_negative} |",
+            f"| Incomplete | {a.incomplete_expected_alert} | {a.incomplete_expected_no_alert} |",
+            "",
+            "## Per-event outcomes",
+            "",
+            "| Event | Expected | Got | Status | Miss |",
+            "|---|---|---|---|---|",
+        ]
+    )
+    for r in report.per_event:
+        if r.expected_alert is None:
+            continue
+        exp_s = "alert" if r.expected_alert else "log"
+        miss_s = "yes" if r.miss else "no"
+        lines.append(
+            f"| {r.replay_key or '—'} | {exp_s} | {r.got or '—'} | {r.status} | {miss_s} |"
+        )
+    lines.append("")
+    misses = [r for r in report.per_event if r.miss]
+    if misses:
+        lines.extend(["### Miss detail (last tool call)", ""])
+        for r in misses:
+            expected = "alert" if r.expected_alert else "log"
+            lines.append(f"**{r.replay_key}** — expected {expected}, got {r.got}")
+            tool = r.last_tool
+            if tool:
+                args_s = json.dumps(tool.get("arguments"), default=str)[:400]
+                result_s = json.dumps(tool.get("result"), default=str)[:600]
+                lines.append(f"- Tool: `{tool.get('tool_name')}` ({tool.get('status')})")
+                lines.append(f"- Arguments: `{args_s}`")
+                lines.append(f"- Result: `{result_s}`")
+            else:
+                lines.append("- No tool call recorded.")
+            lines.append("")
+
+    lines.extend(
+        [
+            "## Expected changes",
+            "",
+        ]
+    )
     if not report.changes:
         lines.append("_No expected changes evaluated._")
         lines.append("")
@@ -659,14 +786,15 @@ def render_eval_markdown(report: EvalReport) -> str:
             f"- Total tokens: {t.get('tokens', 0)}",
             f"- Total turns: {t.get('turns', 0)}",
             "",
-            "| Event | Date | Status | Turns | Tokens | Cost |",
-            "|---|---|---|---:|---:|---:|",
+            "| Event | Date | Expected | Got | Status | Turns | Tokens | Cost |",
+            "|---|---|---|---|---|---:|---:|---:|",
         ]
     )
     for r in report.per_event:
+        exp_s = "—" if r.expected_alert is None else ("alert" if r.expected_alert else "log")
         lines.append(
-            f"| {r.replay_key or '—'} | {r.event_date} | {r.status} | "
-            f"{r.turns} | {r.tokens} | {r.cost_usd:.6f} |"
+            f"| {r.replay_key or '—'} | {r.event_date} | {exp_s} | {r.got or '—'} | "
+            f"{r.status} | {r.turns} | {r.tokens} | {r.cost_usd:.6f} |"
         )
     lines.append("")
     return "\n".join(lines)

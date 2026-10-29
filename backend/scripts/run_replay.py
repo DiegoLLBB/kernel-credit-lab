@@ -28,7 +28,7 @@ from app.eval.replay_eval import evaluate_replay, write_eval_reports
 from app.ingest.replay import DEFAULT_REPLAY_PATH, default_clients
 from app.llm import LLMClient
 from app.models import Issuer, ReplayExpectation
-from app.replay.runner import DEFAULT_RUNS_DIR, run_replay
+from app.replay.runner import DEFAULT_RUNS_DIR, ReplayResult, run_replay
 from scripts.load_seed import load_seed
 
 SEED_PATH = Path(__file__).resolve().parents[1] / "seed" / "snapshot_2025-12-31.json"
@@ -64,6 +64,28 @@ def _parse_date(value: str | None, *, flag: str) -> date | None:
         raise SystemExit(f"{flag}: invalid date {value!r}") from exc
 
 
+def _write_eval(session: Session, result: ReplayResult, *, replay_path: Path | None) -> None:
+    log = json.loads(result.log_path.read_text(encoding="utf-8"))
+    only = {str(k) for k in (log.get("only_keys") or [])} or None
+    report = evaluate_replay(
+        session,
+        replay_path=replay_path or DEFAULT_REPLAY_PATH,
+        log=log,
+        only_keys=only,
+    )
+    md_path, json_path = write_eval_reports(report, result.log_path)
+    print(f"eval_md\t{md_path}")
+    print(f"eval_json\t{json_path}")
+    prec = report.alert.precision
+    rec = report.alert.recall
+    print(f"precision\t{prec if prec is not None else 'n/a'}")
+    print(f"recall\t{rec if rec is not None else 'n/a'}")
+    if report.incomplete:
+        print(f"incomplete\t{report.incomplete}")
+    if report.error:
+        print(f"error\t{report.error}")
+
+
 async def _async_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Kernel replay day by day.")
     parser.add_argument("--from", dest="window_from", default=None, help="Inclusive start date")
@@ -71,7 +93,7 @@ async def _async_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--only",
         default=None,
-        help="Comma-separated ReplayExpectation keys to run (others skipped)",
+        help="Comma-separated ReplayExpectation keys to run (others left pending)",
     )
     parser.add_argument(
         "--max-cost-usd",
@@ -110,11 +132,13 @@ async def _async_main(argv: list[str] | None = None) -> int:
     if args.eval_only is not None:
         log_path = Path(args.eval_only)
         log = json.loads(log_path.read_text(encoding="utf-8"))
+        only = {str(k) for k in (log.get("only_keys") or [])} or None
         with SessionLocal() as session:
             report = evaluate_replay(
                 session,
                 replay_path=args.replay_path or DEFAULT_REPLAY_PATH,
                 log=log,
+                only_keys=only,
             )
             md_path, json_path = write_eval_reports(report, log_path)
         print(f"eval_md\t{md_path}")
@@ -131,6 +155,7 @@ async def _async_main(argv: list[str] | None = None) -> int:
 
     clients = default_clients()
     llm = LLMClient(settings)
+    result: ReplayResult | None = None
     try:
         with SessionLocal() as session:
             _ensure_seed(session)
@@ -141,38 +166,32 @@ async def _async_main(argv: list[str] | None = None) -> int:
             def client_factory(_event):
                 return llm
 
-            result = await run_replay(
-                session,
-                clients,
-                client_factory,
-                window_from=_parse_date(args.window_from, flag="--from"),
-                window_until=_parse_date(args.window_until, flag="--until"),
-                only_keys=only_keys,
-                max_cost_usd=args.max_cost_usd,
-                replay_path=args.replay_path,
-                runs_dir=args.runs_dir,
-                model=settings.default_model or "muse-spark-1.3",
-                print_line=print,
-            )
-            print(f"log\t{result.log_path}")
-            print(f"stopped\t{result.stopped_reason}")
-            print(f"total_cost_usd\t{result.total_cost_usd:.6f}")
-            print(f"events\t{len(result.events)}")
-
-            if not args.no_eval:
-                log = json.loads(result.log_path.read_text(encoding="utf-8"))
-                report = evaluate_replay(
+            try:
+                result = await run_replay(
                     session,
-                    replay_path=args.replay_path or DEFAULT_REPLAY_PATH,
-                    log=log,
+                    clients,
+                    client_factory,
+                    window_from=_parse_date(args.window_from, flag="--from"),
+                    window_until=_parse_date(args.window_until, flag="--until"),
+                    only_keys=only_keys,
+                    max_cost_usd=args.max_cost_usd,
+                    replay_path=args.replay_path,
+                    runs_dir=args.runs_dir,
+                    model=settings.default_model or "muse-spark-1.3",
+                    print_line=print,
                 )
-                md_path, json_path = write_eval_reports(report, result.log_path)
-                print(f"eval_md\t{md_path}")
-                print(f"eval_json\t{json_path}")
-                prec = report.alert.precision
-                rec = report.alert.recall
-                print(f"precision\t{prec if prec is not None else 'n/a'}")
-                print(f"recall\t{rec if rec is not None else 'n/a'}")
+            finally:
+                # Always emit summary + eval when we have a log (incl. cost/error stop).
+                if result is not None:
+                    print(f"log\t{result.log_path}")
+                    print(f"stopped\t{result.stopped_reason}")
+                    print(f"incomplete\t{result.incomplete}")
+                    if result.error:
+                        print(f"error\t{result.error}")
+                    print(f"total_cost_usd\t{result.total_cost_usd:.6f}")
+                    print(f"events\t{len([e for e in result.events if not e.skipped])}")
+                    if not args.no_eval:
+                        _write_eval(session, result, replay_path=args.replay_path)
     finally:
         await llm.aclose()
         for client in (clients.edgar, clients.newsroom):
@@ -180,7 +199,7 @@ async def _async_main(argv: list[str] | None = None) -> int:
             if callable(close):
                 close()
 
-    return 0
+    return 1 if result is not None and result.stopped_reason == "error" else 0
 
 
 def main(argv: list[str] | None = None) -> int:

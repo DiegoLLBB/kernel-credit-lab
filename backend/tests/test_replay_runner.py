@@ -356,3 +356,74 @@ async def test_rate_update_logged_by_code(seeded: Session, tmp_path: Path) -> No
     assert (run.result or {}).get("by") == "code"
     assert event.status == "processed"
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_only_leaves_other_events_pending(
+    seeded: Session, clients: ReplayClients, tmp_path: Path
+) -> None:
+    """``--only`` must not mark non-selected events processed."""
+    session = seeded
+    load_replay_events(session, MINI_JSON)
+    session.commit()
+
+    result = await run_replay(
+        session,
+        clients,
+        _client_factory(session),
+        window_from=date(2026, 5, 11),
+        window_until=date(2026, 5, 13),
+        only_keys={"vz_redemption_mini"},
+        replay_path=MINI_JSON,
+        runs_dir=tmp_path,
+        limits=RunLimits(max_turns=40, max_cost_usd=100.0, max_tokens=10_000_000),
+        print_line=None,
+    )
+    assert result.stopped_reason == "complete"
+    assert result.only_keys == ["vz_redemption_mini"]
+
+    redemption = session.scalars(
+        select(Event).where(Event.replay_key == "vz_redemption_mini")
+    ).one()
+    run = session.get(AgentRun, redemption.run_id)
+    assert run is not None and run.status == "alerted"
+
+    for key in ("vz_log_a", "vz_log_b"):
+        event = session.scalars(select(Event).where(Event.replay_key == key)).one()
+        assert event.status == "pending"
+        assert event.run_id is None
+
+    skipped = [e for e in result.events if e.skipped]
+    assert {e.replay_key for e in skipped} == {"vz_log_a", "vz_log_b"}
+    assert all(e.skip_reason == "not selected" for e in skipped)
+
+    log = json.loads(result.log_path.read_text(encoding="utf-8"))
+    report = evaluate_replay(session, replay_path=MINI_JSON, log=log)
+    keys = {r.replay_key for r in report.per_event}
+    assert keys == {"vz_redemption_mini"}
+    assert report.alert.true_positive == 1
+    assert report.alert.true_negative == 0
+
+
+def test_needs_input_line_includes_question() -> None:
+    from app.replay.runner import EventOutcome, format_event_line
+
+    line = format_event_line(
+        EventOutcome(
+            replay_key="intc_bridge",
+            event_id="x",
+            event_date="2026-05-01",
+            issuer="intel",
+            event_type="8-K",
+            status="needs_input",
+            material=None,
+            turns=10,
+            tokens=1000,
+            cost_usd=0.1,
+            duration_s=12.0,
+            run_id="r1",
+            detail="What is the maturity date of the bridge facility drawn in March?",
+        )
+    )
+    assert "needs_input" in line
+    assert "What is the maturity date of the bridge facility" in line

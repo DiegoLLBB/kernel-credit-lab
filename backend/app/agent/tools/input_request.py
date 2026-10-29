@@ -123,6 +123,12 @@ def request_input(
 
     item.status = "escalated"
     run.status = "needs_input"
+    run.result = {
+        **(run.result or {}),
+        "item_key": item_key,
+        "question": question,
+        "status": "needs_input",
+    }
     session.flush()
     return ok(
         session,

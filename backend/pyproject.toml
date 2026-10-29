@@ -17,6 +17,7 @@ dependencies = [
   "arq>=0.26",
   "pillow>=11.0",
   "pyyaml>=6.0",
+  "pdfplumber>=0.11",
 ]
 
 [project.optional-dependencies]

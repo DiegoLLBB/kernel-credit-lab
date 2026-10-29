@@ -376,9 +376,19 @@ class EdgarClient:
         parser.feed(html)
         return parser.rows
 
+    def fetch_bytes(self, url: str) -> tuple[bytes, str | None]:
+        """Download raw body bytes and content-type (for PDF vs HTML)."""
+        resp = self._get(url)
+        return resp.content, resp.headers.get("content-type")
+
     def fetch_text(self, url: str) -> str:
-        """Download HTML (or SGML-wrapped HTML) and return plain text."""
-        raw = self._get(url).text
+        """Download a document and return plain text (PDF or HTML/SGML)."""
+        from app.ingest.pdf import document_bytes_to_text, looks_like_pdf
+
+        data, content_type = self.fetch_bytes(url)
+        if looks_like_pdf(data, content_type=content_type, url=url):
+            return document_bytes_to_text(data, content_type=content_type, url=url)
+        raw = data.decode("utf-8", errors="replace")
         # EDGAR often wraps exhibits in <DOCUMENT>…<TEXT>…</TEXT>
         match = re.search(r"<TEXT>(.*)</TEXT>", raw, flags=re.I | re.S)
         html = match.group(1) if match else raw

@@ -299,9 +299,19 @@ class NewsroomClient:
         out.sort(key=lambda r: (r.published, r.url), reverse=True)
         return out
 
+    def fetch_bytes(self, url: str) -> tuple[bytes, str | None]:
+        """Download raw body bytes and content-type (for PDF vs HTML)."""
+        resp = self._get(url)
+        return resp.content, resp.headers.get("content-type")
+
     def fetch_text(self, url: str) -> str:
-        """Download article HTML and return plain text (table rows stay one line)."""
-        return html_to_text(self._get(url).text)
+        """Download article HTML or PDF and return plain text (table rows stay one line)."""
+        from app.ingest.pdf import document_bytes_to_text, looks_like_pdf
+
+        data, content_type = self.fetch_bytes(url)
+        if looks_like_pdf(data, content_type=content_type, url=url):
+            return document_bytes_to_text(data, content_type=content_type, url=url)
+        return html_to_text(data.decode("utf-8", errors="replace"))
 
     def upsert_releases(
         self, session: Session, issuer: Issuer, releases: list[ReleaseRef]
