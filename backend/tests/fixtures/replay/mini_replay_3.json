@@ -1,0 +1,92 @@
+{
+  "window": {
+    "from": "2026-05-11",
+    "to": "2026-05-13"
+  },
+  "snapshot": "snapshot_2025-12-31.json",
+  "description": "Three-event mini replay for offline runner/eval tests (Mon–Wed, no Friday rate updates).",
+  "end_state_checks": [
+    {
+      "as_of": "2026-06-30",
+      "source": "mini fixture (redemption settles 21 Sep, so still outstanding at 30 Jun)",
+      "checks": [
+        "vz_4329_2028 = 1,250,000,000"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "key": "vz_log_a",
+      "event_date": "2026-05-11",
+      "available_from": "2026-05-11",
+      "issuer": "verizon",
+      "event_type": "other",
+      "title": "Verizon routine notice with no near-term debt change",
+      "sources": [
+        {
+          "form": "press release",
+          "filed": "2026-05-11",
+          "url": "https://www.verizon.com/about/news/fixture-log-a",
+          "description": "Log-only A"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "no debt change"
+        }
+      ],
+      "expected_alert": false,
+      "why": "TN case"
+    },
+    {
+      "key": "vz_redemption_mini",
+      "event_date": "2026-05-12",
+      "available_from": "2026-05-12",
+      "issuer": "verizon",
+      "event_type": "redemption_notice",
+      "title": "Verizon will redeem its 4.329% notes due 2028",
+      "sources": [
+        {
+          "form": "press release",
+          "filed": "2026-05-12",
+          "url": "https://www.verizon.com/about/news/verizon-redeems-debt-securities-september-2026",
+          "description": "Redemption notice"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "mark_redeemed",
+          "instrument_key": "vz_4329_2028",
+          "effective": "2026-09-21"
+        }
+      ],
+      "expected_alert": true,
+      "why": "TP case"
+    },
+    {
+      "key": "vz_log_b",
+      "event_date": "2026-05-13",
+      "available_from": "2026-05-13",
+      "issuer": "verizon",
+      "event_type": "other",
+      "title": "Verizon second routine notice",
+      "sources": [
+        {
+          "form": "press release",
+          "filed": "2026-05-13",
+          "url": "https://www.verizon.com/about/news/fixture-log-b",
+          "description": "Log-only B"
+        }
+      ],
+      "expected_changes": [
+        {
+          "action": "log_only",
+          "reason": "no debt change"
+        }
+      ],
+      "expected_alert": false,
+      "why": "TN case"
+    }
+  ]
+}

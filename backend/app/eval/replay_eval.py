@@ -1,0 +1,689 @@
+"""Evaluate a replay run against ``ReplayExpectation`` and end-state checks."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.ingest.replay import DEFAULT_REPLAY_PATH
+from app.models import Alert, Event, Instrument, ReplayExpectation, StateChange
+from app.models.trace import AgentRun, ModelCall
+from app.tools.maturity import instrument_state_at
+
+INCOMPLETE_STATUSES = frozenset({"needs_input", "paused"})
+AMOUNT_TOLERANCE = Decimal("0.01")  # 1%
+
+
+def _coverage_score_value(raw: Any) -> float | None:
+    """``AgentRun.coverage_score`` is a JSON object with a ``score`` field."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float, Decimal)):
+        return float(raw)
+    if isinstance(raw, dict) and raw.get("score") is not None:
+        try:
+            return float(raw["score"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+@dataclass
+class AlertConfusion:
+    true_positive: int = 0
+    false_positive: int = 0
+    true_negative: int = 0
+    false_negative: int = 0
+    incomplete_expected_alert: int = 0
+    incomplete_expected_no_alert: int = 0
+
+    @property
+    def precision(self) -> float | None:
+        denom = self.true_positive + self.false_positive
+        if denom == 0:
+            return None
+        return self.true_positive / denom
+
+    @property
+    def recall(self) -> float | None:
+        denom = self.true_positive + self.false_negative
+        if denom == 0:
+            return None
+        return self.true_positive / denom
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "true_positive": self.true_positive,
+            "false_positive": self.false_positive,
+            "true_negative": self.true_negative,
+            "false_negative": self.false_negative,
+            "incomplete_expected_alert": self.incomplete_expected_alert,
+            "incomplete_expected_no_alert": self.incomplete_expected_no_alert,
+            "precision": self.precision,
+            "recall": self.recall,
+        }
+
+
+@dataclass
+class ChangeMatch:
+    expectation_key: str
+    expected: dict[str, Any]
+    matched: bool
+    detail: str
+    actual: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "expectation_key": self.expectation_key,
+            "expected": self.expected,
+            "matched": self.matched,
+            "detail": self.detail,
+            "actual": self.actual,
+        }
+
+
+@dataclass
+class EndStateResult:
+    as_of: str
+    source: str | None
+    check: str
+    passed: bool
+    detail: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "as_of": self.as_of,
+            "source": self.source,
+            "check": self.check,
+            "passed": self.passed,
+            "detail": self.detail,
+        }
+
+
+@dataclass
+class EventCostRow:
+    replay_key: str | None
+    event_date: str
+    status: str
+    cost_usd: float
+    tokens: int
+    turns: int
+    coverage_score: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "replay_key": self.replay_key,
+            "event_date": self.event_date,
+            "status": self.status,
+            "cost_usd": self.cost_usd,
+            "tokens": self.tokens,
+            "turns": self.turns,
+            "coverage_score": self.coverage_score,
+        }
+
+
+@dataclass
+class EvalReport:
+    alert: AlertConfusion = field(default_factory=AlertConfusion)
+    changes: list[ChangeMatch] = field(default_factory=list)
+    end_state: list[EndStateResult] = field(default_factory=list)
+    coverage: list[dict[str, Any]] = field(default_factory=list)
+    per_event: list[EventCostRow] = field(default_factory=list)
+    totals: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "alert": self.alert.to_dict(),
+            "changes": [c.to_dict() for c in self.changes],
+            "end_state": [e.to_dict() for e in self.end_state],
+            "coverage": self.coverage,
+            "per_event": [r.to_dict() for r in self.per_event],
+            "totals": self.totals,
+        }
+
+
+def load_end_state_checks(path: Path | str | None = None) -> list[dict[str, Any]]:
+    path = Path(path) if path is not None else DEFAULT_REPLAY_PATH
+    with path.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    return list(data.get("end_state_checks") or [])
+
+
+def _amount_within_tol(
+    actual: Decimal, expected: Decimal, *, tol: Decimal = AMOUNT_TOLERANCE
+) -> bool:
+    if expected == 0:
+        return actual == 0
+    return abs(actual - expected) / abs(expected) <= tol
+
+
+def _parse_money(raw: Any) -> Decimal | None:
+    if raw is None:
+        return None
+    if isinstance(raw, Decimal):
+        return raw
+    text = str(raw).replace(",", "").replace("$", "").strip()
+    # Strip tolerance annotations like "(±1m)"
+    text = re.sub(r"\(.*\)", "", text).strip()
+    try:
+        return Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _date_matches(actual: date | None, expected_raw: Any) -> tuple[bool, str]:
+    if expected_raw is None:
+        return True, "no expected date"
+    if actual is None:
+        return False, "actual date missing"
+    text = str(expected_raw).strip()
+    if len(text) == 7 and text[4] == "-":  # YYYY-MM
+        return (
+            actual.year == int(text[:4]) and actual.month == int(text[5:7]),
+            f"month precision {text} vs {actual.isoformat()}",
+        )
+    try:
+        expected = date.fromisoformat(text[:10])
+    except ValueError:
+        return False, f"unparseable expected date {text!r}"
+    return actual == expected, f"{actual.isoformat()} vs {expected.isoformat()}"
+
+
+def _applied_changes_for_event(session: Session, event: Event) -> list[StateChange]:
+    return list(
+        session.scalars(
+            select(StateChange).where(
+                StateChange.event_id == event.id, StateChange.status == "applied"
+            )
+        ).all()
+    )
+
+
+def _match_change(
+    session: Session,
+    expectation_key: str,
+    expected: dict[str, Any],
+    applied: list[StateChange],
+) -> ChangeMatch:
+    action = expected.get("action")
+    if action == "log_only":
+        return ChangeMatch(
+            expectation_key=expectation_key,
+            expected=expected,
+            matched=True,
+            detail="log_only (no state change required)",
+        )
+
+    instrument_key = expected.get("instrument_key")
+    candidates = []
+    for change in applied:
+        diff = change.proposed_diff or {}
+        if diff.get("action") != action:
+            continue
+        if instrument_key and diff.get("instrument_key") != instrument_key:
+            # Also match via instrument row.
+            if change.instrument_id:
+                inst = session.get(Instrument, change.instrument_id)
+                if inst is None or inst.key != instrument_key:
+                    continue
+            else:
+                continue
+        candidates.append(change)
+
+    if not candidates:
+        return ChangeMatch(
+            expectation_key=expectation_key,
+            expected=expected,
+            matched=False,
+            detail=f"no applied change with action={action!r} instrument={instrument_key!r}",
+        )
+
+    change = candidates[0]
+    diff = change.proposed_diff or {}
+    problems: list[str] = []
+
+    # Amount checks
+    expected_amount = None
+    for key in ("new_amount", "amount", "by", "amount_outstanding"):
+        if key in expected and expected[key] is not None:
+            expected_amount = _parse_money(expected[key])
+            break
+    if expected_amount is not None:
+        actual_amount = None
+        if action == "reduce_outstanding":
+            # Prefer after / new outstanding; fall back to reduce_by.
+            if diff.get("after") is not None and "new_amount" in expected:
+                actual_amount = _parse_money(diff.get("after"))
+            elif expected.get("by") is not None:
+                before = _parse_money(diff.get("before"))
+                after = _parse_money(diff.get("after"))
+                if before is not None and after is not None:
+                    actual_amount = before - after
+                    expected_amount = _parse_money(expected.get("by"))
+                else:
+                    actual_amount = _parse_money(diff.get("reduce_by") or diff.get("after"))
+            else:
+                actual_amount = _parse_money(diff.get("after"))
+        elif action == "add_instrument":
+            actual_amount = _parse_money(diff.get("amount_outstanding"))
+        else:
+            actual_amount = _parse_money(diff.get("after") or diff.get("amount_outstanding"))
+        if actual_amount is None:
+            problems.append("actual amount missing")
+        elif expected_amount is not None and not _amount_within_tol(actual_amount, expected_amount):
+            problems.append(f"amount {actual_amount} outside 1% of expected {expected_amount}")
+
+    # Date checks
+    date_raw = expected.get("effective") or expected.get("effective_date")
+    if date_raw is not None:
+        ok, detail = _date_matches(change.effective_date, date_raw)
+        if not ok:
+            problems.append(f"date mismatch ({detail})")
+
+    # Maturity year for add_instrument
+    if action == "add_instrument" and expected.get("maturity_year") is not None:
+        mat = diff.get("maturity")
+        if not mat or not str(mat).startswith(str(expected["maturity_year"])):
+            problems.append(f"maturity year {expected['maturity_year']} not in actual {mat!r}")
+
+    matched = not problems
+    return ChangeMatch(
+        expectation_key=expectation_key,
+        expected=expected,
+        matched=matched,
+        detail="; ".join(problems) if problems else "matched",
+        actual={
+            "proposed_diff": diff,
+            "effective_date": (
+                change.effective_date.isoformat() if change.effective_date else None
+            ),
+        },
+    )
+
+
+_ABSENT_RE = re.compile(r"^(\S+)\s+absent$", re.I)
+_EQ_RE = re.compile(
+    r"^(\S+)\s*=\s*([0-9,]+(?:\.\d+)?)\s*(?:\(([^)]+)\))?$",
+    re.I,
+)
+
+
+def _eval_end_state_check(
+    session: Session, as_of: date, source: str | None, check: str
+) -> EndStateResult:
+    text = check.strip()
+    m_abs = _ABSENT_RE.match(text)
+    if m_abs:
+        key = m_abs.group(1)
+        inst = session.scalars(select(Instrument).where(Instrument.key == key)).first()
+        if inst is None:
+            return EndStateResult(
+                as_of=as_of.isoformat(),
+                source=source,
+                check=check,
+                passed=True,
+                detail="instrument row absent",
+            )
+        _amt, status = instrument_state_at(session, inst, as_of)
+        passed = status not in {"active"}
+        return EndStateResult(
+            as_of=as_of.isoformat(),
+            source=source,
+            check=check,
+            passed=passed,
+            detail=f"status={status} at {as_of.isoformat()}",
+        )
+
+    m_eq = _EQ_RE.match(text)
+    if m_eq:
+        key, amount_s, tol_note = m_eq.group(1), m_eq.group(2), m_eq.group(3)
+        expected = _parse_money(amount_s)
+        inst = session.scalars(select(Instrument).where(Instrument.key == key)).first()
+        if inst is None:
+            return EndStateResult(
+                as_of=as_of.isoformat(),
+                source=source,
+                check=check,
+                passed=False,
+                detail="instrument not found",
+            )
+        amount, status = instrument_state_at(session, inst, as_of)
+        if status != "active":
+            return EndStateResult(
+                as_of=as_of.isoformat(),
+                source=source,
+                check=check,
+                passed=False,
+                detail=f"status={status}, amount={amount}",
+            )
+        # Optional absolute tolerance like ±1m
+        tol = AMOUNT_TOLERANCE
+        abs_tol: Decimal | None = None
+        if tol_note:
+            note = tol_note.lower().replace("±", "").replace("+/-", "").strip()
+            if note.endswith("m"):
+                try:
+                    abs_tol = Decimal(note[:-1]) * Decimal("1000000")
+                except InvalidOperation:
+                    abs_tol = None
+        if expected is None:
+            passed = False
+            detail = "could not parse expected amount"
+        elif abs_tol is not None:
+            passed = abs(amount - expected) <= abs_tol
+            detail = f"amount={amount} expected={expected} abs_tol={abs_tol}"
+        else:
+            passed = _amount_within_tol(amount, expected, tol=tol)
+            detail = f"amount={amount} expected={expected} status={status}"
+        return EndStateResult(
+            as_of=as_of.isoformat(),
+            source=source,
+            check=check,
+            passed=passed,
+            detail=detail,
+        )
+
+    return EndStateResult(
+        as_of=as_of.isoformat(),
+        source=source,
+        check=check,
+        passed=False,
+        detail=f"unrecognized check syntax: {check!r}",
+    )
+
+
+def _event_alerted_material(session: Session, event: Event, run: AgentRun | None) -> bool | None:
+    """True if material alert filed; False if logged; None if incomplete."""
+    if run is None:
+        if event.status == "processed":
+            return False
+        return None
+    if run.status in INCOMPLETE_STATUSES or run.status == "running":
+        return None
+    if run.status == "alerted":
+        return True
+    if run.status == "logged":
+        return False
+    alert = session.scalars(select(Alert).where(Alert.event_id == event.id)).first()
+    return alert is not None
+
+
+def evaluate_replay(
+    session: Session,
+    *,
+    replay_path: Path | str | None = None,
+    log: dict[str, Any] | None = None,
+    end_state_as_of: date | None = None,
+) -> EvalReport:
+    """Compare agent outcomes with ``ReplayExpectation`` and end-state checks."""
+    report = EvalReport()
+    expectations = session.scalars(
+        select(ReplayExpectation).order_by(ReplayExpectation.available_from, ReplayExpectation.key)
+    ).all()
+
+    log_by_key: dict[str, dict[str, Any]] = {}
+    if log:
+        for row in log.get("events") or []:
+            key = row.get("replay_key")
+            if key:
+                log_by_key[str(key)] = row
+
+    for exp in expectations:
+        event = None
+        if exp.event_id:
+            event = session.get(Event, exp.event_id)
+        if event is None and exp.key:
+            event = session.scalars(select(Event).where(Event.replay_key == exp.key)).first()
+
+        run: AgentRun | None = None
+        if event and event.run_id:
+            run = session.get(AgentRun, event.run_id)
+
+        alerted = _event_alerted_material(session, event, run) if event else None
+        expected_alert = bool(exp.expected_alert)
+
+        if alerted is None:
+            if expected_alert:
+                report.alert.incomplete_expected_alert += 1
+            else:
+                report.alert.incomplete_expected_no_alert += 1
+        elif expected_alert and alerted:
+            report.alert.true_positive += 1
+        elif expected_alert and not alerted:
+            report.alert.false_negative += 1
+        elif not expected_alert and alerted:
+            report.alert.false_positive += 1
+        else:
+            report.alert.true_negative += 1
+
+        if event is not None:
+            applied = _applied_changes_for_event(session, event)
+            for change in exp.expected_changes or []:
+                if not isinstance(change, dict):
+                    continue
+                report.changes.append(_match_change(session, exp.key, change, applied))
+
+            coverage = _coverage_score_value(run.coverage_score if run else None)
+            report.coverage.append(
+                {
+                    "key": exp.key,
+                    "coverage_score": coverage,
+                    "status": run.status if run else (event.status if event else None),
+                }
+            )
+
+            tokens = 0
+            cost = 0.0
+            turns = 0
+            status = event.status
+            if run is not None:
+                status = run.status
+                cost = float(run.total_cost_usd or 0)
+                turns = int(run.turn_count or 0)
+                for mc in session.scalars(
+                    select(ModelCall).where(ModelCall.run_id == run.id)
+                ).all():
+                    tokens += int(mc.input_tokens or 0) + int(mc.output_tokens or 0)
+            elif exp.key in log_by_key:
+                row = log_by_key[exp.key]
+                cost = float(row.get("cost_usd") or 0)
+                tokens = int(row.get("tokens") or 0)
+                turns = int(row.get("turns") or 0)
+                status = str(row.get("status") or status)
+
+            report.per_event.append(
+                EventCostRow(
+                    replay_key=exp.key,
+                    event_date=(
+                        event.event_date.isoformat() if event else exp.available_from.isoformat()
+                    ),
+                    status=status,
+                    cost_usd=cost,
+                    tokens=tokens,
+                    turns=turns,
+                    coverage_score=coverage,
+                )
+            )
+
+    # Calendar / rate events not in expectations — still include cost rows from log / DB.
+    seen = {r.replay_key for r in report.per_event}
+    extra_events = session.scalars(
+        select(Event).where(Event.replay_key.is_not(None)).order_by(Event.event_date)
+    ).all()
+    for event in extra_events:
+        if event.replay_key in seen:
+            continue
+        run = session.get(AgentRun, event.run_id) if event.run_id else None
+        tokens = 0
+        cost = 0.0
+        turns = 0
+        status = event.status
+        coverage = None
+        if run is not None:
+            status = run.status
+            cost = float(run.total_cost_usd or 0)
+            turns = int(run.turn_count or 0)
+            coverage = _coverage_score_value(run.coverage_score)
+            for mc in session.scalars(select(ModelCall).where(ModelCall.run_id == run.id)).all():
+                tokens += int(mc.input_tokens or 0) + int(mc.output_tokens or 0)
+        report.per_event.append(
+            EventCostRow(
+                replay_key=event.replay_key,
+                event_date=event.event_date.isoformat(),
+                status=status,
+                cost_usd=cost,
+                tokens=tokens,
+                turns=turns,
+                coverage_score=coverage,
+            )
+        )
+
+    checks = load_end_state_checks(replay_path)
+    for block in checks:
+        as_of_s = block.get("as_of")
+        if not as_of_s:
+            continue
+        as_of = date.fromisoformat(str(as_of_s))
+        if end_state_as_of is not None and as_of != end_state_as_of:
+            continue
+        source = block.get("source")
+        for check in block.get("checks") or []:
+            report.end_state.append(_eval_end_state_check(session, as_of, source, str(check)))
+
+    report.totals = {
+        "events": len(report.per_event),
+        "cost_usd": sum(r.cost_usd for r in report.per_event),
+        "tokens": sum(r.tokens for r in report.per_event),
+        "turns": sum(r.turns for r in report.per_event),
+        "changes_matched": sum(1 for c in report.changes if c.matched),
+        "changes_total": len(report.changes),
+        "end_state_passed": sum(1 for e in report.end_state if e.passed),
+        "end_state_total": len(report.end_state),
+        "mean_coverage": (
+            sum(c["coverage_score"] for c in report.coverage if c["coverage_score"] is not None)
+            / max(
+                1,
+                sum(1 for c in report.coverage if c["coverage_score"] is not None),
+            )
+            if any(c["coverage_score"] is not None for c in report.coverage)
+            else None
+        ),
+    }
+    return report
+
+
+def render_eval_markdown(report: EvalReport) -> str:
+    a = report.alert
+    prec = f"{a.precision:.3f}" if a.precision is not None else "n/a"
+    rec = f"{a.recall:.3f}" if a.recall is not None else "n/a"
+    lines = [
+        "# Replay evaluation",
+        "",
+        "## Alert precision / recall",
+        "",
+        f"- Precision: **{prec}** (TP / (TP+FP))",
+        f"- Recall: **{rec}** (TP / (TP+FN))",
+        f"- Incomplete (needs_input / paused): "
+        f"{a.incomplete_expected_alert + a.incomplete_expected_no_alert} "
+        f"(not counted as misses)",
+        "",
+        "### Confusion table",
+        "",
+        "| | Expected alert | Expected no alert |",
+        "|---|---:|---:|",
+        f"| Alerted (material) | {a.true_positive} | {a.false_positive} |",
+        f"| Logged / not material | {a.false_negative} | {a.true_negative} |",
+        f"| Incomplete | {a.incomplete_expected_alert} | {a.incomplete_expected_no_alert} |",
+        "",
+        "## Expected changes",
+        "",
+    ]
+    if not report.changes:
+        lines.append("_No expected changes evaluated._")
+        lines.append("")
+    else:
+        lines.append("| Event | Action | Matched | Detail |")
+        lines.append("|---|---|---|---|")
+        for c in report.changes:
+            action = c.expected.get("action")
+            lines.append(
+                f"| {c.expectation_key} | {action} | {'yes' if c.matched else 'no'} | {c.detail} |"
+            )
+        lines.append("")
+
+    lines.extend(["## End-state checks (30 Jun)", ""])
+    if not report.end_state:
+        lines.append("_No end-state checks._")
+        lines.append("")
+    else:
+        lines.append("| As of | Check | Passed | Detail |")
+        lines.append("|---|---|---|---|")
+        for e in report.end_state:
+            lines.append(
+                f"| {e.as_of} | `{e.check}` | {'yes' if e.passed else 'no'} | {e.detail} |"
+            )
+        lines.append("")
+
+    lines.extend(["## Coverage", ""])
+    scored = [c for c in report.coverage if c.get("coverage_score") is not None]
+    if not scored:
+        lines.append("_No coverage scores._")
+        lines.append("")
+    else:
+        mean = sum(float(c["coverage_score"]) for c in scored) / len(scored)
+        lines.append(f"Mean coverage score: **{mean:.3f}** ({len(scored)} events)")
+        lines.append("")
+        lines.append("| Event | Score | Status |")
+        lines.append("|---|---:|---|")
+        for c in report.coverage:
+            score = c.get("coverage_score")
+            score_s = f"{score:.3f}" if score is not None else "—"
+            lines.append(f"| {c.get('key')} | {score_s} | {c.get('status')} |")
+        lines.append("")
+
+    t = report.totals
+    lines.extend(
+        [
+            "## Cost, tokens, turns",
+            "",
+            f"- Events: {t.get('events', 0)}",
+            f"- Total cost (USD): {t.get('cost_usd', 0):.6f}",
+            f"- Total tokens: {t.get('tokens', 0)}",
+            f"- Total turns: {t.get('turns', 0)}",
+            "",
+            "| Event | Date | Status | Turns | Tokens | Cost |",
+            "|---|---|---|---:|---:|---:|",
+        ]
+    )
+    for r in report.per_event:
+        lines.append(
+            f"| {r.replay_key or '—'} | {r.event_date} | {r.status} | "
+            f"{r.turns} | {r.tokens} | {r.cost_usd:.6f} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_eval_reports(
+    report: EvalReport,
+    base_path: Path,
+) -> tuple[Path, Path]:
+    """Write ``<base>_eval.json`` and ``<base>_eval.md`` next to the replay log."""
+    # base_path is the .json log path → stem_eval.md / stem_eval.json
+    stem = base_path.with_suffix("")
+    json_path = Path(f"{stem}_eval.json")
+    md_path = Path(f"{stem}_eval.md")
+    json_path.write_text(
+        json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    md_path.write_text(render_eval_markdown(report), encoding="utf-8")
+    return md_path, json_path

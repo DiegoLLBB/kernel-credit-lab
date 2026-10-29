@@ -253,11 +253,15 @@ class FakeModel:
         model: str = "fake-spark",
         tool_choice: str = "required",
         raise_on_previous_response_id: bool = False,
+        cost_per_call: Decimal | None = None,
     ) -> None:
         self.script = list(script)
         self.model = model
         self.tool_choice = tool_choice
         self.raise_on_previous_response_id = raise_on_previous_response_id
+        self.cost_per_call = (
+            Decimal("0.000001") if cost_per_call is None else Decimal(str(cost_per_call))
+        )
         self.context = FakeContext()
         self.records: list[ModelCallRecord] = []
         self.requests: list[dict[str, Any]] = []
@@ -407,7 +411,7 @@ class FakeModel:
         usage = raw.get("usage") or {}
         in_tok = usage.get("input_tokens", 10)
         out_tok = usage.get("output_tokens", 20)
-        cost = Decimal("0.000001")
+        cost = self.cost_per_call
         latency_ms = max(1, int((time.perf_counter() - started) * 1000))
         choice = tool_choice if tool_choice is not None else self.tool_choice
         result = ResponsesResult(

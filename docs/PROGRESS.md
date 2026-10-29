@@ -188,3 +188,18 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
     (tests used a fake model with no HTTP); fixed by making tools async, with a test over a mocked
     HTTP transport. Prompt v7 adds the scheduled-changes rule: certain future changes (called
     redemptions) are proposed now with the settlement date.
+
+### Plan of record from Thu 29 Oct evening (replaces CONTEXT.md Part C day-by-day)
+
+Full scope kept; calendar adjusted (no work on Saturday, little on Sunday). Meta budget ~$150;
+measured cost ≈ $0.26 per press-release event and ≈ $0.90 per 10-Q event (Spark at $1.25 / $4.25
+per M tokens, third-party figures to confirm in the Meta console), so a full 29-event replay ≈ $15.
+
+| Day | Work |
+|---|---|
+| Fri 30 | Replay runner (all 29 events, day by day) + evaluation report vs the 15 expected alerts, with cost per event; API endpoints (alerts, runs/traces, issuers, walls, documents, charts, replay); SAM chart reader in the product (issuer presentations → charts → values verified by bar geometry; agent tool `read_chart`) |
+| Sat 31 | Off. Full replay runs unattended on the local machine |
+| Sun 1 | Check results and evaluation; load replay results into the cloud database |
+| Mon 2 | Dashboard 1: alerts feed, alert detail (quotes, before/after wall, applied change, confirm/dismiss), trace (every turn, check and refusal) |
+| Tue 3 | Dashboard 2: full issuer page (records, wall, timeline, verified charts with SAM overlays), replay control with evaluation score; "Run agent" with Cloud Tasks and rate limits; **live mode** (daily Cloud Scheduler job polling EDGAR and newsrooms for the watchlist); Wonder daily brief; headline, custom domain, README. Stretch: add any issuer by ticker (XBRL onboarding) |
+| Wed 4 | Walkthrough fixes, 3-minute video, submission by evening (deadline 03:00 Thu Madrid) |
