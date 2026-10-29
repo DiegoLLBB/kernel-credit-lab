@@ -62,6 +62,10 @@ _MONTH_YEAR_ONLY_RE = re.compile(
 )
 # YYYY-MM not followed by -DD.
 _YYYY_MM_RE = re.compile(r"\b(?P<year>\d{4})-(?P<month>\d{2})(?!-\d)")
+# Year-only maturity (whole string): "2031" or "due 2031".
+_BARE_YEAR_RE = re.compile(r"^\s*(?:due\s+)?(?P<year>(?:19|20)\d{2})\s*$", re.I)
+# "due 2031" inside a longer quote (``due`` followed by a year, not a month name).
+_DUE_YEAR_RE = re.compile(r"\bdue\s+(?P<year>(?:19|20)\d{2})\b", re.I)
 _MONTH_NAME_TO_NUM = {
     "jan": 1,
     "january": 1,
@@ -319,6 +323,22 @@ def extract_month_years(text: str) -> list[tuple[int, int]]:
     return found
 
 
+def extract_years(text: str) -> list[int]:
+    """Year-only maturity mentions (``due 2031``) or a bare year string."""
+    cleaned = normalize_for_quote_match(text)
+    found: list[int] = []
+    seen: set[int] = set()
+    bare = _BARE_YEAR_RE.match(cleaned)
+    if bare:
+        return [int(bare.group("year"))]
+    for match in _DUE_YEAR_RE.finditer(cleaned):
+        y = int(match.group("year"))
+        if y not in seen:
+            seen.add(y)
+            found.append(y)
+    return found
+
+
 def extract_dates(text: str) -> list[date]:
     """All recognisable day-precision dates in ``text`` (ISO and month-name forms)."""
     cleaned = normalize_for_quote_match(text)
@@ -346,9 +366,10 @@ def extract_dates(text: str) -> list[date]:
 
 
 def parse_date_with_precision(text: str) -> tuple[date | None, str | None]:
-    """Parse a date; precision is ``day``, ``month``, or None if unparseable.
+    """Parse a date; precision is ``day``, ``month``, ``year``, or None if unparseable.
 
     Month-only inputs (``March 2027``, ``2027-03``) become the 1st of that month.
+    Year-only inputs (``2031``, ``due 2031``) become 31 Dec of that year.
     """
     raw = (text or "").strip()
     if not raw:
@@ -361,29 +382,40 @@ def parse_date_with_precision(text: str) -> tuple[date | None, str | None]:
     if months:
         year, month = months[0]
         return date(year, month, 1), "month"
-    # Bare YYYY-MM as the entire string (already covered by extract_month_years).
+    years = extract_years(raw)
+    if years:
+        return date(years[0], 12, 31), "year"
     return None, None
 
 
 def parse_date_loose(text: str) -> date | None:
-    """Parse the first date from common formats / ISO / month names / YYYY-MM."""
+    """Parse the first date from common formats / ISO / month names / YYYY-MM / year."""
     d, _prec = parse_date_with_precision(text)
     return d
 
 
 def date_in_quote(value: str | date, quote: str) -> bool:
-    """True when ``value`` matches a day date in ``quote``, or falls in a named month."""
+    """True when ``value`` matches a day/month/year mention in ``quote``."""
     if isinstance(value, date):
         target = value
+        precision: str | None = None
     else:
-        target, _ = parse_date_with_precision(str(value))
+        target, precision = parse_date_with_precision(str(value))
     if target is None:
         return False
     if target in extract_dates(quote):
         return True
-    return any(
+    if any(
         year == target.year and month == target.month for year, month in extract_month_years(quote)
-    )
+    ):
+        return True
+    # Year-precision (stored as 31 Dec) or bare year matches "due YYYY" in the quote.
+    if precision == "year" or (target.month == 12 and target.day == 31):
+        if target.year in extract_years(quote):
+            return True
+        if re.search(rf"\bdue\s+{target.year}\b", normalize_for_quote_match(quote), re.I):
+            return True
+    return False
 
 
 def dates_equal(a: str | date, b: str | date) -> bool:

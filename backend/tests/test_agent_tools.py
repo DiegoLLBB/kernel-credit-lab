@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.agent.claims import ClaimsResult
 from app.agent.fake import FakeClaimsClient
-from app.agent.materiality import assess_materiality, is_missing_from_bond_list
+from app.agent.materiality import (
+    LONG_DATED_JUDGEMENT_REFUSAL,
+    assess_materiality,
+    is_missing_from_bond_list,
+    only_long_dated_add_instruments,
+)
 from app.agent.normalize import (
     AMOUNT_FORMAT_HINT,
     RATE_FORMAT_HINT,
@@ -358,6 +363,12 @@ def test_month_precision_date_in_quote_and_parse() -> None:
     assert prec == "month"
     d2, prec2 = parse_date_with_precision("2027-03")
     assert d2 == date(2027, 3, 1) and prec2 == "month"
+    d3, prec3 = parse_date_with_precision("due 2031")
+    assert d3 == date(2031, 12, 31) and prec3 == "year"
+    d4, prec4 = parse_date_with_precision("2031")
+    assert d4 == date(2031, 12, 31) and prec4 == "year"
+    assert date_in_quote(date(2031, 12, 31), "8.625% Debentures due 2031")
+    assert date_in_quote("2031", "Notes due 2031 under the indenture")
 
 
 def test_instrument_requires_coupon_and_year() -> None:
@@ -1420,6 +1431,146 @@ def test_alert_number_check_accepts_scaled_millions(
         claims_client=_claims_supported(findings),
     )
     assert out["ok"], out
+
+
+def test_only_long_dated_add_instruments_helper() -> None:
+    class _Row:
+        def __init__(self, diff: dict) -> None:
+            self.proposed_diff = diff
+
+    assert only_long_dated_add_instruments([]) is False
+    assert (
+        only_long_dated_add_instruments(
+            [_Row({"action": "add_instrument", "maturity": "2036-09-15"})]
+        )
+        is True
+    )
+    assert (
+        only_long_dated_add_instruments(
+            [_Row({"action": "add_instrument", "maturity": "2029-12-31"})]
+        )
+        is False
+    )
+    assert (
+        only_long_dated_add_instruments(
+            [
+                _Row({"action": "add_instrument", "maturity": "2031-06-15"}),
+                _Row({"action": "mark_redeemed", "after": "redeemed"}),
+            ]
+        )
+        is False
+    )
+
+
+def test_judgement_upgrade_refuses_long_dated_fmb_only(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    """Long-dated add_instrument alone cannot upgrade materiality by judgement."""
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    fact_ids = _record_all_facts(session, run, filing)
+    wall = {
+        "buckets": {
+            lbl: {"total_outstanding": "1000000000"}
+            for lbl in ("FY2026", "FY2027", "FY2028", "FY2029")
+        }
+    }
+    run.metrics_outputs = [{"id": "flat", "before": {"issuer": wall}, "after": {"issuer": wall}}]
+    session.add(
+        StateChange(
+            event_id=event.id,
+            run_id=run.id,
+            proposed_diff={
+                "action": "add_instrument",
+                "instrument_key": "dec_fmb_555_2036",
+                "name": "5.55% First Mortgage Bonds due 2036",
+                "coupon": "5.55",
+                "maturity": "2036-09-15",
+                "maturity_precision": "day",
+                "amount_outstanding": "1250000000",
+                "issuer_id": event.issuer_id,
+                "currency": "USD",
+                "instrument_type": "bond",
+            },
+            evidence={"source": "test"},
+            status="proposed",
+            effective_date=date(2026, 6, 5),
+        )
+    )
+    session.flush()
+    findings = [
+        {
+            "item_key": key,
+            "statement": "Priced long-dated FMBs; $1,250,000,000 due 2036 noted in the sheet.",
+            "citations": [fid],
+        }
+        for key, fid in fact_ids.items()
+    ]
+
+    async def _claims_pass(*_a: object, **_k: object) -> ClaimsResult:
+        return ClaimsResult(status="pass", problems=[])
+
+    with patch.object(alert_mod, "claims_check", side_effect=_claims_pass):
+        refused = submit_alert(
+            session,
+            run,
+            summary="Priced $1,250,000,000 First Mortgage Bonds due 2036.",
+            findings=findings,
+            material=True,
+            judgement_reason="Long-dated offering materially extends the maturity wall",
+        )
+    assert refused["ok"] is False
+    assert LONG_DATED_JUDGEMENT_REFUSAL in refused["problems"]
+    assert refused.get("status") != "alerted"
+
+
+def test_judgement_upgrade_allows_equity_raise_without_debt_changes(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    """No proposed debt changes → judgement upgrade still allowed when claims pass."""
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    fact_ids = _record_all_facts(session, run, filing)
+    wall = {
+        "buckets": {
+            lbl: {"total_outstanding": "13032000000"}
+            for lbl in ("FY2026", "FY2027", "FY2028", "FY2029")
+        }
+    }
+    run.metrics_outputs = [{"id": "flat", "before": {"issuer": wall}, "after": {"issuer": wall}}]
+    session.flush()
+    findings = [
+        {
+            "item_key": key,
+            "statement": (
+                "Equity raise noted with $1,250,000,000 liquidity context from the notice."
+            ),
+            "citations": [fid],
+        }
+        for key, fid in fact_ids.items()
+    ]
+
+    async def _claims_pass(*_a: object, **_k: object) -> ClaimsResult:
+        return ClaimsResult(status="pass", problems=[])
+
+    with patch.object(alert_mod, "claims_check", side_effect=_claims_pass):
+        out = submit_alert(
+            session,
+            run,
+            summary="Equity raise improves liquidity; $1,250,000,000 context from the notice.",
+            findings=findings,
+            material=True,
+            judgement_reason="Equity raise changes liquidity without a near-term debt wall move",
+        )
+    assert out["ok"], out
+    assert out["material"] is True
+    assert out["judgement_applied"] is True
+    assert out["status"] == "alerted"
+    assert out["code_material"] is False
 
 
 def test_judgement_upgrade_requires_claims_pass(

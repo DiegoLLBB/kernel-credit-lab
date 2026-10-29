@@ -14,7 +14,8 @@ EVENT_V5_PATH = PROMPT_DIR / "event_v5.md"
 EVENT_V6_PATH = PROMPT_DIR / "event_v6.md"
 EVENT_V7_PATH = PROMPT_DIR / "event_v7.md"
 EVENT_V8_PATH = PROMPT_DIR / "event_v8.md"
-PROMPT_VERSION = "event_v8"
+EVENT_V9_PATH = PROMPT_DIR / "event_v9.md"
+PROMPT_VERSION = "event_v9"
 
 
 def load_event_prompt(

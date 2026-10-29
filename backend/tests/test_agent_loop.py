@@ -14,12 +14,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.agent.fake import FakeModel, function_call, multi_call, plain_text
 from app.agent.loop import (
+    BUDGET_LOW_MSG,
     DEFAULT_MAX_TURNS,
     MAX_RUN_TOKENS,
     MAX_RUN_TOKENS_LONG,
     PERIODIC_MAX_TURNS,
     RunLimits,
     assemble_user_input,
+    attach_run_budget,
     compact_transcript_for_model,
     max_tokens_for_event,
     max_turns_for_event,
@@ -132,7 +134,7 @@ def test_assemble_user_input_excludes_expectation_text(
     assert payload["watchlist"]["on_watchlist"] is True
 
 
-def test_event_v8_prompt_inserts_available_from(
+def test_event_v9_prompt_inserts_available_from(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
     from app.agent.prompts import PROMPT_VERSION, load_event_prompt
@@ -141,7 +143,7 @@ def test_event_v8_prompt_inserts_available_from(
     event, _filing, _bond = verizon_event
     as_of = available_from_for_event(session, event)
     text = load_event_prompt(today=as_of)
-    assert PROMPT_VERSION == "event_v8"
+    assert PROMPT_VERSION == "event_v9"
     assert "2026-08-20" in text
     assert "{available_from}" not in text
     assert "do not use knowledge of anything after today" in text
@@ -156,9 +158,48 @@ def test_event_v8_prompt_inserts_available_from(
     assert "don't wait for settlement" in text
     assert "bridge facilities" in text
     assert "announced / priced / closed / settled" in text
-    # v7 kept on disk for history
-    v7 = load_event_prompt(version="event_v7", today=as_of)
-    assert "bridge facilities" not in v7
+    assert (
+        "search_document` for debt terms" in text or "Use `search_document` for debt terms" in text
+    )
+    assert "Stop investigating once every checklist item has a fact" in text
+    assert "turns_left" in text and "tokens_left" in text
+    assert "New debt maturing after 2029" in text
+    assert "logged, not alerted" in text
+    # Prior versions kept on disk
+    v8 = load_event_prompt(version="event_v8", today=as_of)
+    assert "Stop investigating once every checklist item has a fact" not in v8
+    assert "bridge facilities" in v8
+    assert "New debt maturing after 2029" not in v8
+
+
+def test_attach_run_budget_warns_below_quarter() -> None:
+    ok = attach_run_budget(
+        {"ok": True},
+        turns_left=20,
+        tokens_left=300_000,
+        max_turns=40,
+        max_tokens=400_000,
+    )
+    assert ok["turns_left"] == 20 and ok["tokens_left"] == 300_000
+    assert "budget_warning" not in ok
+
+    low_turns = attach_run_budget(
+        {"ok": True},
+        turns_left=5,
+        tokens_left=300_000,
+        max_turns=40,
+        max_tokens=400_000,
+    )
+    assert low_turns["budget_warning"] == BUDGET_LOW_MSG
+
+    low_tokens = attach_run_budget(
+        {"ok": True},
+        turns_left=30,
+        tokens_left=50_000,
+        max_turns=40,
+        max_tokens=400_000,
+    )
+    assert low_tokens["budget_warning"] == BUDGET_LOW_MSG
 
 
 def test_max_turns_for_event_periodic_vs_other(
@@ -411,7 +452,7 @@ async def test_plain_text_three_times_pauses(
     assert run.status == "paused"
     assert "without a tool call" in (run.error or "")
     assert len(run.steps) == 3
-    assert (run.result or {}).get("prompt_version") == "event_v8"
+    assert (run.result or {}).get("prompt_version") == "event_v9"
     assert (run.result or {}).get("available_from") == "2026-08-20"
 
 

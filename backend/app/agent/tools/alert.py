@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from app.agent.audit import record_check, refusal_count
 from app.agent.claims import ClaimsResult, claims_check
-from app.agent.materiality import assess_materiality, is_missing_from_bond_list
+from app.agent.materiality import (
+    LONG_DATED_JUDGEMENT_REFUSAL,
+    assess_materiality,
+    is_missing_from_bond_list,
+    only_long_dated_add_instruments,
+)
 from app.agent.normalize import (
     coerce_amount,
     detect_amount_scale,
@@ -249,7 +254,9 @@ async def submit_alert(
     elif claims_result.status == "fail":
         claims_problems.extend(claims_result.problems)
 
-    # Code materiality cannot be downgraded. Judgement may upgrade when claims pass.
+    # Code materiality cannot be downgraded. Judgement may upgrade when claims pass,
+    # except when the only proposed changes are long-dated add_instrument rows
+    # (maturing after FY2029) — those stay logged.
     final_material = code_material
     judgement_applied = False
     if code_material:
@@ -264,6 +271,8 @@ async def submit_alert(
             claims_problems.append(
                 f"claims check must pass for a judgement upgrade (got {claims_result.status!r})"
             )
+        elif only_long_dated_add_instruments(list(proposed)):
+            claims_problems.append(LONG_DATED_JUDGEMENT_REFUSAL)
         else:
             final_material = True
             judgement_applied = True

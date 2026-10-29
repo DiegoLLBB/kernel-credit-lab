@@ -107,7 +107,10 @@ CHANGE = _object(
         "coupon": _NULLABLE_STRING,
         "maturity": {
             **_NULLABLE_STRING,
-            "description": "ISO date YYYY-MM-DD, or YYYY-MM when the document gives no day",
+            "description": (
+                "ISO date YYYY-MM-DD; YYYY-MM when the document gives month only; "
+                "or YYYY / 'due YYYY' when only a year is given (stored as 31 Dec)"
+            ),
         },
         "issue_date": _NULLABLE_STRING,
         "amount_outstanding": _NULLABLE_STRING,

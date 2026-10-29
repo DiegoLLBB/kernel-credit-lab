@@ -23,8 +23,8 @@ from app.models.trace import AgentRun
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "claims_v1"
-PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "claims_v1.md"
+PROMPT_VERSION = "claims_v2"
+PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "claims_v2.md"
 FALLBACK_MODEL = "muse-spark-1.3"
 
 # Optional override (agent loop injects its client; tests pass claims_client=…).

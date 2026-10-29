@@ -175,6 +175,30 @@ def _parse_args(arguments: str) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+BUDGET_LOW_MSG = "Budget low: propose your changes and submit now."
+
+
+def attach_run_budget(
+    result: dict[str, Any],
+    *,
+    turns_left: int,
+    tokens_left: int,
+    max_turns: int,
+    max_tokens: int,
+) -> dict[str, Any]:
+    """Annotate a tool result with remaining turn/token budget for the model."""
+    out = {
+        **result,
+        "turns_left": max(0, int(turns_left)),
+        "tokens_left": max(0, int(tokens_left)),
+    }
+    turn_ok = max_turns > 0 and (out["turns_left"] / max_turns) >= 0.25
+    tok_ok = max_tokens > 0 and (out["tokens_left"] / max_tokens) >= 0.25
+    if not turn_ok or not tok_ok:
+        out["budget_warning"] = BUDGET_LOW_MSG
+    return out
+
+
 def _function_call_output(call_id: str, output: dict[str, Any] | str) -> dict[str, Any]:
     text = output if isinstance(output, str) else json.dumps(output, default=str)
     return {"type": "function_call_output", "call_id": call_id, "output": text}
@@ -675,18 +699,38 @@ async def _run_loop_body(
         finally:
             current_step_id.reset(token)
 
+        turns_used = int(
+            session.scalar(
+                select(func.count()).select_from(AgentStep).where(AgentStep.run_id == run.id)
+            )
+            or 0
+        )
+        tool_result = attach_run_budget(
+            tool_result,
+            turns_left=limits.max_turns - turns_used,
+            tokens_left=max_tokens - state.total_tokens,
+            max_turns=limits.max_turns,
+            max_tokens=max_tokens,
+        )
+
         note = getattr(client, "note_tool_result", None)
         if callable(note):
             note(tool_result, item_key=args.get("item_key"))
 
         state.transcript.append(_function_call_output(primary.call_id, tool_result))
         for extra in extras:
-            refused = {
-                "ok": False,
-                "refused": True,
-                "reason": ONE_TOOL_MSG,
-                "problems": [ONE_TOOL_MSG],
-            }
+            refused = attach_run_budget(
+                {
+                    "ok": False,
+                    "refused": True,
+                    "reason": ONE_TOOL_MSG,
+                    "problems": [ONE_TOOL_MSG],
+                },
+                turns_left=limits.max_turns - turns_used,
+                tokens_left=max_tokens - state.total_tokens,
+                max_turns=limits.max_turns,
+                max_tokens=max_tokens,
+            )
             state.transcript.append(_function_call_output(extra.call_id, refused))
 
         step.status = "ok" if tool_result.get("ok") else "refused"
