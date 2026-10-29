@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -12,9 +13,11 @@ from app.agent.audit import record_check, refusal_count
 from app.agent.normalize import (
     amount_in_quote,
     date_in_quote,
+    detect_amount_scale,
     instrument_identified_in_quote,
     parse_amount,
     parse_date_loose,
+    parse_date_with_precision,
 )
 from app.agent.run import get_event
 from app.agent.tools.base import ok, refuse
@@ -99,12 +102,37 @@ def _require_fact(
     return facts[str(fact_id)], None
 
 
-def _amount_in_quote(value: Any, quote: str) -> bool:
-    return amount_in_quote(value, quote)
+def _amount_in_quote(value: Any, quote: str, *, scale: Decimal | None = None) -> bool:
+    return amount_in_quote(value, quote, scale=scale)
 
 
 def _date_in_quote(value: Any, quote: str) -> bool:
     return date_in_quote(value, quote)
+
+
+def _fmt_parsed_date(raw: Any, parsed: date | None) -> str:
+    if parsed is None:
+        return f"None (could not parse {raw!r})"
+    return parsed.isoformat()
+
+
+def _resolve_amount_scale(
+    facts: dict[str, Fact], evidence: dict[str, Any], problems: list[str]
+) -> Decimal | None:
+    """Optional evidence.amount_scale → millions/billions multiplier from heading quote."""
+    scale_fid = evidence.get("amount_scale")
+    if not scale_fid:
+        return None
+    scale_fact, err = _require_fact(facts, scale_fid, "amount_scale")
+    if err:
+        problems.append(err)
+        return None
+    assert scale_fact is not None
+    scale = detect_amount_scale(scale_fact.exact_quote)
+    if scale is None:
+        problems.append("amount_scale fact quote must contain 'in millions' or 'in billions'")
+        return None
+    return scale
 
 
 def _instrument_in_quote(inst: Instrument, quote: str) -> bool:
@@ -223,6 +251,8 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
                     "(need CUSIP, full name, or coupon% and maturity year)"
                 )
 
+            scale = _resolve_amount_scale(facts, evidence, problems)
+
             if action == "reduce_outstanding":
                 raw = change.get("reduce_by") or change.get("amount")
                 try:
@@ -241,7 +271,7 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
                 elif (
                     reduce_dec is not None
                     and amt_fact is not None
-                    and not _amount_in_quote(reduce_dec, amt_fact.exact_quote)
+                    and not _amount_in_quote(reduce_dec, amt_fact.exact_quote, scale=scale)
                 ):
                     problems.append(f"amount {reduce_dec!r} not found in cited quote")
                 if reduce_dec is not None and reduce_dec > Decimal(inst.amount_outstanding):
@@ -269,7 +299,7 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
                 elif (
                     new_amount is not None
                     and amt_fact is not None
-                    and not _amount_in_quote(new_amount, amt_fact.exact_quote)
+                    and not _amount_in_quote(new_amount, amt_fact.exact_quote, scale=scale)
                 ):
                     problems.append(f"amount {new_amount!r} not found in cited quote")
 
@@ -305,12 +335,22 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
             if value is None or value == "":
                 problems.append(f"missing field {field}")
 
-        maturity = parse_date_loose(str(maturity_raw)) if maturity_raw else None
-        issue = parse_date_loose(str(issue_raw)) if issue_raw else None
+        maturity, maturity_precision = (
+            parse_date_with_precision(str(maturity_raw)) if maturity_raw else (None, None)
+        )
+        issue, _issue_precision = (
+            parse_date_with_precision(str(issue_raw)) if issue_raw else (None, None)
+        )
         if maturity is None or (issue is not None and not (maturity > issue)):
-            problems.append("maturity must come after issue_date")
+            problems.append(
+                "maturity must come after issue_date "
+                f"(maturity={_fmt_parsed_date(maturity_raw, maturity)}, "
+                f"issue_date={_fmt_parsed_date(issue_raw, issue)})"
+            )
         if not currency:
             problems.append("currency must be set")
+
+        scale = _resolve_amount_scale(facts, evidence, problems)
 
         if amount_raw is not None:
             amt_fact, err = _require_fact(
@@ -318,7 +358,9 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
             )
             if err:
                 problems.append(err)
-            elif amt_fact is not None and not _amount_in_quote(amount_raw, amt_fact.exact_quote):
+            elif amt_fact is not None and not _amount_in_quote(
+                amount_raw, amt_fact.exact_quote, scale=scale
+            ):
                 problems.append(f"amount {amount_raw!r} not found in cited quote")
 
         if maturity is not None:
@@ -334,6 +376,7 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
             "name": name,
             "coupon": str(coupon) if coupon is not None else None,
             "maturity": maturity.isoformat() if maturity else None,
+            "maturity_precision": maturity_precision or "day",
             "issue_date": issue.isoformat() if issue else None,
             "amount_outstanding": str(amount_raw) if amount_raw is not None else None,
             "currency": currency,

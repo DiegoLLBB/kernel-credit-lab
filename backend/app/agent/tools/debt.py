@@ -102,6 +102,7 @@ def get_issuer_debt(session: Session, run: AgentRun) -> dict[str, Any]:
                 "type": inst.instrument_type,
                 "coupon": str(inst.coupon),
                 "maturity": inst.maturity.isoformat() if inst.maturity else None,
+                "maturity_precision": getattr(inst, "maturity_precision", None) or "day",
                 "amount_outstanding": str(amount),
                 "currency": inst.currency,
                 "cusip": inst.cusip,

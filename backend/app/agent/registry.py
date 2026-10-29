@@ -85,6 +85,13 @@ CHANGE = _object(
                 "instrument": _NULLABLE_STRING,
                 "effective_date": _NULLABLE_STRING,
                 "amount": _NULLABLE_STRING,
+                "amount_scale": {
+                    **_NULLABLE_STRING,
+                    "description": (
+                        "Fact whose quote states table units ('in millions' / 'in billions'); "
+                        "amount check then accepts value÷scale in the amount quote"
+                    ),
+                },
                 "name": _NULLABLE_STRING,
                 "maturity": _NULLABLE_STRING,
                 "coupon": _NULLABLE_STRING,
@@ -95,7 +102,10 @@ CHANGE = _object(
         "amount": _NULLABLE_STRING,
         "name": _NULLABLE_STRING,
         "coupon": _NULLABLE_STRING,
-        "maturity": _NULLABLE_STRING,
+        "maturity": {
+            **_NULLABLE_STRING,
+            "description": "ISO date YYYY-MM-DD, or YYYY-MM when the document gives no day",
+        },
         "issue_date": _NULLABLE_STRING,
         "amount_outstanding": _NULLABLE_STRING,
         "currency": _NULLABLE_STRING,
@@ -192,7 +202,10 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool(
         "compute_metrics",
-        "Compute before/after maturity-wall metrics. Pure code; call before submit_alert.",
+        (
+            "Compute before/after maturity-wall metrics (changed buckets and 2026–2029 "
+            "totals). Pure code; call before submit_alert."
+        ),
         _object({}),
     ),
     _tool(

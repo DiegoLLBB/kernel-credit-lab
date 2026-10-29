@@ -15,9 +15,12 @@ from app.agent.materiality import assess_materiality, is_missing_from_bond_list
 from app.agent.normalize import (
     amount_in_quote,
     date_in_quote,
+    detect_amount_scale,
     extract_dates,
+    extract_month_years,
     extract_numbers,
     instrument_identified_in_quote,
+    parse_date_with_precision,
     quote_has_context,
 )
 from app.agent.run import start_agent_run
@@ -229,11 +232,23 @@ def _happy_path(session: Session, event: Event, filing: Filing) -> dict:
 
     metrics = compute_metrics(session, run)
     assert metrics["ok"], metrics
-    before = Decimal(
-        metrics["metrics"]["before"]["issuer"]["buckets"]["FY2028"]["total_outstanding"]
+    compact = metrics["metrics"]
+    assert compact["id"]
+    assert "FY2028" in compact["issuer"]["changed_buckets"]
+    assert (
+        compact["issuer"]["totals_2026_2029"]["before"]
+        != compact["issuer"]["totals_2026_2029"]["after"]
     )
-    after = Decimal(metrics["metrics"]["after"]["issuer"]["buckets"]["FY2028"]["total_outstanding"])
+    # Full walls stay on the run for alerts / dashboard.
+    full = (run.metrics_outputs or [])[-1]
+    assert full["id"] == compact["id"]
+    before = Decimal(full["before"]["issuer"]["buckets"]["FY2028"]["total_outstanding"])
+    after = Decimal(full["after"]["issuer"]["buckets"]["FY2028"]["total_outstanding"])
     assert before - after == Decimal("1250000000")
+    assert compact["issuer"]["changed_buckets"]["FY2028"] == {
+        "before": str(before),
+        "after": str(after),
+    }
 
     findings = [
         {
@@ -272,6 +287,14 @@ def test_amount_matches_any_number_in_quote() -> None:
     assert amount_in_quote(Decimal("1250000000"), quote)
 
 
+def test_amount_scale_millions_accepts_table_units() -> None:
+    amount_quote = "Term loan 1,000 under the unsecured facility due March 2027"
+    scale_quote = "Long-term debt outstanding (in millions) as of March 31, 2026 for the registrant"
+    assert detect_amount_scale(scale_quote) == Decimal("1000000")
+    assert amount_in_quote("1000000000", amount_quote, scale=detect_amount_scale(scale_quote))
+    assert not amount_in_quote("1000000000", amount_quote)
+
+
 def test_date_matches_any_date_in_quote() -> None:
     quote = (
         "On August 20, 2026, Verizon announced that it will redeem the notes on September 21, 2026"
@@ -279,6 +302,19 @@ def test_date_matches_any_date_in_quote() -> None:
     assert extract_dates(quote) == [date(2026, 8, 20), date(2026, 9, 21)]
     assert date_in_quote("2026-09-21", quote)
     assert date_in_quote(date(2026, 9, 21), quote)
+
+
+def test_month_precision_date_in_quote_and_parse() -> None:
+    quote = "unsecured term loan facility due March 2027 under the credit agreement"
+    assert extract_month_years(quote) == [(2027, 3)]
+    assert date_in_quote("2027-03-01", quote)
+    assert date_in_quote("2027-03-15", quote)
+    assert date_in_quote("2027-03", quote)
+    d, prec = parse_date_with_precision("March 2027")
+    assert d == date(2027, 3, 1)
+    assert prec == "month"
+    d2, prec2 = parse_date_with_precision("2027-03")
+    assert d2 == date(2027, 3, 1) and prec2 == "month"
 
 
 def test_instrument_requires_coupon_and_year() -> None:
@@ -523,6 +559,120 @@ def test_propose_change_missing_citation_lists_recorded_facts(
     assert "maturity" in needed
     assert "name" in needed
     assert "coupon_or_rate" in needed
+
+
+def test_propose_change_amount_scale_and_month_maturity(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    """Table units + month-only maturity (Duke 10-Q style) accepted on add_instrument."""
+    event, filing, _bond = verizon_event
+    amount_quote = (
+        "Duke Energy Carolinas entered an unsecured Term loan facility of 1,000 "
+        "due March 2027 under its revolving credit agreement disclosures"
+    )
+    scale_quote = (
+        "The following consolidated schedule of long-term debt outstanding "
+        "(in millions) as of March 31, 2026 should be read with the notes"
+    )
+    maturity_quote = (
+        "Carolinas has an unsecured term loan facility due March 2027 that was "
+        "drawn in full during the first quarter of the year"
+    )
+    # Prepend so the quotes stay on page 0 even if the fixture is near PAGE_CHARS.
+    filing.body_text = f"{amount_quote}\n{scale_quote}\n{maturity_quote}\n{filing.body_text or ''}"
+    session.flush()
+
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    amt = record_fact(session, run, "amount", filing.id, amount_quote, "table shows 1,000")
+    scale = record_fact(session, run, "amount", filing.id, scale_quote, "amounts in millions")
+    mat = record_fact(session, run, "maturity_effect", filing.id, maturity_quote, "due March 2027")
+    assert amt["ok"] and scale["ok"] and mat["ok"]
+
+    ok_change = propose_change(
+        session,
+        run,
+        {
+            "action": "add_instrument",
+            "instrument_key": "dec_tl_2027_test",
+            "effective_date": "2026-03-13",
+            "name": "Unsecured Term Loan due March 2027",
+            "coupon": "4.79",
+            "maturity": "2027-03",
+            "issue_date": "2026-03-13",
+            "amount": "1000000000",
+            "currency": "USD",
+            "instrument_type": "loan",
+            "rate_type": "floating",
+            "evidence": {
+                "amount": amt["fact_id"],
+                "amount_scale": scale["fact_id"],
+                "maturity": mat["fact_id"],
+            },
+        },
+    )
+    assert ok_change["ok"], ok_change
+    row = session.get(StateChange, ok_change["state_change_id"])
+    assert row is not None
+    assert row.proposed_diff["maturity"] == "2027-03-01"
+    assert row.proposed_diff["maturity_precision"] == "month"
+    assert row.proposed_diff["amount_outstanding"] == "1000000000"
+
+    # Apply via alert path is heavy; check get_issuer_debt after manual insert mirroring apply.
+    session.add(
+        Instrument(
+            key="dec_tl_shown",
+            issuer_id=event.issuer_id,
+            name="Unsecured Term Loan due March 2027",
+            coupon=Decimal("4.79"),
+            maturity=date(2027, 3, 1),
+            maturity_precision="month",
+            issue_date=date(2026, 3, 13),
+            amount_outstanding=Decimal("1000000000"),
+            currency="USD",
+            instrument_type="loan",
+            rate_type="floating",
+            status="active",
+        )
+    )
+    session.flush()
+    debt = get_issuer_debt(session, run)
+    by_key = {row["key"]: row for row in debt["instruments"]}
+    assert by_key["dec_tl_shown"]["maturity_precision"] == "month"
+    assert by_key["dec_tl_shown"]["maturity"] == "2027-03-01"
+
+
+def test_propose_change_maturity_message_shows_parse_failure(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    amt = record_fact(session, run, "amount", filing.id, Q_AMOUNT, "amount")
+    assert amt["ok"]
+    bad = propose_change(
+        session,
+        run,
+        {
+            "action": "add_instrument",
+            "instrument_key": "bad_mat_loan",
+            "effective_date": "2026-03-13",
+            "name": "Mystery Loan",
+            "coupon": "4.79",
+            "maturity": "sometime in fiscal 2027",
+            "issue_date": "2026-03-13",
+            "amount": "1250000000",
+            "currency": "USD",
+            "evidence": {"amount": amt["fact_id"]},
+        },
+    )
+    assert bad["ok"] is False
+    joined = "; ".join(bad.get("problems") or [])
+    assert "maturity must come after issue_date" in joined
+    assert "could not parse 'sometime in fiscal 2027'" in joined
+    assert "issue_date=2026-03-13" in joined
 
 
 def test_propose_change_refuses_reduction_above_outstanding(

@@ -237,6 +237,7 @@ def submit_alert(
                     name=str(diff.get("name") or "New instrument"),
                     coupon=Decimal(str(diff.get("coupon") or "0")),
                     maturity=date.fromisoformat(str(diff["maturity"])),
+                    maturity_precision=str(diff.get("maturity_precision") or "day"),
                     issue_date=(
                         date.fromisoformat(str(diff["issue_date"]))
                         if diff.get("issue_date")

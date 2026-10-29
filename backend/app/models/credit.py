@@ -77,6 +77,8 @@ class Instrument(TimestampMixin, Base):
     reference_rate: Mapped[str | None] = mapped_column(String(32))  # e.g. SOFR
     spread_bps: Mapped[int | None] = mapped_column(Integer)
     maturity: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    # day | month — month when the source gives only month+year (stored as 1st of month).
+    maturity_precision: Mapped[str] = mapped_column(String(8), nullable=False, default="day")
     issue_date: Mapped[date | None] = mapped_column(Date)
     amount_outstanding: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")

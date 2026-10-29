@@ -51,9 +51,45 @@ _MONTH_DATE_RE = re.compile(
     re.I,
 )
 _ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+# Month + year with no day (e.g. "March 2027"); not a substring of "March 15, 2027".
+_MONTH_YEAR_ONLY_RE = re.compile(
+    r"\b(?P<month>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"\s+(?P<year>\d{4})\b",
+    re.I,
+)
+# YYYY-MM not followed by -DD.
+_YYYY_MM_RE = re.compile(r"\b(?P<year>\d{4})-(?P<month>\d{2})(?!-\d)")
+_MONTH_NAME_TO_NUM = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
 
 MIN_QUOTE_WORDS = 8
 MIN_QUOTE_CHARS = 40
+SCALE_MILLIONS = Decimal("1000000")
+SCALE_BILLIONS = Decimal("1000000000")
 
 
 def normalize_for_quote_match(text: str) -> str:
@@ -157,12 +193,41 @@ def coerce_amount(value: str | Decimal | int | float) -> Decimal | None:
         return None
 
 
-def amount_in_quote(value: str | Decimal | int | float, quote: str) -> bool:
-    """True when ``value`` equals any amount extracted from ``quote``."""
+def detect_amount_scale(quote: str) -> Decimal | None:
+    """Return 1e6 / 1e9 when ``quote`` states amounts are in millions / billions."""
+    lowered = normalize_for_quote_match(quote).lower()
+    if re.search(r"\bin\s+billions?\b", lowered):
+        return SCALE_BILLIONS
+    if re.search(r"\bin\s+millions?\b", lowered):
+        return SCALE_MILLIONS
+    return None
+
+
+def amount_in_quote(
+    value: str | Decimal | int | float,
+    quote: str,
+    *,
+    scale: Decimal | None = None,
+) -> bool:
+    """True when ``value`` equals any amount in ``quote``.
+
+    With ``scale`` (e.g. 1_000_000 from an "(in millions)" heading fact), also
+    accept a number in ``quote`` equal to ``value / scale`` (table units).
+    """
     target = coerce_amount(value)
     if target is None:
         return False
-    return any(n == target for n in extract_numbers(quote))
+    numbers = extract_numbers(quote)
+    if any(n == target for n in numbers):
+        return True
+    if scale is not None and scale != 0:
+        try:
+            scaled = (target / scale).normalize()
+        except InvalidOperation:
+            return False
+        # Compare without trailing zeros (1000 vs 1000.0).
+        return any(n == scaled or n == target / scale for n in numbers)
+    return False
 
 
 def amounts_equal(a: str | Decimal | int | float, b: str | Decimal | int | float) -> bool:
@@ -189,8 +254,29 @@ def _parse_one_date(chunk: str) -> date | None:
     return None
 
 
+def extract_month_years(text: str) -> list[tuple[int, int]]:
+    """Month-year mentions without a day (e.g. ``March 2027``, ``2027-03``)."""
+    cleaned = normalize_for_quote_match(text)
+    found: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+
+    def add(year: int, month: int) -> None:
+        if 1 <= month <= 12 and (year, month) not in seen:
+            seen.add((year, month))
+            found.append((year, month))
+
+    for match in _MONTH_YEAR_ONLY_RE.finditer(cleaned):
+        month = _MONTH_NAME_TO_NUM.get(match.group("month").lower())
+        if month is None:
+            continue
+        add(int(match.group("year")), month)
+    for match in _YYYY_MM_RE.finditer(cleaned):
+        add(int(match.group("year")), int(match.group("month")))
+    return found
+
+
 def extract_dates(text: str) -> list[date]:
-    """All recognisable dates in ``text`` (ISO and common month-name forms)."""
+    """All recognisable day-precision dates in ``text`` (ISO and month-name forms)."""
     cleaned = normalize_for_quote_match(text)
     found: list[date] = []
     seen: set[date] = set()
@@ -213,18 +299,45 @@ def extract_dates(text: str) -> list[date]:
     return found
 
 
+def parse_date_with_precision(text: str) -> tuple[date | None, str | None]:
+    """Parse a date; precision is ``day``, ``month``, or None if unparseable.
+
+    Month-only inputs (``March 2027``, ``2027-03``) become the 1st of that month.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None, None
+    # Prefer day-precision when present.
+    day_dates = extract_dates(raw)
+    if day_dates:
+        return day_dates[0], "day"
+    months = extract_month_years(raw)
+    if months:
+        year, month = months[0]
+        return date(year, month, 1), "month"
+    # Bare YYYY-MM as the entire string (already covered by extract_month_years).
+    return None, None
+
+
 def parse_date_loose(text: str) -> date | None:
-    """Parse the first date from common formats / embedded ISO / month names."""
-    dates = extract_dates(text)
-    return dates[0] if dates else None
+    """Parse the first date from common formats / ISO / month names / YYYY-MM."""
+    d, _prec = parse_date_with_precision(text)
+    return d
 
 
 def date_in_quote(value: str | date, quote: str) -> bool:
-    """True when ``value`` equals any date extracted from ``quote``."""
-    target = value if isinstance(value, date) else parse_date_loose(str(value))
+    """True when ``value`` matches a day date in ``quote``, or falls in a named month."""
+    if isinstance(value, date):
+        target = value
+    else:
+        target, _ = parse_date_with_precision(str(value))
     if target is None:
         return False
-    return target in extract_dates(quote)
+    if target in extract_dates(quote):
+        return True
+    return any(
+        year == target.year and month == target.month for year, month in extract_month_years(quote)
+    )
 
 
 def dates_equal(a: str | date, b: str | date) -> bool:

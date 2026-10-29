@@ -16,6 +16,9 @@ from app.models import Instrument, Issuer, StateChange
 from app.models.trace import AgentRun
 from app.tools.maturity import maturity_wall
 
+# Horizon totals surfaced to the model (materiality also uses these years).
+_HORIZON_LABELS = ("FY2026", "FY2027", "FY2028", "FY2029")
+
 
 def _serialise_wall(wall: dict[str, Any]) -> dict[str, Any]:
     """JSON-friendly copy (dates/Decimals → str)."""
@@ -32,6 +35,39 @@ def _serialise_wall(wall: dict[str, Any]) -> dict[str, Any]:
         return obj
 
     return conv(wall)  # type: ignore[return-value]
+
+
+def _bucket_total(wall: dict[str, Any], label: str) -> Decimal:
+    raw = ((wall.get("buckets") or {}).get(label) or {}).get("total_outstanding")
+    if raw is None:
+        return Decimal(0)
+    return Decimal(str(raw))
+
+
+def _horizon_total(wall: dict[str, Any]) -> str:
+    total = Decimal(0)
+    for label in _HORIZON_LABELS:
+        total += _bucket_total(wall, label)
+    return str(total)
+
+
+def _compact_wall_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """Changed buckets (before→after) plus 2026–2029 totals for the model."""
+    before_buckets = before.get("buckets") or {}
+    after_buckets = after.get("buckets") or {}
+    changed: dict[str, Any] = {}
+    for label in sorted(set(before_buckets) | set(after_buckets)):
+        b = str(_bucket_total(before, label))
+        a = str(_bucket_total(after, label))
+        if b != a:
+            changed[label] = {"before": b, "after": a}
+    return {
+        "changed_buckets": changed,
+        "totals_2026_2029": {
+            "before": _horizon_total(before),
+            "after": _horizon_total(after),
+        },
+    }
 
 
 def _apply_proposed(session: Session, change: StateChange) -> None:
@@ -68,6 +104,7 @@ def _apply_proposed(session: Session, change: StateChange) -> None:
                 name=str(diff.get("name") or "New instrument"),
                 coupon=Decimal(str(diff.get("coupon") or "0")),
                 maturity=date.fromisoformat(str(diff["maturity"])),
+                maturity_precision=str(diff.get("maturity_precision") or "day"),
                 issue_date=(
                     date.fromisoformat(str(diff["issue_date"])) if diff.get("issue_date") else None
                 ),
@@ -142,4 +179,12 @@ def compute_metrics(session: Session, run: AgentRun) -> dict[str, Any]:
     run.metrics_outputs = outputs
     session.flush()
 
-    return ok(session, run, tool="compute_metrics", arguments=args, result={"metrics": output})
+    # Model-facing payload: changed buckets + horizon totals only (full JSON stays on the run).
+    compact: dict[str, Any] = {
+        "id": output_id,
+        "issuer": _compact_wall_delta(before_issuer, after_issuer),
+    }
+    if parent_id != event.issuer_id:
+        compact["group"] = _compact_wall_delta(before_group, after_group)
+
+    return ok(session, run, tool="compute_metrics", arguments=args, result={"metrics": compact})

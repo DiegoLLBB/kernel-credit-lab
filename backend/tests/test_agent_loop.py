@@ -125,7 +125,7 @@ def test_assemble_user_input_excludes_expectation_text(
     assert payload["watchlist"]["on_watchlist"] is True
 
 
-def test_event_v5_prompt_inserts_available_from(
+def test_event_v6_prompt_inserts_available_from(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
     from app.agent.prompts import PROMPT_VERSION, load_event_prompt
@@ -134,7 +134,7 @@ def test_event_v5_prompt_inserts_available_from(
     event, _filing, _bond = verizon_event
     as_of = available_from_for_event(session, event)
     text = load_event_prompt(today=as_of)
-    assert PROMPT_VERSION == "event_v5"
+    assert PROMPT_VERSION == "event_v6"
     assert "2026-08-20" in text
     assert "{available_from}" not in text
     assert "do not use knowledge of anything after today" in text
@@ -142,6 +142,9 @@ def test_event_v5_prompt_inserts_available_from(
     assert "one short factual sentence" in text
     assert "cite their IDs in" in text and "propose_change.evidence" in text
     assert "do not re-read pages you have already quoted" in text
+    assert "amount_scale" in text
+    assert "YYYY-MM" in text
+    assert "Never add or combine figures yourself" in text
 
 
 def test_max_turns_for_event_periodic_vs_other(
@@ -286,7 +289,7 @@ async def test_plain_text_three_times_pauses(
     assert run.status == "paused"
     assert "without a tool call" in (run.error or "")
     assert len(run.steps) == 3
-    assert (run.result or {}).get("prompt_version") == "event_v5"
+    assert (run.result or {}).get("prompt_version") == "event_v6"
     assert (run.result or {}).get("available_from") == "2026-08-20"
 
 
