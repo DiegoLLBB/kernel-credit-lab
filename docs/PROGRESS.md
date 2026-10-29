@@ -150,3 +150,31 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
     item from the hidden expected outcome would leak the answer through the feedback. The coverage
     check refuses only on the per-kind required items (public rules); the comparison with the
     expected outcome is recorded as a score for evaluation.
+16. **First real agent run: Verizon redemption notice → `alerted`** (`5b7bc8c`). Muse Spark, real
+    press release, 19 turns in 4.5 minutes: Kernel's records → documents → checklist → 7 quoted facts
+    → change → before/after → alert. `vz_4329_2028` marked redeemed (21 Sep 2026); FY2028 wall
+    $13,032M → $11,782M; checklist coverage 1.0 against the hidden reference. The checks refused the
+    checklist once and the proposed change twice; the model corrected both. The run exposed: model
+    calls not recorded (foreign-key ordering), Meta expiring stored responses mid-run (now the full
+    transcript is always sent), an inactive cost ceiling (no prices configured; a token ceiling was
+    added) and filing text never stored. All fixed in the same commit.
+17. **SEC sources must resolve to documents, and long filings need search.** Replay sources for SEC
+    filings are EDGAR index pages, so the agent would read a file list (affects ~20 of 29 events);
+    and a 10-Q is ~150+ pages against a 30-turn limit. Index URLs now resolve via
+    `EdgarClient.filing_documents` to the primary document plus EX-99.x exhibits (skipping XBRL,
+    images, graphics, R*.htm). `search_document` finds terms with page snippets without counting
+    as a read; `request_input` allows a long-doc escape after 3 nothing-new searches on a filing
+    with more than 20 pages. Prompt bumped to `event_v3`.
+18. **Second flagship case works on a real 10-Q: Duke Energy Carolinas → `alerted`, material**
+    (`ada4ff0`, run `0729f0bf`). From the ~150-page combined Q1 10-Q, with no hint, the agent
+    searched, read the debt notes, quoted the new $1.5bn 364-day term loan ($1bn drawn, 4.522%,
+    March 2027), added it to Kernel's records and filed an alert. Code-computed materiality:
+    "debt appears that was not in the bond list" and FY2027 wall $67M → $1,067M. 35 turns, 2
+    minutes, 652k tokens. Getting there took five rounds, each driven by a real run: transcript
+    compaction (input per turn was growing with every page read), per-session limits on resume,
+    actionable refusals that list the run's facts, table scale ("in millions") and month-precision
+    maturities in the evidence check, and compact metrics for the model. No check was loosened;
+    the refusals that remained caught real mistakes (quote not on the page, a summary figure the
+    agent computed itself).
+    Open: the alert number check does not yet apply table scale; token use per 10-Q event is high
+    (Meta pricing unknown, so check credits before a full replay).
