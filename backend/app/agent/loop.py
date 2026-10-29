@@ -652,7 +652,7 @@ async def _run_loop_body(
         tool_name = primary.name
         token = current_step_id.set(step.id)
         try:
-            tool_result = dispatch_tool(session, run, primary.name, args)
+            tool_result = await dispatch_tool(session, run, primary.name, args)
         finally:
             current_step_id.reset(token)
 

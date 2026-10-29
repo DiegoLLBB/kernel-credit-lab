@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -38,7 +39,6 @@ from app.agent.tools import (
     request_input,
     search_document,
     set_checklist,
-    submit_alert,
 )
 from app.db import Base
 from app.llm.client import LLMError
@@ -61,6 +61,11 @@ SEED_PATH = Path(__file__).resolve().parents[1] / "seed" / "snapshot_2025-12-31.
 REDEMPTION_HTML = (
     Path(__file__).resolve().parent / "fixtures" / "newsroom" / "verizon_redemption_2026-08-20.html"
 )
+
+
+def submit_alert(*args: object, **kwargs: object) -> dict:
+    """Sync test helper — tools never create their own event loop."""
+    return asyncio.run(alert_mod.submit_alert(*args, **kwargs))  # type: ignore[arg-type]
 
 
 def _vz_quotes() -> dict[str, str]:
@@ -1376,11 +1381,10 @@ def test_judgement_upgrade_requires_claims_pass(
     assert refused["ok"] is False
     assert any("claims check must pass" in p for p in refused["problems"])
 
-    with patch.object(
-        alert_mod,
-        "claims_check",
-        return_value=ClaimsResult(status="pass", problems=[]),
-    ):
+    async def _claims_pass(*_a: object, **_k: object) -> ClaimsResult:
+        return ClaimsResult(status="pass", problems=[])
+
+    with patch.object(alert_mod, "claims_check", side_effect=_claims_pass):
         ok_alert = submit_alert(
             session,
             run,

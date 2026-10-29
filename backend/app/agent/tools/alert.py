@@ -101,7 +101,7 @@ def _missing_debt_flag(
     return False
 
 
-def submit_alert(
+async def submit_alert(
     session: Session,
     run: AgentRun,
     summary: str,
@@ -205,8 +205,8 @@ def submit_alert(
         attempt=attempt,
     )
 
-    # ② Claims check (independent model) — fail closed.
-    claims_result: ClaimsResult = claims_check(
+    # ② Claims check (independent model) — await on this event loop; fail closed.
+    claims_result: ClaimsResult = await claims_check(
         session,
         run,
         summary,

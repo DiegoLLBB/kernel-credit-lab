@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,7 +24,9 @@ from app.agent.loop import (
     run_event,
 )
 from app.agent.text import html_to_text
+from app.config import Settings
 from app.db import Base
+from app.llm.client import LLMClient
 from app.models import (
     Alert,
     Event,
@@ -125,7 +129,7 @@ def test_assemble_user_input_excludes_expectation_text(
     assert payload["watchlist"]["on_watchlist"] is True
 
 
-def test_event_v6_prompt_inserts_available_from(
+def test_event_v7_prompt_inserts_available_from(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
     from app.agent.prompts import PROMPT_VERSION, load_event_prompt
@@ -134,7 +138,7 @@ def test_event_v6_prompt_inserts_available_from(
     event, _filing, _bond = verizon_event
     as_of = available_from_for_event(session, event)
     text = load_event_prompt(today=as_of)
-    assert PROMPT_VERSION == "event_v6"
+    assert PROMPT_VERSION == "event_v7"
     assert "2026-08-20" in text
     assert "{available_from}" not in text
     assert "do not use knowledge of anything after today" in text
@@ -145,6 +149,8 @@ def test_event_v6_prompt_inserts_available_from(
     assert "amount_scale" in text
     assert "YYYY-MM" in text
     assert "Never add or combine figures yourself" in text
+    assert "settlement date" in text
+    assert "don't wait for settlement" in text
 
 
 def test_max_turns_for_event_periodic_vs_other(
@@ -245,6 +251,69 @@ def _verizon_script(filing_id: str) -> list:
     return script
 
 
+class _HybridLoopClient:
+    """FakeModel for /responses turns; real LLMClient.structured_json for claims check."""
+
+    def __init__(self, fake: FakeModel, llm: LLMClient) -> None:
+        self.fake = fake
+        self.llm = llm
+        self.settings = llm.settings
+
+    async def responses(self, **kwargs: Any) -> Any:
+        return await self.fake.responses(**kwargs)
+
+    async def structured_json(self, **kwargs: Any) -> Any:
+        return await self.llm.structured_json(**kwargs)
+
+    def note_tool_result(self, result: dict[str, Any], *, item_key: str | None = None) -> None:
+        self.fake.note_tool_result(result, item_key=item_key)
+
+    @property
+    def records(self) -> list:
+        return self.fake.records
+
+    @property
+    def requests(self) -> list:
+        return self.fake.requests
+
+
+def _claims_pass_completion(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a chat-completions payload that marks summary + findings supported."""
+    findings_n = 0
+    item_keys: list[str | None] = []
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        text = str(msg.get("content") or "")
+        marker = "Input JSON follows."
+        if marker not in text:
+            continue
+        raw = text.split(marker, 1)[1].strip()
+        try:
+            payload = json.loads(raw)
+            items = payload.get("findings") or []
+            findings_n = len(items)
+            item_keys = [it.get("item_key") for it in items]
+        except json.JSONDecodeError:
+            findings_n = 0
+    body = {
+        "summary": {"status": "supported", "unsupported_phrase": None},
+        "findings": [
+            {
+                "finding_index": i,
+                "item_key": item_keys[i] if i < len(item_keys) else None,
+                "status": "supported",
+                "unsupported_phrase": None,
+            }
+            for i in range(findings_n)
+        ],
+    }
+    return {
+        "choices": [{"message": {"role": "assistant", "content": json.dumps(body)}}],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 40},
+    }
+
+
 @pytest.mark.asyncio
 async def test_verizon_redemption_loop_ends_alerted(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
@@ -274,6 +343,48 @@ async def test_verizon_redemption_loop_ends_alerted(
 
 
 @pytest.mark.asyncio
+async def test_run_event_claims_check_reuses_loop_http_client(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    """Claims must await the agent's AsyncClient on the same loop (no asyncio.run)."""
+    event, filing, bond = verizon_event
+    chat_calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "/chat/completions" in str(request.url), request.url
+        chat_calls.append(request)
+        body = json.loads(request.content)
+        assert body.get("temperature") == 0.0
+        assert (body.get("response_format") or {}).get("type") == "json_schema"
+        return httpx.Response(200, json=_claims_pass_completion(body.get("messages") or []))
+
+    settings = Settings(
+        model_api_key="test-key",
+        meta_model_api_base_url="https://meta.test/v1",
+        baseten_api_key="",  # force Meta path through the mocked transport
+        default_model="muse-spark-1.3",
+        llm_max_retries=0,
+    )
+    llm = LLMClient(settings, transport=httpx.MockTransport(handler))
+    fake = FakeModel(_verizon_script(filing.id))
+    client = _HybridLoopClient(fake, llm)
+    try:
+        run = await run_event(session, event.id, client, RunLimits(max_turns=40))
+    finally:
+        await llm.aclose()
+
+    assert run.status == "alerted", (run.status, run.error, run.result)
+    assert chat_calls, "claims check must hit chat/completions via LLMClient"
+    session.refresh(bond)
+    assert bond.status == "redeemed"
+    alert = session.scalars(select(Alert).where(Alert.event_id == event.id)).one()
+    assert alert.claims_check is not None
+    assert alert.claims_check.get("status") == "pass"
+    assert alert.claims_check.get("model") == "muse-spark-1.3"
+    assert alert.claims_check.get("provider") == "meta"
+
+
+@pytest.mark.asyncio
 async def test_plain_text_three_times_pauses(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
@@ -289,7 +400,7 @@ async def test_plain_text_three_times_pauses(
     assert run.status == "paused"
     assert "without a tool call" in (run.error or "")
     assert len(run.steps) == 3
-    assert (run.result or {}).get("prompt_version") == "event_v6"
+    assert (run.result or {}).get("prompt_version") == "event_v7"
     assert (run.result or {}).get("available_from") == "2026-08-20"
 
 

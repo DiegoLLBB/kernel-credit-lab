@@ -242,13 +242,13 @@ TOOLS: list[dict[str, Any]] = [
 TOOL_NAMES: frozenset[str] = frozenset(t["name"] for t in TOOLS)
 
 
-def dispatch_tool(
+async def dispatch_tool(
     session: Session,
     run: AgentRun,
     name: str,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Execute one registered tool; unknown names are refused as a plain result dict."""
+    """Execute one registered tool; async tools are awaited on the caller's event loop."""
     if name == "get_issuer_debt":
         return get_issuer_debt(session, run)
     if name == "set_checklist":
@@ -291,7 +291,7 @@ def dispatch_tool(
         return request_input(session, run, arguments["item_key"], arguments["question"])
     if name == "submit_alert":
         judgement = arguments.get("judgement_reason")
-        return submit_alert(
+        return await submit_alert(
             session,
             run,
             arguments["summary"],

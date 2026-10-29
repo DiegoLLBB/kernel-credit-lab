@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
-import contextvars
 import json
+import logging
 from collections.abc import Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -22,6 +20,8 @@ from app.llm.client import LLMClient, LLMError, Provider, StructuredOutputError
 from app.llm.recorder import db_recorder
 from app.models import Fact
 from app.models.trace import AgentRun
+
+logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "claims_v1"
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "claims_v1.md"
@@ -77,6 +77,8 @@ class ClaimsResult:
     problems: list[str] = field(default_factory=list)
     findings: list[dict[str, Any]] = field(default_factory=list)
     summary: dict[str, Any] | None = None
+    provider: str | None = None
+    model: str | None = None
 
     def to_audit(self) -> dict[str, Any]:
         return {
@@ -84,23 +86,13 @@ class ClaimsResult:
             "problems": list(self.problems),
             "summary": self.summary,
             "findings": list(self.findings),
+            "provider": self.provider,
+            "model": self.model,
         }
 
 
 def load_claims_prompt() -> str:
     return PROMPT_PATH.read_text(encoding="utf-8")
-
-
-def _run_sync(coro: Any) -> Any:
-    """Run an async coroutine from sync code, including when a loop is already running."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # Preserve ContextVar overrides (e.g. injected claims client) across the worker thread.
-    ctx = contextvars.copy_context()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(ctx.run, asyncio.run, coro).result()
 
 
 def _metric_number_strings(metrics_outputs: list[Any] | None) -> list[str]:
@@ -153,7 +145,6 @@ def _build_payload(
                 all_quotes.append(fact.exact_quote)
         statement = str(finding.get("statement") or finding.get("text") or "")
         stated = extract_numbers(statement)
-        # Only metric numbers that appear in this finding (or the full set if none overlap).
         cited_metrics = [n for n in metric_numbers if Decimal(n) in stated]
         finding_payloads.append(
             {
@@ -174,10 +165,15 @@ def _build_payload(
     }
 
 
-def _resolve_provider_model(settings: Any) -> tuple[Provider, str]:
+def _provider_model_attempts(settings: Any) -> list[tuple[Provider, str]]:
+    """Baseten OPEN_MODEL first when keyed; Meta muse-spark as fallback."""
+    attempts: list[tuple[Provider, str]] = []
     if settings.baseten_api_key:
-        return Provider.BASETEN, settings.open_model or "meta-models/muse-spark-open-1026"
-    return Provider.META, settings.default_model or FALLBACK_MODEL
+        attempts.append(
+            (Provider.BASETEN, settings.open_model or "meta-models/muse-spark-open-1026")
+        )
+    attempts.append((Provider.META, settings.default_model or FALLBACK_MODEL))
+    return attempts
 
 
 def _problems_from_assessment(
@@ -211,16 +207,27 @@ def _problems_from_assessment(
     return problems, summary_detail, detail
 
 
-async def _claims_check_async(
-    *,
+async def claims_check(
+    session: Session,
     run: AgentRun,
     summary: str,
-    findings: Sequence[dict[str, Any]],
-    facts_by_id: dict[str, Fact],
-    client: Any,
+    findings: list[dict[str, Any]],
+    *,
+    client: Any | None = None,
+    facts_by_id: dict[str, Fact] | None = None,
 ) -> ClaimsResult:
-    settings = getattr(client, "settings", None) or get_settings()
-    provider, model = _resolve_provider_model(settings)
+    """Await the independent claims check on the caller's event loop; fail closed."""
+    del session  # ModelCall persistence uses db_recorder's own session
+    if facts_by_id is None:
+        facts_by_id = {}
+
+    local = client if client is not None else _claims_client_override.get()
+    close = False
+    if local is None:
+        local = LLMClient(recorder=db_recorder)
+        close = True
+
+    settings = getattr(local, "settings", None) or get_settings()
     payload = _build_payload(
         summary=summary,
         findings=findings,
@@ -238,67 +245,64 @@ async def _claims_check_async(
             ),
         },
     ]
+
     try:
-        assessment, _llm = await client.structured_json(
-            provider=provider,
-            model=model,
-            messages=messages,
-            schema=ClaimsAssessmentModel,
-            task="claims_check",
-            prompt_version=PROMPT_VERSION,
-            temperature=0.0,
-            run_id=run.id,
-        )
-    except (LLMError, StructuredOutputError, OSError, TimeoutError, RuntimeError) as exc:
-        return ClaimsResult(
-            status="error",
-            problems=["claims check unavailable", str(exc)[:300]],
-        )
+        last_error: str | None = None
+        assessment: ClaimsAssessmentModel | None = None
+        used_provider: str | None = None
+        used_model: str | None = None
+        for provider, model in _provider_model_attempts(settings):
+            try:
+                assessment, _llm = await local.structured_json(
+                    provider=provider,
+                    model=model,
+                    messages=messages,
+                    schema=ClaimsAssessmentModel,
+                    task="claims_check",
+                    prompt_version=PROMPT_VERSION,
+                    temperature=0.0,
+                    run_id=run.id,
+                )
+                used_provider = str(provider)
+                used_model = model
+                break
+            except (LLMError, StructuredOutputError, OSError, TimeoutError, RuntimeError) as exc:
+                last_error = str(exc)[:300]
+                logger.warning(
+                    "claims_check_model_failed",
+                    extra={"provider": str(provider), "model": model, "error": last_error},
+                )
+                continue
 
-    problems, summary_detail, detail = _problems_from_assessment(assessment, findings)
-    if problems:
-        return ClaimsResult(
-            status="fail", problems=problems, summary=summary_detail, findings=detail
-        )
-    return ClaimsResult(status="pass", problems=[], summary=summary_detail, findings=detail)
-
-
-def claims_check(
-    session: Session,
-    run: AgentRun,
-    summary: str,
-    findings: list[dict[str, Any]],
-    *,
-    client: Any | None = None,
-    facts_by_id: dict[str, Fact] | None = None,
-) -> ClaimsResult:
-    """Run the independent claims check; fail closed on model errors."""
-    del session  # reserved for future session-scoped recorders; ModelCall uses db_recorder
-    if facts_by_id is None:
-        facts_by_id = {}
-
-    async def _run() -> ClaimsResult:
-        local = client if client is not None else _claims_client_override.get()
-        close = False
-        if local is None:
-            local = LLMClient(recorder=db_recorder)
-            close = True
-        try:
-            return await _claims_check_async(
-                run=run,
-                summary=summary,
-                findings=findings,
-                facts_by_id=facts_by_id,
-                client=local,
+        if assessment is None:
+            return ClaimsResult(
+                status="error",
+                problems=["claims check unavailable", last_error or "no model available"],
             )
-        finally:
-            if close and hasattr(local, "aclose"):
-                await local.aclose()
 
-    try:
-        return _run_sync(_run())
+        problems, summary_detail, detail = _problems_from_assessment(assessment, findings)
+        if problems:
+            return ClaimsResult(
+                status="fail",
+                problems=problems,
+                summary=summary_detail,
+                findings=detail,
+                provider=used_provider,
+                model=used_model,
+            )
+        return ClaimsResult(
+            status="pass",
+            problems=[],
+            summary=summary_detail,
+            findings=detail,
+            provider=used_provider,
+            model=used_model,
+        )
     except Exception as exc:  # fail closed
         return ClaimsResult(
             status="error",
             problems=["claims check unavailable", str(exc)[:300]],
         )
+    finally:
+        if close and hasattr(local, "aclose"):
+            await local.aclose()
