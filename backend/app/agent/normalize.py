@@ -51,6 +51,8 @@ _MONTH_DATE_RE = re.compile(
     re.I,
 )
 _ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+# Numeric calendar dates (US MM/DD/YYYY preferred; DD/MM/YYYY when month would be invalid).
+_NUMERIC_DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
 # Month + year with no day (e.g. "March 2027"); not a substring of "March 15, 2027".
 _MONTH_YEAR_ONLY_RE = re.compile(
     r"\b(?P<month>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
@@ -254,6 +256,18 @@ def _parse_one_date(chunk: str) -> date | None:
     return None
 
 
+def _parse_numeric_slash_date(chunk: str) -> date | None:
+    """Parse ``MM/DD/YYYY`` or ``DD/MM/YYYY`` (prefer US when both are valid)."""
+    cleaned = normalize_for_quote_match(chunk)
+    # Prefer US order first (issuer docs / press releases).
+    for fmt in ("%m/%d/%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(cleaned, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def extract_month_years(text: str) -> list[tuple[int, int]]:
     """Month-year mentions without a day (e.g. ``March 2027``, ``2027-03``)."""
     cleaned = normalize_for_quote_match(text)
@@ -293,6 +307,8 @@ def extract_dates(text: str) -> list[date]:
             continue
     for match in _MONTH_DATE_RE.finditer(cleaned):
         add(_parse_one_date(match.group(1)))
+    for match in _NUMERIC_DATE_RE.finditer(cleaned):
+        add(_parse_numeric_slash_date(match.group(1)))
     # Whole-string parse as a last resort for a single bare date.
     if not found:
         add(_parse_one_date(cleaned))

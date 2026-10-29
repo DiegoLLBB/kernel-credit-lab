@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agent.claims import reset_claims_client, use_claims_client
 from app.agent.prompts import PROMPT_VERSION, load_event_prompt
 from app.agent.registry import TOOLS, dispatch_tool
 from app.agent.run import start_agent_run
@@ -468,6 +469,11 @@ async def _run_loop(
     _begin_session(run, state)
     session.commit()
 
+    # Independent claims check on submit_alert uses this client when it supports structured_json.
+    claims_token = None
+    if hasattr(client, "structured_json"):
+        claims_token = use_claims_client(client)
+
     try:
         await _run_loop_body(
             session,
@@ -481,6 +487,8 @@ async def _run_loop(
             max_tokens=max_tokens,
         )
     finally:
+        if claims_token is not None:
+            reset_claims_client(claims_token)
         _end_session(run, state)
         session.commit()
         session.expire(run, ["steps"])

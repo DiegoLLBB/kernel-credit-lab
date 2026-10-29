@@ -11,6 +11,8 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.agent.claims import ClaimsResult
+from app.agent.fake import FakeClaimsClient
 from app.agent.materiality import assess_materiality, is_missing_from_bond_list
 from app.agent.normalize import (
     amount_in_quote,
@@ -39,6 +41,7 @@ from app.agent.tools import (
     submit_alert,
 )
 from app.db import Base
+from app.llm.client import LLMError
 from app.models import (
     Alert,
     AuditEntry,
@@ -84,6 +87,28 @@ REDEMPTION_QUOTES = _vz_quotes()
 Q_INSTRUMENT = REDEMPTION_QUOTES["instrument"]
 Q_AMOUNT = REDEMPTION_QUOTES["amount"]
 Q_DATE = REDEMPTION_QUOTES["redemption_date"]
+
+
+def _claims_supported(findings: list[dict] | None = None) -> FakeClaimsClient:
+    """Fake independent verifier that marks summary and every finding supported."""
+    items = findings or []
+    return FakeClaimsClient(
+        [
+            {
+                "summary": {"status": "supported", "unsupported_phrase": None},
+                "findings": [
+                    {
+                        "finding_index": i,
+                        "item_key": f.get("item_key"),
+                        "status": "supported",
+                        "unsupported_phrase": None,
+                    }
+                    for i, f in enumerate(items)
+                ],
+            }
+        ]
+    )
+
 
 REDEMPTION_ITEMS = [
     {
@@ -267,11 +292,15 @@ def _happy_path(session: Session, event: Event, filing: Filing) -> dict:
         ),
         findings=findings,
         material=True,
+        claims_client=_claims_supported(findings),
     )
     assert alert["ok"], alert
     assert alert["status"] == "alerted"
     assert alert["material"] is True
-    assert alert["claims_check"] == "not run"
+    assert alert["claims_check"] == "pass"
+    stored = session.scalars(select(Alert).where(Alert.event_id == event.id)).one()
+    assert stored.claims_check is not None
+    assert stored.claims_check["status"] == "pass"
     session.commit()
     return {"run": run, "alert": alert, "before": before, "after": after, "fact_ids": fact_ids}
 
@@ -302,6 +331,11 @@ def test_date_matches_any_date_in_quote() -> None:
     assert extract_dates(quote) == [date(2026, 8, 20), date(2026, 9, 21)]
     assert date_in_quote("2026-09-21", quote)
     assert date_in_quote(date(2026, 9, 21), quote)
+
+
+def test_extract_dates_parses_numeric_slash_dates() -> None:
+    assert extract_dates("redemption on 09/21/2026 at par") == [date(2026, 9, 21)]
+    assert date_in_quote("2026-09-21", "Notice dated 09/21/2026 for the notes")
 
 
 def test_month_precision_date_in_quote_and_parse() -> None:
@@ -922,6 +956,7 @@ def test_verizon_hybrids_logged_not_material_by_bucket_alone(session: Session) -
         summary="Verizon issued long-dated hybrids due 2056; no 2026-2029 wall change.",
         findings=[],
         material=False,
+        claims_client=_claims_supported([]),
     )
     assert out["ok"], out
     assert out["status"] == "logged"
@@ -1029,11 +1064,262 @@ def test_duke_carolinas_term_loan_missing_from_list_is_material(session: Session
         summary="Carolinas $1,000,000,000 term loan due 2027 was missing from the bond list.",
         findings=[],
         material=True,
+        claims_client=_claims_supported([]),
     )
     assert out["ok"], out
     assert out["material"] is True
     assert out["status"] == "alerted"
     assert any("not in the bond list" in r for r in out["materiality_reasons"])
+
+
+def test_claims_check_supported_allows_alert(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    out = _happy_path(session, event, filing)
+    assert out["alert"]["claims_check"] == "pass"
+    assert out["alert"]["status"] == "alerted"
+    checks = session.scalars(
+        select(AuditEntry).where(
+            AuditEntry.run_id == out["run"].id, AuditEntry.action == "check:claims"
+        )
+    ).all()
+    assert checks
+    assert checks[-1].detail and checks[-1].detail.get("passed") is True
+
+
+def test_claims_check_overstated_refuses_with_phrase(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    fact_ids = _record_all_facts(session, run, filing)
+    assert propose_change(
+        session,
+        run,
+        {
+            "action": "mark_redeemed",
+            "instrument_key": "vz_4329_2028",
+            "effective_date": "2026-09-21",
+            "evidence": {
+                "instrument": fact_ids["instrument"],
+                "effective_date": fact_ids["redemption_date"],
+            },
+        },
+    )["ok"]
+    assert compute_metrics(session, run)["ok"]
+    findings = [
+        {
+            "item_key": key,
+            "statement": f"Settled {key} with amount $1,250,000,000 on September 21, 2026.",
+            "citations": [fact_ids[key]],
+        }
+        for key in fact_ids
+    ]
+    # Mark amount finding overstated; others supported.
+    script_findings = []
+    for i, f in enumerate(findings):
+        if f["item_key"] == "amount":
+            script_findings.append(
+                {
+                    "finding_index": i,
+                    "item_key": "amount",
+                    "status": "overstated",
+                    "unsupported_phrase": "entire capital structure collapses",
+                }
+            )
+        else:
+            script_findings.append(
+                {
+                    "finding_index": i,
+                    "item_key": f["item_key"],
+                    "status": "supported",
+                    "unsupported_phrase": None,
+                }
+            )
+    bad = submit_alert(
+        session,
+        run,
+        summary=(
+            "Verizon will redeem all $1,250,000,000 of its 4.329% Notes due 2028 "
+            "on September 21, 2026, cutting the FY2028 wall by $1,250,000,000."
+        ),
+        findings=findings,
+        material=True,
+        claims_client=FakeClaimsClient(
+            [
+                {
+                    "summary": {"status": "supported", "unsupported_phrase": None},
+                    "findings": script_findings,
+                }
+            ]
+        ),
+    )
+    assert bad["ok"] is False
+    assert any("entire capital structure collapses" in p for p in bad["problems"])
+    assert any("overstated" in p for p in bad["problems"])
+    assert int((run.refusal_counts or {}).get("submit_alert") or 0) >= 1
+
+
+def test_claims_check_overstated_summary_refuses_even_if_findings_supported(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    fact_ids = _record_all_facts(session, run, filing)
+    assert propose_change(
+        session,
+        run,
+        {
+            "action": "mark_redeemed",
+            "instrument_key": "vz_4329_2028",
+            "effective_date": "2026-09-21",
+            "evidence": {
+                "instrument": fact_ids["instrument"],
+                "effective_date": fact_ids["redemption_date"],
+            },
+        },
+    )["ok"]
+    assert compute_metrics(session, run)["ok"]
+    findings = [
+        {
+            "item_key": key,
+            "statement": f"Settled {key} with amount $1,250,000,000 on September 21, 2026.",
+            "citations": [fact_ids[key]],
+        }
+        for key in fact_ids
+    ]
+    bad = submit_alert(
+        session,
+        run,
+        summary=(
+            "Verizon will redeem all $1,250,000,000 of its 4.329% Notes due 2028 "
+            "on September 21, 2026, guaranteeing the issuer avoids bankruptcy forever."
+        ),
+        findings=findings,
+        material=True,
+        claims_client=FakeClaimsClient(
+            [
+                {
+                    "summary": {
+                        "status": "overstated",
+                        "unsupported_phrase": "avoids bankruptcy forever",
+                    },
+                    "findings": [
+                        {
+                            "finding_index": i,
+                            "item_key": f.get("item_key"),
+                            "status": "supported",
+                            "unsupported_phrase": None,
+                        }
+                        for i, f in enumerate(findings)
+                    ],
+                }
+            ]
+        ),
+    )
+    assert bad["ok"] is False
+    assert any("avoids bankruptcy forever" in p for p in bad["problems"])
+    assert any("summary" in p for p in bad["problems"])
+    assert int((run.refusal_counts or {}).get("submit_alert") or 0) >= 1
+
+
+def test_claims_check_model_failure_fail_closed(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    fact_ids = _record_all_facts(session, run, filing)
+    assert propose_change(
+        session,
+        run,
+        {
+            "action": "mark_redeemed",
+            "instrument_key": "vz_4329_2028",
+            "effective_date": "2026-09-21",
+            "evidence": {
+                "instrument": fact_ids["instrument"],
+                "effective_date": fact_ids["redemption_date"],
+            },
+        },
+    )["ok"]
+    assert compute_metrics(session, run)["ok"]
+    findings = [
+        {
+            "item_key": key,
+            "statement": f"Settled {key} with amount $1,250,000,000 on September 21, 2026.",
+            "citations": [fact_ids[key]],
+        }
+        for key in fact_ids
+    ]
+    bad = submit_alert(
+        session,
+        run,
+        summary=(
+            "Verizon will redeem all $1,250,000,000 of its 4.329% Notes due 2028 "
+            "on September 21, 2026, cutting the FY2028 wall by $1,250,000,000."
+        ),
+        findings=findings,
+        material=True,
+        claims_client=FakeClaimsClient([LLMError("upstream down", status_code=503)]),
+    )
+    assert bad["ok"] is False
+    assert any("claims check unavailable" in p for p in bad["problems"])
+
+
+def test_alert_number_check_accepts_scaled_millions(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    """Summary $1bn is supported when quotes have table '1,000' plus '(in millions)'."""
+    event, filing, _bond = verizon_event
+    amount_quote = (
+        "Duke Energy Carolinas reports an unsecured Term loan facility of 1,000 "
+        "outstanding under the credit agreement for the quarter"
+    )
+    scale_quote = (
+        "The following table of long-term debt outstanding (in millions) as of "
+        "March 31, 2026 should be read together with the accompanying notes"
+    )
+    filing.body_text = f"{amount_quote}\n{scale_quote}\n{filing.body_text or ''}"
+    session.flush()
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    # Escalate other items; only amount-related facts needed for the number check path.
+    for item in session.scalars(select(ChecklistItem).where(ChecklistItem.run_id == run.id)).all():
+        item.status = "escalated"
+    amt = record_fact(session, run, "amount", filing.id, amount_quote, "table shows 1,000")
+    scale = record_fact(session, run, "amount", filing.id, scale_quote, "in millions")
+    assert amt["ok"] and scale["ok"]
+    wall = {
+        "buckets": {
+            lbl: {"total_outstanding": "0"} for lbl in ("FY2026", "FY2027", "FY2028", "FY2029")
+        }
+    }
+    run.metrics_outputs = [{"id": "scaled", "before": {"issuer": wall}, "after": {"issuer": wall}}]
+    session.flush()
+    findings = [
+        {
+            "item_key": "amount",
+            "statement": "Outstanding amount is $1,000,000,000 per the 10-Q table.",
+            "citations": [amt["fact_id"], scale["fact_id"]],
+        }
+    ]
+    out = submit_alert(
+        session,
+        run,
+        summary="Carolinas term loan of $1,000,000,000 appears in the filing table.",
+        findings=findings,
+        material=False,
+        claims_client=_claims_supported(findings),
+    )
+    assert out["ok"], out
 
 
 def test_judgement_upgrade_requires_claims_pass(
@@ -1070,11 +1356,31 @@ def test_judgement_upgrade_requires_claims_pass(
         findings=findings,
         material=True,
         judgement_reason="Make-whole call signals liquidity priority despite flat wall math",
+        claims_client=FakeClaimsClient(
+            [
+                {
+                    "summary": {"status": "supported", "unsupported_phrase": None},
+                    "findings": [
+                        {
+                            "finding_index": i,
+                            "item_key": f.get("item_key"),
+                            "status": "unsupported",
+                            "unsupported_phrase": "liquidity priority",
+                        }
+                        for i, f in enumerate(findings)
+                    ],
+                }
+            ]
+        ),
     )
     assert refused["ok"] is False
     assert any("claims check must pass" in p for p in refused["problems"])
 
-    with patch.object(alert_mod, "claims_check", return_value="passed"):
+    with patch.object(
+        alert_mod,
+        "claims_check",
+        return_value=ClaimsResult(status="pass", problems=[]),
+    ):
         ok_alert = submit_alert(
             session,
             run,
@@ -1129,6 +1435,7 @@ def test_agent_cannot_downgrade_code_material(
         ),
         findings=findings,
         material=False,
+        claims_client=_claims_supported(findings),
     )
     assert forced["ok"], forced
     assert forced["material"] is True

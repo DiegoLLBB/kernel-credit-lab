@@ -1,4 +1,4 @@
-"""submit_alert with alert rules, materiality override, and claims_check hook."""
+"""submit_alert with alert rules, materiality override, and claims check."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.audit import record_check, refusal_count
+from app.agent.claims import ClaimsResult, claims_check
 from app.agent.materiality import assess_materiality, is_missing_from_bond_list
-from app.agent.normalize import extract_numbers, parse_date_loose
+from app.agent.normalize import detect_amount_scale, extract_numbers, parse_date_loose
 from app.agent.run import get_event
 from app.agent.tools.base import ok, refuse
 from app.models import (
@@ -25,11 +26,6 @@ from app.models import (
 from app.models.trace import AgentRun
 
 MAX_REFUSALS = 3
-
-
-def claims_check(_run: AgentRun, _summary: str, _findings: list[dict[str, Any]]) -> str:
-    """Independent claims check hook (Muse Spark Open). Currently a stub."""
-    return "not run"
 
 
 def _collect_metric_numbers(metrics_outputs: list[Any]) -> set[Decimal]:
@@ -55,6 +51,23 @@ def _collect_metric_numbers(metrics_outputs: list[Any]) -> set[Decimal]:
 
     for block in metrics_outputs or []:
         walk(block)
+    return found
+
+
+def _quote_numbers_with_scale(facts: list[Fact]) -> set[Decimal]:
+    """Numbers from fact quotes, plus table units × scale when an 'in millions' fact exists."""
+    found: set[Decimal] = set()
+    scales = [s for f in facts if (s := detect_amount_scale(f.exact_quote)) is not None]
+    for fact in facts:
+        nums = extract_numbers(fact.exact_quote)
+        found.update(nums)
+        if detect_amount_scale(fact.exact_quote) is not None:
+            continue
+        # Scale comma-grouped / money-like figures the way propose_change does.
+        moneyish = extract_numbers(fact.exact_quote, money_only=True)
+        for scale in scales:
+            for n in moneyish:
+                found.add(n * scale)
     return found
 
 
@@ -95,6 +108,8 @@ def submit_alert(
     findings: list[dict[str, Any]],
     material: bool,
     judgement_reason: str | None = None,
+    *,
+    claims_client: Any | None = None,
 ) -> dict[str, Any]:
     args = {
         "summary": summary,
@@ -126,10 +141,7 @@ def submit_alert(
             if str(cid) not in facts_by_id:
                 problems.append(f"cited fact {cid!r} does not exist in this run")
 
-    quote_nums: set[Decimal] = set()
-    for fact in facts:
-        quote_nums.update(extract_numbers(fact.exact_quote))
-
+    quote_nums = _quote_numbers_with_scale(list(facts))
     metric_nums = _collect_metric_numbers(list(run.metrics_outputs or []))
     if not run.metrics_outputs:
         problems.append("compute_metrics has not been run")
@@ -158,29 +170,9 @@ def submit_alert(
     code_material = bool(materiality["material"])
     reasons = list(materiality["reasons"])
 
-    claims_status = claims_check(run, summary, findings or [])
-
-    # Code materiality cannot be downgraded. Judgement may upgrade when claims pass.
-    final_material = code_material
-    judgement_applied = False
-    if code_material:
-        final_material = True
-    elif material:
-        if not judgement_reason or not str(judgement_reason).strip():
-            problems.append(
-                "judgement upgrade requires judgement_reason when material=true "
-                "but code rules say no"
-            )
-        elif claims_status != "passed":
-            problems.append(
-                f"claims check must pass for a judgement upgrade (got {claims_status!r})"
-            )
-        else:
-            final_material = True
-            judgement_applied = True
-            reasons = [f"judgement (agent): {judgement_reason.strip()}"]
-
     attempt = refusal_count(run, "submit_alert") + 1
+
+    # ① Alert rules (code) — refuse before spending a claims-model call when rules fail.
     if problems:
         record_check(
             session,
@@ -209,13 +201,77 @@ def submit_alert(
         run,
         check_name="alert_rules",
         passed=True,
-        problems={
-            "claims_check": claims_status,
-            "materiality": materiality,
-            "judgement_applied": judgement_applied,
-        },
+        problems={"materiality": materiality},
         attempt=attempt,
     )
+
+    # ② Claims check (independent model) — fail closed.
+    claims_result: ClaimsResult = claims_check(
+        session,
+        run,
+        summary,
+        findings or [],
+        client=claims_client,
+        facts_by_id=facts_by_id,
+    )
+    claims_passed = claims_result.status == "pass"
+    record_check(
+        session,
+        run,
+        check_name="claims",
+        passed=claims_passed,
+        problems=claims_result.to_audit(),
+        attempt=attempt,
+    )
+
+    claims_problems: list[str] = []
+    if claims_result.status == "error":
+        claims_problems.append("claims check unavailable")
+    elif claims_result.status == "fail":
+        claims_problems.extend(claims_result.problems)
+
+    # Code materiality cannot be downgraded. Judgement may upgrade when claims pass.
+    final_material = code_material
+    judgement_applied = False
+    if code_material:
+        final_material = True
+    elif material:
+        if not judgement_reason or not str(judgement_reason).strip():
+            claims_problems.append(
+                "judgement upgrade requires judgement_reason when material=true "
+                "but code rules say no"
+            )
+        elif not claims_passed:
+            claims_problems.append(
+                f"claims check must pass for a judgement upgrade (got {claims_result.status!r})"
+            )
+        else:
+            final_material = True
+            judgement_applied = True
+            reasons = [f"judgement (agent): {judgement_reason.strip()}"]
+
+    if claims_problems:
+        record_check(
+            session,
+            run,
+            check_name="alert_rules",
+            passed=False,
+            problems=claims_problems,
+            attempt=attempt,
+        )
+        result = refuse(
+            session,
+            run,
+            tool="submit_alert",
+            arguments=args,
+            reason="; ".join(claims_problems),
+            problems=claims_problems,
+        )
+        if int(result.get("refusal_count") or 0) >= MAX_REFUSALS:
+            run.status = "needs_input"
+            session.flush()
+            result = {**result, "status": "needs_input"}
+        return result
 
     for change in proposed:
         diff = change.proposed_diff or {}
@@ -268,6 +324,7 @@ def submit_alert(
         )
         session.add(snapshot)
 
+    claims_audit = claims_result.to_audit()
     alert = None
     if final_material and event.issuer_id:
         alert = Alert(
@@ -280,6 +337,7 @@ def submit_alert(
             before_metrics=(latest or {}).get("before"),
             after_metrics=(latest or {}).get("after"),
             materiality_reasons=reasons,
+            claims_check=claims_audit,
             status="new",
         )
         session.add(alert)
@@ -296,6 +354,7 @@ def submit_alert(
             "materiality": {**materiality, "reasons": reasons},
             "agent_material_flag": material,
             "judgement_reason": judgement_reason,
+            "claims_check": claims_audit,
         }
 
     run.completed_at = datetime.now(UTC)
@@ -315,7 +374,8 @@ def submit_alert(
             "judgement_applied": judgement_applied,
             "alert_id": alert.id if alert else None,
             "metric_snapshot_id": snapshot.id if snapshot else None,
-            "claims_check": claims_status,
+            "claims_check": claims_result.status,
+            "claims_check_detail": claims_audit,
             "applied_changes": [c.id for c in proposed],
         },
     )

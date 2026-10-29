@@ -145,6 +145,104 @@ def multi_call(
     }
 
 
+@dataclass
+class FakeClaimsClient:
+    """Scripted ``structured_json`` client for the independent claims check (no network)."""
+
+    script: list[Any]
+    model: str = "fake-claims"
+    settings: Any = None
+    records: list[ModelCallRecord] = field(default_factory=list)
+    requests: list[dict[str, Any]] = field(default_factory=list)
+    _index: int = 0
+
+    def __post_init__(self) -> None:
+        if self.settings is None:
+            from app.config import Settings
+
+            # No API keys — claims_check will still prefer META fallback model id.
+            self.settings = Settings(model_api_key="fake", meta_model_api_base_url="https://fake")
+
+    async def structured_json(
+        self,
+        *,
+        provider: Provider = Provider.META,
+        model: str | None = None,
+        messages: list[dict[str, Any]],
+        schema: Any,
+        task: str | None = None,
+        prompt_version: str | None = None,
+        temperature: float = 0.0,
+        run_id: str | None = None,
+        step_id: str | None = None,
+        **_kwargs: Any,
+    ) -> tuple[Any, Any]:
+        from app.llm.client import LLMResult
+
+        self.requests.append(
+            {
+                "provider": str(provider),
+                "model": model or self.model,
+                "messages": messages,
+                "task": task,
+                "prompt_version": prompt_version,
+                "temperature": temperature,
+                "run_id": run_id,
+            }
+        )
+        if self._index >= len(self.script):
+            raise RuntimeError(f"FakeClaimsClient script exhausted at index {self._index}")
+        entry = self.script[self._index]
+        self._index += 1
+        if isinstance(entry, Exception):
+            self.records.append(
+                ModelCallRecord(
+                    provider=str(provider),
+                    model=model or self.model,
+                    status="error",
+                    task=task,
+                    prompt_version=prompt_version,
+                    run_id=run_id,
+                    step_id=step_id,
+                    error=str(entry),
+                )
+            )
+            raise entry
+        payload = entry(messages) if callable(entry) else entry
+        parsed = schema.model_validate(payload)
+        self.records.append(
+            ModelCallRecord(
+                provider=str(provider),
+                model=model or self.model,
+                status="success",
+                task=task,
+                prompt_version=prompt_version,
+                attempts=1,
+                input_tokens=8,
+                output_tokens=12,
+                cost_usd=Decimal("0"),
+                latency_ms=1,
+                run_id=run_id,
+                step_id=step_id,
+            )
+        )
+        result = LLMResult(
+            content=json.dumps(payload),
+            provider=str(provider),
+            model=model or self.model,
+            input_tokens=8,
+            output_tokens=12,
+            latency_ms=1,
+            attempts=1,
+            cost_usd=Decimal("0"),
+            raw={"scripted": True},
+        )
+        return parsed, result
+
+    async def aclose(self) -> None:
+        return None
+
+
 class FakeModel:
     """Duck-types ``LLMClient.responses``; replays scripted Responses payloads. No network."""
 
@@ -165,12 +263,90 @@ class FakeModel:
         self.requests: list[dict[str, Any]] = []
         self._index = 0
         self._expired_once = False
+        from app.config import Settings
+
+        # So claims_check can resolve provider/model without a live API.
+        self.settings = Settings(model_api_key="fake", meta_model_api_base_url="https://fake")
 
     def note_tool_result(self, result: dict[str, Any], *, item_key: str | None = None) -> None:
         payload = dict(result)
         if item_key and "item_key" not in payload:
             payload["item_key"] = item_key
         self.context.tool_results.append(payload)
+
+    async def structured_json(
+        self,
+        *,
+        provider: Provider = Provider.META,
+        model: str | None = None,
+        messages: list[dict[str, Any]],
+        schema: Any,
+        task: str | None = None,
+        prompt_version: str | None = None,
+        temperature: float = 0.0,
+        run_id: str | None = None,
+        step_id: str | None = None,
+        **_kwargs: Any,
+    ) -> tuple[Any, Any]:
+        """Default claims-check behaviour for loop tests: every finding is supported."""
+        from app.llm.client import LLMResult
+
+        findings_n = 0
+        item_keys: list[str | None] = []
+        for msg in messages:
+            if msg.get("role") != "user":
+                continue
+            text = str(msg.get("content") or "")
+            marker = "Input JSON follows."
+            if marker in text:
+                raw = text.split(marker, 1)[1].strip()
+                try:
+                    payload = json.loads(raw)
+                    items = payload.get("findings") or []
+                    findings_n = len(items)
+                    item_keys = [it.get("item_key") for it in items]
+                except json.JSONDecodeError:
+                    findings_n = 0
+        data = {
+            "summary": {"status": "supported", "unsupported_phrase": None},
+            "findings": [
+                {
+                    "finding_index": i,
+                    "item_key": item_keys[i] if i < len(item_keys) else None,
+                    "status": "supported",
+                    "unsupported_phrase": None,
+                }
+                for i in range(findings_n)
+            ],
+        }
+        parsed = schema.model_validate(data)
+        self.records.append(
+            ModelCallRecord(
+                provider=str(provider),
+                model=model or self.model,
+                status="success",
+                task=task,
+                prompt_version=prompt_version,
+                attempts=1,
+                input_tokens=8,
+                output_tokens=12,
+                cost_usd=Decimal("0"),
+                latency_ms=1,
+                run_id=run_id,
+                step_id=step_id,
+            )
+        )
+        return parsed, LLMResult(
+            content=json.dumps(data),
+            provider=str(provider),
+            model=model or self.model,
+            input_tokens=8,
+            output_tokens=12,
+            latency_ms=1,
+            attempts=1,
+            cost_usd=Decimal("0"),
+            raw={"scripted": True},
+        )
 
     async def responses(
         self,
@@ -270,6 +446,7 @@ class FakeModel:
 
 # Re-export for tests that build FunctionCallItem by hand
 __all__ = [
+    "FakeClaimsClient",
     "FakeContext",
     "FakeModel",
     "FunctionCallItem",

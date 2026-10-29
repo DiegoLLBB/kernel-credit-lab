@@ -293,6 +293,8 @@ class Alert(TimestampMixin, Base):
     before_metrics: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
     after_metrics: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
     materiality_reasons: Mapped[list[Any] | None] = mapped_column(JsonType)
+    # Independent claims check result: {status, problems, findings}.
+    claims_check: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="new", index=True
     )  # new | confirmed | dismissed
