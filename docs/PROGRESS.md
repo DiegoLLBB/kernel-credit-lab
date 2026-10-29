@@ -178,3 +178,13 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
     agent computed itself).
     Open: the alert number check does not yet apply table scale; token use per 10-Q event is high
     (Meta pricing unknown, so check credits before a full replay).
+19. **Claims check live with an independent model** (`d92e1ac`, `ecef85c`). Muse Spark Open on
+    Baseten reviews every alert's summary and findings against only the cited quotes and metric
+    numbers; it fails closed (no review → no alert), with Muse Spark as fallback. Verizon rerun
+    (run `1ed2647c`, prompt v7): **alerted**, FY2028 $13,032M → $11,782M; the reviewer refused twice
+    before passing: an unsupported link to Kernel's internal instrument key, and an overstated
+    "no conditions stated" (absence inferred, not quoted). The agent reworded to the quoted
+    language. First attempt failed closed because the claims call ran on a second event loop
+    (tests used a fake model with no HTTP); fixed by making tools async, with a test over a mocked
+    HTTP transport. Prompt v7 adds the scheduled-changes rule: certain future changes (called
+    redemptions) are proposed now with the settlement date.
