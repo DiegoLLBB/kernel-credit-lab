@@ -138,3 +138,15 @@ provenance; seed loader with validation. Agents 102 (Verifiable Agents) at 17:00
     a loan the agent found repaid).
 12. **Pull the agent loop forward.** Extraction tools and a minimal loop come together, so one event
     (the Verizon redemption notice) runs end to end by Saturday; Sunday onwards is improvement.
+13. **Deployed on Google Cloud at about $0** (`16de4b2`, `a71d19c`; see DEPLOY.md). Cloud Run (API and
+    web, scale to zero, max 2 instances), Cloud SQL Postgres 18 + pgvector on the Firebase SQL Connect
+    free trial (3 months), Firebase Hosting for routing and the custom domain, Secret Manager, and
+    keyless GitHub deploys after CI passes. Live at https://kernel-credit-lab.web.app. Separate project
+    from any other product. Render was considered ($20–37/month) and rejected on cost.
+14. **CI caught model/migration drift** in 0011 (`json` vs `jsonb`, constraints vs unique indexes),
+    which local review had missed because it ran `alembic upgrade` but not `alembic check`. Fixed with
+    migration 0013; reviews now run `alembic check`.
+15. **Coverage check in replay is scored, not refused.** Refusing a checklist because it misses an
+    item from the hidden expected outcome would leak the answer through the feedback. The coverage
+    check refuses only on the per-kind required items (public rules); the comparison with the
+    expected outcome is recorded as a score for evaluation.

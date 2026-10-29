@@ -146,6 +146,8 @@ class Filing(TimestampMixin, Base):
     filed_at: Mapped[date | None] = mapped_column(Date, index=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     title: Mapped[str | None] = mapped_column(String(512))
+    # Extracted plain text for agent read_document (HTML/PDF extracted once at ingest).
+    body_text: Mapped[str | None] = mapped_column(Text)
 
     issuer: Mapped[Issuer | None] = relationship()
     events: Mapped[list["Event"]] = relationship(back_populates="source_filing")

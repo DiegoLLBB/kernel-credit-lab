@@ -16,10 +16,11 @@ from app.models.credit import (
     StateChange,
     Watchlist,
 )
-from app.models.trace import AgentStep, ModelCall, ResearchRun, ToolCall
+from app.models.trace import AgentRun, AgentStep, ModelCall, ResearchRun, ToolCall
 from app.models.verification import AuditEntry, ChecklistItem, CheckResult, Fact
 
 __all__ = [
+    "AgentRun",
     "AgentStep",
     "Alert",
     "AuditEntry",

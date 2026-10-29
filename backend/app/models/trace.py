@@ -29,6 +29,11 @@ class TimestampMixin:
 
 
 class ResearchRun(TimestampMixin, Base):
+    """Agent / research run.
+
+    Event-driven runs use status running|alerted|logged|needs_input|paused.
+    """
+
     __tablename__ = "research_run"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
@@ -42,10 +47,33 @@ class ResearchRun(TimestampMixin, Base):
     total_cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0"))
     total_latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Per-event agent loop (CONTEXT.md §9); null for free-form research questions.
+    # use_alter: Event.run_id already FKs research_run (cycle).
+    event_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "event.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_research_run_event_id_event",
+        ),
+        index=True,
+    )
+    event_kind: Mapped[str | None] = mapped_column(String(64))
+    turn_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    refusal_counts: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False, default=dict)
+    pages_read: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False, default=dict)
+    # Replay-only coverage score vs ReplayExpectation; never shown in agent feedback.
+    coverage_score: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+    metrics_outputs: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
 
     steps: Mapped[list["AgentStep"]] = relationship(
         back_populates="run", order_by="AgentStep.sequence", cascade="all, delete-orphan"
     )
+
+
+# Alias used by the agent tool layer.
+AgentRun = ResearchRun
 
 
 class AgentStep(TimestampMixin, Base):
