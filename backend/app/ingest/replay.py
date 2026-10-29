@@ -417,6 +417,7 @@ def _store_filing(
     row.filed_at = filed_at
     row.title = (title or "")[:512] or None
     row.content_hash = content_hash
+    row.body_text = text
     session.flush()
     return row
 

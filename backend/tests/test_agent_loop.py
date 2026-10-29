@@ -28,6 +28,7 @@ from app.models import (
     Issuer,
     ReplayExpectation,
 )
+from app.models.trace import AgentStep, ModelCall
 from scripts.load_seed import load_seed
 
 # Reuse Verizon quotes / checklist from the tools suite.
@@ -234,6 +235,18 @@ async def test_verizon_redemption_loop_ends_alerted(
     assert bond.status == "redeemed"
     assert client.records
     assert any(s.output and s.output.get("response_id") for s in run.steps)
+    # Every turn has a ModelCall linked to its committed AgentStep.
+    steps = session.scalars(
+        select(AgentStep).where(AgentStep.run_id == run.id).order_by(AgentStep.sequence)
+    ).all()
+    assert steps
+    for step in steps:
+        mc = session.scalars(select(ModelCall).where(ModelCall.step_id == step.id)).one()
+        assert mc.run_id == run.id
+        assert mc.input_tokens is not None
+    # Full transcript every turn; never previous_response_id.
+    assert all(r.get("previous_response_id") is None for r in client.requests)
+    assert len(client.requests[-1]["input"]) >= 1
 
 
 @pytest.mark.asyncio
@@ -315,7 +328,7 @@ async def test_resume_after_pause(
     assert run.status == "paused"
     run_id = run.id
 
-    # Resume with read + then three plain texts → pause again (or continue path).
+    # Resume with read + then three plain texts → pause again.
     client2 = FakeModel(
         [
             function_call(
@@ -326,15 +339,28 @@ async def test_resume_after_pause(
             plain_text("x"),
             plain_text("y"),
             plain_text("z"),
-        ],
-        raise_on_previous_response_id=True,
+        ]
     )
     run2 = await resume_run(session, run_id, client2, RunLimits(max_turns=40))
     assert run2.id == run_id
     assert run2.status == "paused"
     assert "without a tool call" in (run2.error or "")
-    # Rebuild path: first resume request used previous_response_id and got rejection,
-    # then retried with full transcript (no previous_response_id).
-    assert any(r.get("previous_response_id") for r in client2.requests)
-    assert any(r.get("previous_response_id") is None for r in client2.requests[1:])
+    # Resume always sends the saved full transcript (no previous_response_id).
+    assert all(r.get("previous_response_id") is None for r in client2.requests)
+    assert isinstance(client2.requests[0]["input"], list)
+    assert len(client2.requests[0]["input"]) >= 2
     assert any(s.output and s.output.get("tool") == "read_document" for s in run2.steps)
+
+
+@pytest.mark.asyncio
+async def test_token_ceiling_pauses(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, _filing, _bond = verizon_event
+    heavy = function_call("list_documents", {})
+    heavy["usage"] = {"input_tokens": 300_000, "output_tokens": 150_000}
+    client = FakeModel([heavy, function_call("list_documents", {})])
+    run = await run_event(session, event.id, client, RunLimits(max_turns=40, max_tokens=400_000))
+    assert run.status == "paused"
+    assert "token ceiling" in (run.error or "")
+    assert (run.result or {}).get("total_tokens", 0) >= 400_000

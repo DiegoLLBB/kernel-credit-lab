@@ -61,16 +61,18 @@ class ResponsesClient(Protocol):
 class RunLimits:
     max_turns: int = DEFAULT_MAX_TURNS
     max_cost_usd: float | None = None
+    max_tokens: int | None = None
     max_wall_seconds: float = DEFAULT_WALL_SECONDS
 
 
 @dataclass
 class LoopState:
     run: AgentRun
-    previous_response_id: str | None = None
     transcript: list[dict[str, Any]] = field(default_factory=list)
     tool_choice_used: Any | None = None
     consecutive_no_tool: int = 0
+    total_tokens: int = 0
+    last_response_id: str | None = None
     started_monotonic: float = 0.0
     started_at_iso: str = ""
 
@@ -140,14 +142,10 @@ def _function_call_item(call: FunctionCallItem) -> dict[str, Any]:
     }
 
 
-def _looks_like_previous_response_error(exc: BaseException) -> bool:
-    text = str(exc).lower()
-    return "previous_response" in text or "not stored" in text or "expired" in text
-
-
 def _record_model_call(
     session: Session, run: AgentRun, step: AgentStep, result: ResponsesResult
 ) -> None:
+    """Persist ModelCall in the loop session (AgentStep must already be committed)."""
     session.add(
         ModelCall(
             run_id=run.id,
@@ -166,18 +164,22 @@ def _record_model_call(
     )
 
 
-def _apply_cost(run: AgentRun, result: ResponsesResult) -> None:
+def _apply_usage(run: AgentRun, state: LoopState, result: ResponsesResult) -> None:
     if result.cost_usd is not None:
         run.total_cost_usd = Decimal(str(run.total_cost_usd or 0)) + Decimal(str(result.cost_usd))
     if result.latency_ms is not None:
         run.total_latency_ms = int(run.total_latency_ms or 0) + int(result.latency_ms)
+    turn_tokens = int(result.input_tokens or 0) + int(result.output_tokens or 0)
+    state.total_tokens += turn_tokens
+    _save_meta(run, total_tokens=state.total_tokens)
 
 
 def _clean_transcript(transcript: list[Any]) -> list[Any]:
+    """Drop internal flags; keep Responses-shaped items for a full-transcript resend."""
     cleaned: list[Any] = []
     for item in transcript:
         if isinstance(item, dict):
-            cleaned.append({k: v for k, v in item.items() if k != "_pending"})
+            cleaned.append({k: v for k, v in item.items() if not str(k).startswith("_")})
         else:
             cleaned.append(item)
     return cleaned
@@ -189,10 +191,11 @@ def _pause(run: AgentRun, reason: str, state: LoopState) -> None:
     _save_meta(
         run,
         pause_reason=reason,
-        previous_response_id=state.previous_response_id,
+        last_response_id=state.last_response_id,
         transcript=_clean_transcript(state.transcript),
         tool_choice=state.tool_choice_used,
         consecutive_no_tool=state.consecutive_no_tool,
+        total_tokens=state.total_tokens,
         started_at=state.started_at_iso,
     )
 
@@ -202,43 +205,23 @@ async def _call_model(
     *,
     model: str,
     instructions: str,
-    input_items: str | list[dict[str, Any]],
-    previous_response_id: str | None,
+    input_items: list[dict[str, Any]],
     run: AgentRun,
     step_id: str | None,
-    rebuild_input: list[dict[str, Any]] | None,
 ) -> ResponsesResult:
-    """Call ``/responses``; on expired previous_response_id, rebuild from transcript."""
-    try:
-        return await client.responses(
-            provider=Provider.META,
-            model=model,
-            input=input_items,
-            tools=TOOLS,
-            instructions=instructions,
-            previous_response_id=previous_response_id,
-            task="event_loop",
-            prompt_version=PROMPT_VERSION,
-            run_id=run.id,
-            step_id=step_id,
-        )
-    except LLMError as exc:
-        expired = previous_response_id and _looks_like_previous_response_error(exc)
-        if expired and rebuild_input is not None:
-            logger.warning("previous_response_id rejected; rebuilding transcript")
-            return await client.responses(
-                provider=Provider.META,
-                model=model,
-                input=rebuild_input,
-                tools=TOOLS,
-                instructions=instructions,
-                previous_response_id=None,
-                task="event_loop",
-                prompt_version=PROMPT_VERSION,
-                run_id=run.id,
-                step_id=step_id,
-            )
-        raise
+    """Call ``/responses`` with the full transcript (no previous_response_id)."""
+    return await client.responses(
+        provider=Provider.META,
+        model=model,
+        input=input_items,
+        tools=TOOLS,
+        instructions=instructions,
+        previous_response_id=None,
+        task="event_loop",
+        prompt_version=PROMPT_VERSION,
+        run_id=run.id,
+        step_id=step_id,
+    )
 
 
 async def _run_loop(
@@ -255,6 +238,9 @@ async def _run_loop(
     settings = get_settings()
     max_cost = (
         limits.max_cost_usd if limits.max_cost_usd is not None else float(settings.max_run_cost_usd)
+    )
+    max_tokens = (
+        limits.max_tokens if limits.max_tokens is not None else int(settings.max_run_tokens)
     )
 
     while True:
@@ -278,6 +264,11 @@ async def _run_loop(
             session.commit()
             break
 
+        if state.total_tokens >= max_tokens:
+            _pause(run, f"token ceiling ({max_tokens})", state)
+            session.commit()
+            break
+
         cost_so_far = float(run.total_cost_usd or 0)
         if cost_so_far >= max_cost:
             _pause(run, f"cost ceiling (${max_cost})", state)
@@ -290,39 +281,13 @@ async def _run_loop(
             sequence=sequence,
             state="AGENT",
             status="running",
-            input_summary=(
-                f"previous_response_id={state.previous_response_id}"
-                if state.previous_response_id
-                else "initial"
-            ),
+            input_summary=f"transcript_items={len(state.transcript)}",
         )
         session.add(step)
-        session.flush()
+        # Commit before the model call so ModelCall.step_id FK is valid.
+        session.commit()
 
-        has_outputs = any(
-            isinstance(i, dict) and i.get("type") == "function_call_output"
-            for i in state.transcript
-        )
-        if state.previous_response_id is None and not has_outputs:
-            # First model call: full user message already in transcript.
-            model_input: str | list[dict[str, Any]] = state.transcript
-            prev_id = None
-        else:
-            # Follow-up: pending function_call_output / nudge items only.
-            pending = [
-                item
-                for item in state.transcript
-                if isinstance(item, dict)
-                and item.get("type") in {"function_call_output", "message"}
-                and item.get("_pending")
-            ]
-            for item in pending:
-                item.pop("_pending", None)
-            model_input = pending or [{"type": "message", "role": "user", "content": NO_TOOL_NUDGE}]
-            prev_id = state.previous_response_id
-
-        rebuild = _clean_transcript(state.transcript)
-
+        model_input = _clean_transcript(state.transcript)
         token = current_step_id.set(step.id)
         try:
             result = await _call_model(
@@ -330,10 +295,8 @@ async def _run_loop(
                 model=model,
                 instructions=instructions,
                 input_items=model_input,
-                previous_response_id=prev_id,
                 run=run,
                 step_id=step.id,
-                rebuild_input=rebuild,
             )
         except LLMError as exc:
             step.status = "error"
@@ -347,9 +310,9 @@ async def _run_loop(
             with contextlib.suppress(ValueError):
                 current_step_id.reset(token)
 
-        state.previous_response_id = result.id or state.previous_response_id
+        state.last_response_id = result.id or state.last_response_id
         state.tool_choice_used = result.tool_choice
-        _apply_cost(run, result)
+        _apply_usage(run, state, result)
         _record_model_call(session, run, step, result)
 
         calls = list(result.function_calls)
@@ -363,28 +326,22 @@ async def _run_loop(
         }
         step.latency_ms = result.latency_ms
 
-        follow_outputs: list[dict[str, Any]] = []
         tool_name: str | None = None
         tool_result: dict[str, Any] | None = None
 
         if not calls:
             state.consecutive_no_tool += 1
-            nudge = {
-                "type": "message",
-                "role": "user",
-                "content": NO_TOOL_NUDGE,
-                "_pending": True,
-            }
-            state.transcript.append(nudge)
+            state.transcript.append({"type": "message", "role": "user", "content": NO_TOOL_NUDGE})
             step.status = "no_tool"
             step.output_summary = NO_TOOL_NUDGE
             step.output = {**(step.output or {}), "nudge": NO_TOOL_NUDGE}
             _save_meta(
                 run,
-                previous_response_id=state.previous_response_id,
+                last_response_id=state.last_response_id,
                 transcript=_clean_transcript(state.transcript),
                 tool_choice=state.tool_choice_used,
                 consecutive_no_tool=state.consecutive_no_tool,
+                total_tokens=state.total_tokens,
                 started_at=state.started_at_iso,
             )
             session.commit()
@@ -397,12 +354,15 @@ async def _run_loop(
                 if print_turns:
                     print(f"turn={sequence} tool=None result=paused status=paused")
                 break
+            if state.total_tokens >= max_tokens:
+                _pause(run, f"token ceiling ({max_tokens})", state)
+                session.commit()
+                break
             continue
 
         state.consecutive_no_tool = 0
         primary, *extras = calls
 
-        # Echo function_call items into transcript for rebuild
         state.transcript.append(_function_call_item(primary))
         for extra in extras:
             state.transcript.append(_function_call_item(extra))
@@ -415,16 +375,11 @@ async def _run_loop(
         finally:
             current_step_id.reset(token)
 
-        # Enrich FakeModel context when present
         note = getattr(client, "note_tool_result", None)
         if callable(note):
             note(tool_result, item_key=args.get("item_key"))
 
-        out_item = _function_call_output(primary.call_id, tool_result)
-        out_item["_pending"] = True
-        follow_outputs.append(out_item)
-        state.transcript.append(out_item)
-
+        state.transcript.append(_function_call_output(primary.call_id, tool_result))
         for extra in extras:
             refused = {
                 "ok": False,
@@ -432,10 +387,7 @@ async def _run_loop(
                 "reason": ONE_TOOL_MSG,
                 "problems": [ONE_TOOL_MSG],
             }
-            extra_out = _function_call_output(extra.call_id, refused)
-            extra_out["_pending"] = True
-            follow_outputs.append(extra_out)
-            state.transcript.append(extra_out)
+            state.transcript.append(_function_call_output(extra.call_id, refused))
 
         step.status = "ok" if tool_result.get("ok") else "refused"
         if tool_result.get("ok"):
@@ -452,13 +404,13 @@ async def _run_loop(
 
         _save_meta(
             run,
-            previous_response_id=state.previous_response_id,
+            last_response_id=state.last_response_id,
             transcript=_clean_transcript(state.transcript),
             tool_choice=state.tool_choice_used,
             consecutive_no_tool=0,
+            total_tokens=state.total_tokens,
             started_at=state.started_at_iso,
         )
-        # Refresh steps relationship for next iteration count
         session.commit()
         session.refresh(run)
 
@@ -474,7 +426,11 @@ async def _run_loop(
         if run.status in TERMINAL_STATUSES:
             break
 
-        # Cost check after the turn
+        if state.total_tokens >= max_tokens:
+            _pause(run, f"token ceiling ({max_tokens})", state)
+            session.commit()
+            break
+
         if float(run.total_cost_usd or 0) >= max_cost:
             _pause(run, f"cost ceiling (${max_cost})", state)
             session.commit()
@@ -489,15 +445,8 @@ def _init_state(run: AgentRun, user_input: str, *, resume: bool) -> LoopState:
     meta = _run_meta(run)
     now_iso = datetime.now(UTC).isoformat()
     if resume:
-        transcript = list(meta.get("transcript") or [])
-        # Ensure pending outputs are re-marked for the next call
-        if transcript and isinstance(transcript[-1], dict):
-            last = transcript[-1]
-            if last.get("type") in {"function_call_output", "message"}:
-                last = {**last, "_pending": True}
-                transcript[-1] = last
+        transcript = _clean_transcript(list(meta.get("transcript") or []))
         started_at = meta.get("started_at") or now_iso
-        # Approximate remaining wall clock from stored start
         try:
             started_dt = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
             elapsed = (datetime.now(UTC) - started_dt).total_seconds()
@@ -507,10 +456,11 @@ def _init_state(run: AgentRun, user_input: str, *, resume: bool) -> LoopState:
             started_at = now_iso
         return LoopState(
             run=run,
-            previous_response_id=meta.get("previous_response_id"),
             transcript=transcript,
             tool_choice_used=meta.get("tool_choice"),
             consecutive_no_tool=int(meta.get("consecutive_no_tool") or 0),
+            total_tokens=int(meta.get("total_tokens") or 0),
+            last_response_id=meta.get("last_response_id"),
             started_monotonic=started_monotonic,
             started_at_iso=str(started_at),
         )
@@ -518,7 +468,6 @@ def _init_state(run: AgentRun, user_input: str, *, resume: bool) -> LoopState:
     transcript = [{"type": "message", "role": "user", "content": user_input}]
     return LoopState(
         run=run,
-        previous_response_id=None,
         transcript=transcript,
         started_monotonic=time.monotonic(),
         started_at_iso=now_iso,

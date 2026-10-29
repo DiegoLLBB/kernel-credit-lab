@@ -242,7 +242,8 @@ async def test_responses_success_records_tokens_cost_and_flags():
     body = json.loads(h.requests[0].content)
     assert body["stream"] is False
     assert body["parallel_tool_calls"] is False
-    assert body["store"] is True
+    assert body["store"] is False
+    assert "previous_response_id" not in body
     assert body["tool_choice"] == "required"
     assert result.id == "resp_1"
     assert result.commentary == "next"

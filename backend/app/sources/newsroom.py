@@ -331,6 +331,7 @@ class NewsroomClient:
             raise NewsroomError("Filing has no url to fetch")
         text = self.fetch_text(filing.url)
         filing.content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        filing.body_text = text
         session.add(filing)
         session.flush()
         return text

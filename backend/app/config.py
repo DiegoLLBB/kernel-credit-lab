@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 120.0
     llm_max_retries: int = 3
     max_run_cost_usd: float = 2.0
+    # Input + output tokens per run (works without MODEL_PRICING_JSON).
+    max_run_tokens: int = 400_000
     # USD per 1M tokens, as JSON: {"model-id": [input_price, output_price]}. Used for cost tracking.
     model_pricing_json: str = "{}"
 

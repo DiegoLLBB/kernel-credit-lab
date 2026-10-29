@@ -150,6 +150,7 @@ class LLMClient:
             k: (float(v[0]), float(v[1]))
             for k, v in json.loads(self.settings.model_pricing_json or "{}").items()
         }
+        self._pricing_warned = False
         # Sticky tool_choice after first accepted /responses call ("required" or "auto").
         self._responses_tool_choice: Any | None = None
 
@@ -176,6 +177,11 @@ class LLMClient:
     def _cost(
         self, model: str, input_tokens: int | None, output_tokens: int | None
     ) -> Decimal | None:
+        if not self._pricing and not self._pricing_warned:
+            logger.warning(
+                "MODEL_PRICING_JSON is empty; cost_usd will be null (token ceiling still applies)"
+            )
+            self._pricing_warned = True
         price = self._pricing.get(model)
         if price is None or input_tokens is None or output_tokens is None:
             return None
@@ -304,10 +310,11 @@ class LLMClient:
         step_id: str | None = None,
         extra_body: dict[str, Any] | None = None,
     ) -> ResponsesResult:
-        """Call Meta ``/responses`` (stream=false, parallel_tool_calls=false, store=true).
+        """Call Meta ``/responses`` (stream=false, parallel_tool_calls=false, store=false).
 
-        Tries ``tool_choice="required"`` first (or a sticky previously accepted value), then
-        falls back to ``"auto"`` if the API rejects it. Records the choice that succeeded.
+        Always send a full transcript as ``input`` (do not rely on ``previous_response_id``;
+        Meta has rejected stored ids mid-run). Tries ``tool_choice="required"`` first (or a
+        sticky previously accepted value), then falls back to ``"auto"`` if rejected.
         """
         base, key = self._endpoint(provider)
         if tool_choice is not None:
@@ -341,15 +348,14 @@ class LLMClient:
                     "input": input,
                     "stream": False,
                     "parallel_tool_calls": False,
-                    "store": True,
+                    "store": False,
                     "tool_choice": choice,
                 }
                 if instructions is not None:
                     body["instructions"] = instructions
                 if tools is not None:
                     body["tools"] = tools
-                if previous_response_id is not None:
-                    body["previous_response_id"] = previous_response_id
+                # previous_response_id is intentionally unused (Meta store/expiry issues).
                 if extra_body:
                     body.update(extra_body)
 

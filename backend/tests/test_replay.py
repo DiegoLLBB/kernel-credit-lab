@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date
 from decimal import Decimal
@@ -160,9 +161,30 @@ def test_tender_results_created_on_june_17_not_before(
     assert filing.title is not None
     assert "Verizon announces expiration and final results" in filing.title
     assert filing.title != "Final results"
+    # Regression: advance_to must store fetched body_text (agent reads this).
+    assert filing.body_text
+    assert "Verizon" in filing.body_text
+    assert len(filing.body_text) > 100
     links = session.scalars(select(EventFiling).where(EventFiling.event_id == event.id)).all()
     assert len(links) == 1
     assert links[0].filing_id == filing.id
+
+
+def test_advance_to_stores_body_text_with_fake_clients(
+    session: Session, verizon: Issuer, clients: ReplayClients
+) -> None:
+    """Filings created by advance_to keep the fetched document text."""
+    load_replay_events(session, REPLAY_JSON)
+    session.commit()
+    advance_to(session, date(2026, 6, 17), clients)
+    session.commit()
+    for key in ("vz_tender_launch", "vz_tender_results"):
+        event = session.scalars(select(Event).where(Event.replay_key == key)).one()
+        filing = session.get(Filing, event.source_filing_id)
+        assert filing is not None
+        assert filing.body_text, f"{key} missing body_text"
+        assert filing.content_hash
+        assert hashlib.sha256(filing.body_text.encode("utf-8")).hexdigest() == filing.content_hash
 
 
 def test_advance_idempotent(session: Session, verizon: Issuer, clients: ReplayClients) -> None:
