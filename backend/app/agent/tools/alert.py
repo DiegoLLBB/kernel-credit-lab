@@ -20,7 +20,6 @@ from app.models import (
     Fact,
     Instrument,
     MetricSnapshot,
-    ReplayExpectation,
     StateChange,
 )
 from app.models.trace import AgentRun
@@ -67,24 +66,13 @@ def _number_supported(
     return any(abs(candidate - value) <= Decimal("1") for candidate in metric_nums | quote_nums)
 
 
-def _available_from(session: Session, event: Any) -> date:
-    exp = session.scalars(
-        select(ReplayExpectation).where(ReplayExpectation.event_id == event.id)
-    ).first()
-    if exp is None and getattr(event, "replay_key", None):
-        exp = session.scalars(
-            select(ReplayExpectation).where(ReplayExpectation.key == event.replay_key)
-        ).first()
-    if exp is not None:
-        return exp.available_from
-    return event.event_date
-
-
 def _missing_debt_flag(
     session: Session, run: AgentRun, event: Any, proposed: list[StateChange]
 ) -> bool:
     """True when an add_instrument change is for debt missing from the bond list."""
-    available = _available_from(session, event)
+    from app.agent.tools.debt import available_from_for_event
+
+    available = available_from_for_event(session, event)
     for change in proposed:
         diff = change.proposed_diff or {}
         if diff.get("action") != "add_instrument":

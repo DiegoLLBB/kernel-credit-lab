@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.agent.audit import audit, bump_refusal, record_tool_call
 from app.models.trace import AgentRun
+
+# Set by the agent loop so ToolCall rows link to the current AgentStep.
+current_step_id: ContextVar[str | None] = ContextVar("agent_current_step_id", default=None)
 
 
 def ok(
@@ -21,7 +25,13 @@ def ok(
     run.turn_count = int(run.turn_count or 0) + 1
     payload = {"ok": True, **result}
     record_tool_call(
-        session, run, tool_name=tool, arguments=arguments, result=payload, status="success"
+        session,
+        run,
+        tool_name=tool,
+        arguments=arguments,
+        result=payload,
+        status="success",
+        step_id=current_step_id.get(),
     )
     audit(session, run, actor="agent", action=f"tool:{tool}", detail={"arguments": arguments})
     session.flush()
@@ -54,6 +64,7 @@ def refuse(
         result=payload,
         status="refused",
         error=reason,
+        step_id=current_step_id.get(),
     )
     audit(
         session,

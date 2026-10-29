@@ -194,3 +194,95 @@ async def test_structured_json_fails_loudly_after_repair():
                 provider=Provider.META, model="spark", messages=[], schema=BondTerms
             )
     assert len(h.requests) == 2
+
+
+def _responses_payload(
+    *,
+    response_id: str = "resp_1",
+    commentary: str = "next",
+    name: str = "list_documents",
+    arguments: str = "{}",
+    input_tokens: int = 100,
+    output_tokens: int = 50,
+) -> dict:
+    return {
+        "id": response_id,
+        "output": [
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "plan"}]},
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": commentary}],
+            },
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": name,
+                "arguments": arguments,
+            },
+        ],
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+    }
+
+
+async def test_responses_success_records_tokens_cost_and_flags():
+    h = Harness([httpx.Response(200, json=_responses_payload())])
+    async with h.client() as client:
+        result = await client.responses(
+            provider=Provider.META,
+            model="spark",
+            input="hello",
+            tools=[{"type": "function", "name": "list_documents"}],
+            instructions="sys",
+            task="event_loop",
+            prompt_version="event_v1",
+            run_id="run-1",
+        )
+    assert str(h.requests[0].url) == "https://meta.test/v1/responses"
+    body = json.loads(h.requests[0].content)
+    assert body["stream"] is False
+    assert body["parallel_tool_calls"] is False
+    assert body["store"] is True
+    assert body["tool_choice"] == "required"
+    assert result.id == "resp_1"
+    assert result.commentary == "next"
+    assert len(result.function_calls) == 1
+    assert result.function_calls[0].name == "list_documents"
+    assert result.tool_choice == "required"
+    rec = h.records[0]
+    assert rec.status == "success" and rec.run_id == "run-1"
+    assert float(rec.cost_usd) == pytest.approx(0.0003)  # 100*1 + 50*4 / 1e6
+
+
+async def test_responses_falls_back_to_auto_tool_choice():
+    h = Harness(
+        [
+            httpx.Response(400, text='{"error":"tool_choice required is not supported"}'),
+            httpx.Response(200, json=_responses_payload()),
+            httpx.Response(200, json=_responses_payload(response_id="resp_2")),
+        ]
+    )
+    async with h.client() as client:
+        result = await client.responses(provider=Provider.META, model="spark", input="hi", tools=[])
+        assert len(h.requests) == 2
+        assert json.loads(h.requests[0].content)["tool_choice"] == "required"
+        assert json.loads(h.requests[1].content)["tool_choice"] == "auto"
+        assert result.tool_choice == "auto"
+        # Sticky: next call uses auto without retrying required
+        result2 = await client.responses(
+            provider=Provider.META, model="spark", input="again", tools=[]
+        )
+        assert json.loads(h.requests[2].content)["tool_choice"] == "auto"
+        assert result2.tool_choice == "auto"
+
+
+async def test_responses_honours_retry_after():
+    h = Harness(
+        [
+            httpx.Response(429, text="slow", headers={"retry-after": "1.5"}),
+            httpx.Response(200, json=_responses_payload()),
+        ]
+    )
+    async with h.client() as client:
+        await client.responses(provider=Provider.META, model="spark", input="x")
+    assert h.sleeps == [1.5]

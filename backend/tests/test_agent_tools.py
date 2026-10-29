@@ -25,6 +25,7 @@ from app.agent.text import html_to_text
 from app.agent.tools import alert as alert_mod
 from app.agent.tools import (
     compute_metrics,
+    get_issuer_debt,
     list_documents,
     propose_change,
     read_document,
@@ -319,6 +320,21 @@ def test_verizon_redemption_produces_alert_and_fy2028_drop(
     ).all()
     assert applied
     assert any(e.actor == "verification" for e in session.scalars(select(AuditEntry)).all())
+
+
+def test_get_issuer_debt_lists_verizon_4329_active(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    event, _filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    result = get_issuer_debt(session, run)
+    assert result["ok"] is True
+    assert result["as_of"] == "2026-08-20"
+    by_key = {row["key"]: row for row in result["instruments"]}
+    note = by_key["vz_4329_2028"]
+    assert note["status"] == "active"
+    assert Decimal(note["amount_outstanding"]) == Decimal("1250000000")
+    assert "FY2028" in (result["maturity_wall"]["buckets"] or {})
 
 
 def test_coverage_score_stored_not_in_feedback(

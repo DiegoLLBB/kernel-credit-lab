@@ -33,9 +33,11 @@ def record_tool_call(
     result: dict[str, Any] | None,
     status: str,
     error: str | None = None,
+    step_id: str | None = None,
 ) -> ToolCall:
     row = ToolCall(
         run_id=run.id,
+        step_id=step_id,
         tool_name=tool_name,
         arguments=arguments,
         result=result,

@@ -83,6 +83,35 @@ class LLMResult:
     raw: dict[str, Any] = field(repr=False, default_factory=dict)
 
 
+@dataclass
+class FunctionCallItem:
+    """One function_call item from a Responses API output list."""
+
+    call_id: str
+    name: str
+    arguments: str
+    raw: dict[str, Any] = field(repr=False, default_factory=dict)
+
+
+@dataclass
+class ResponsesResult:
+    """Parsed Meta / OpenAI Responses API payload (non-streaming)."""
+
+    id: str
+    output: list[dict[str, Any]]
+    function_calls: list[FunctionCallItem]
+    commentary: str
+    tool_choice: Any
+    provider: str
+    model: str
+    input_tokens: int | None
+    output_tokens: int | None
+    latency_ms: int
+    attempts: int
+    cost_usd: Decimal | None
+    raw: dict[str, Any] = field(repr=False, default_factory=dict)
+
+
 Recorder = Callable[[ModelCallRecord], None]
 
 
@@ -121,6 +150,8 @@ class LLMClient:
             k: (float(v[0]), float(v[1]))
             for k, v in json.loads(self.settings.model_pricing_json or "{}").items()
         }
+        # Sticky tool_choice after first accepted /responses call ("required" or "auto").
+        self._responses_tool_choice: Any | None = None
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -256,6 +287,165 @@ class LLMClient:
             record.latency_ms = int((time.perf_counter() - started) * 1000)
             self._recorder(record)
 
+    # ------------------------------------------------------------------ responses API
+    async def responses(
+        self,
+        *,
+        provider: Provider,
+        model: str,
+        input: str | list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        instructions: str | None = None,
+        previous_response_id: str | None = None,
+        tool_choice: Any | None = None,
+        task: str | None = None,
+        prompt_version: str | None = None,
+        run_id: str | None = None,
+        step_id: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ResponsesResult:
+        """Call Meta ``/responses`` (stream=false, parallel_tool_calls=false, store=true).
+
+        Tries ``tool_choice="required"`` first (or a sticky previously accepted value), then
+        falls back to ``"auto"`` if the API rejects it. Records the choice that succeeded.
+        """
+        base, key = self._endpoint(provider)
+        if tool_choice is not None:
+            preferred: Any = tool_choice
+        elif self._responses_tool_choice is not None:
+            preferred = self._responses_tool_choice
+        else:
+            preferred = "required"
+        choices_to_try: list[Any] = [preferred]
+        if preferred != "auto":
+            choices_to_try.append("auto")
+
+        record = ModelCallRecord(
+            provider=str(provider),
+            model=model,
+            status="error",
+            task=task,
+            prompt_version=prompt_version,
+            run_id=run_id,
+            step_id=step_id,
+        )
+        started = time.perf_counter()
+        attempts = 0
+        last_error: str | None = None
+        last_status: int | None = None
+
+        try:
+            for choice_idx, choice in enumerate(choices_to_try):
+                body: dict[str, Any] = {
+                    "model": model,
+                    "input": input,
+                    "stream": False,
+                    "parallel_tool_calls": False,
+                    "store": True,
+                    "tool_choice": choice,
+                }
+                if instructions is not None:
+                    body["instructions"] = instructions
+                if tools is not None:
+                    body["tools"] = tools
+                if previous_response_id is not None:
+                    body["previous_response_id"] = previous_response_id
+                if extra_body:
+                    body.update(extra_body)
+
+                while attempts <= self.settings.llm_max_retries:
+                    attempts += 1
+                    retry_after: float | None = None
+                    try:
+                        resp = await self._http.post(
+                            f"{base}/responses",
+                            json=body,
+                            headers={"Authorization": f"Bearer {key}"},
+                        )
+                    except (httpx.TransportError, httpx.TimeoutException) as exc:
+                        last_error, last_status = f"{type(exc).__name__}: {exc}", None
+                    else:
+                        if resp.status_code < 400:
+                            data = resp.json()
+                            usage = data.get("usage") or {}
+                            latency_ms = int((time.perf_counter() - started) * 1000)
+                            in_tok = usage.get("input_tokens", usage.get("prompt_tokens"))
+                            out_tok = usage.get("output_tokens", usage.get("completion_tokens"))
+                            cost = self._cost(model, in_tok, out_tok)
+                            record.status = "success"
+                            record.input_tokens, record.output_tokens = in_tok, out_tok
+                            record.cost_usd = cost
+                            self._responses_tool_choice = choice
+                            output_items = _responses_output_items(data)
+                            return ResponsesResult(
+                                id=str(data.get("id") or ""),
+                                output=output_items,
+                                function_calls=_responses_function_calls(output_items),
+                                commentary=_responses_commentary(output_items),
+                                tool_choice=choice,
+                                provider=str(provider),
+                                model=model,
+                                input_tokens=in_tok,
+                                output_tokens=out_tok,
+                                latency_ms=latency_ms,
+                                attempts=attempts,
+                                cost_usd=cost,
+                                raw=data,
+                            )
+
+                        last_status = resp.status_code
+                        last_error = f"HTTP {resp.status_code}: {resp.text[:500]}"
+                        # Non-retryable rejection of tool_choice → try next choice.
+                        if (
+                            resp.status_code not in RETRYABLE_STATUS
+                            and choice_idx < len(choices_to_try) - 1
+                            and _looks_like_tool_choice_rejection(resp.text)
+                        ):
+                            logger.warning(
+                                "responses_tool_choice_fallback",
+                                extra={
+                                    "from": choice,
+                                    "to": choices_to_try[choice_idx + 1],
+                                    "error": last_error,
+                                },
+                            )
+                            break  # next tool_choice
+                        if resp.status_code not in RETRYABLE_STATUS:
+                            raise LLMError(last_error, status_code=resp.status_code)
+                        retry_after = _parse_retry_after(resp.headers.get("retry-after"))
+
+                    if attempts > self.settings.llm_max_retries:
+                        raise LLMError(
+                            f"Model call failed after {attempts} attempts: {last_error}",
+                            last_status,
+                        )
+                    delay = retry_after if retry_after is not None else _backoff(attempts)
+                    logger.warning(
+                        "model_call_retry",
+                        extra={
+                            "model": model,
+                            "attempt": attempts,
+                            "delay_s": delay,
+                            "error": last_error,
+                        },
+                    )
+                    await self._sleep(delay)
+                else:
+                    continue
+                # broke out to try next tool_choice — do not count the failed choice as final
+                continue
+
+            raise LLMError(
+                f"Model call failed after {attempts} attempts: {last_error}", last_status
+            )
+        except LLMError as exc:
+            record.error = str(exc)
+            raise
+        finally:
+            record.attempts = attempts
+            record.latency_ms = int((time.perf_counter() - started) * 1000)
+            self._recorder(record)
+
     # ------------------------------------------------------------------ structured output
     async def structured_json(
         self,
@@ -365,3 +555,42 @@ def _parse_retry_after(value: str | None) -> float | None:
         return min(60.0, max(0.0, float(value)))
     except ValueError:
         return None
+
+
+def _responses_output_items(data: dict[str, Any]) -> list[dict[str, Any]]:
+    out = data.get("output")
+    if isinstance(out, list):
+        return [item for item in out if isinstance(item, dict)]
+    return []
+
+
+def _responses_function_calls(items: list[dict[str, Any]]) -> list[FunctionCallItem]:
+    calls: list[FunctionCallItem] = []
+    for item in items:
+        if item.get("type") != "function_call":
+            continue
+        call_id = str(item.get("call_id") or item.get("id") or "")
+        name = str(item.get("name") or "")
+        arguments = item.get("arguments")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments or {})
+        calls.append(FunctionCallItem(call_id=call_id, name=name, arguments=arguments, raw=item))
+    return calls
+
+
+def _responses_commentary(items: list[dict[str, Any]]) -> str:
+    chunks: list[str] = []
+    for item in items:
+        if item.get("type") != "message":
+            continue
+        for part in item.get("content") or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"output_text", "text"} and part.get("text"):
+                chunks.append(str(part["text"]))
+    return "\n".join(chunks)
+
+
+def _looks_like_tool_choice_rejection(body: str) -> bool:
+    lower = body.lower()
+    return "tool_choice" in lower or "tool choice" in lower or "required" in lower
