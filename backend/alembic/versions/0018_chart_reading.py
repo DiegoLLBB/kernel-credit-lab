@@ -7,8 +7,9 @@ Revises: 0017
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0018"
 down_revision: str | None = "0017"
@@ -31,7 +32,11 @@ def upgrade() -> None:
     op.create_table(
         "chart_reading",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("issuer_id", sa.String(length=36), sa.ForeignKey("issuer.id", ondelete="SET NULL")),
+        sa.Column(
+            "issuer_id",
+            sa.String(length=36),
+            sa.ForeignKey("issuer.id", ondelete="SET NULL"),
+        ),
         sa.Column(
             "filing_id",
             sa.String(length=36),

@@ -5,6 +5,7 @@ from PIL import Image
 from app.llm.sam import Region
 from app.tools.charts import (
     BarReading,
+    ChartExtraction,
     assign_bars,
     crop,
     merge_split_charts,
@@ -107,3 +108,61 @@ def test_merge_leaves_real_charts_alone():
     side = [CHART, box(1200, 380, 1800, 735)]  # neighbour chart with several bars
     more = [*BARS, box(1250, 500, 1350, 728), box(1400, 450, 1500, 728)]
     assert len(merge_split_charts(side, more)) == 2
+
+
+def test_verify_uses_only_printed_bars():
+    # Amazon deck shape: five quarters drawn, only the first and last carry a printed value.
+    vals = [180.2, None, None, None, 201.9]
+    drawn = [180.2, 189.0, 175.0, 197.0, 201.9]
+    unit = 1.5
+    bars = [box(100 + i * 150, BASE - v * unit, 200 + i * 150, BASE) for i, v in enumerate(drawn)]
+    status, reason, checks = verify_proportional(readings(vals), bars)
+    assert status == "verified", reason
+    assert [c.reading.value for c in checks] == [180.2, 201.9]
+    wrong = [180.2, None, None, None, 120.9]
+    status, _, _ = verify_proportional(readings(wrong), bars)
+    assert status == "mismatch"
+
+
+def test_one_printed_value_is_not_verifiable():
+    # A lone bar is trivially "proportional" to itself; refuse instead of passing.
+    status, reason, _ = verify_proportional(readings([2.0]), [BARS[0]])
+    assert status == "unverified" and "two printed values" in reason
+    status, _, _ = verify_proportional(readings([1.25, None, None, None]), BARS)
+    assert status == "unverified"
+
+
+def test_printed_zero_without_a_bar_is_dropped():
+    # Duke p24 shape: "0.0%" is printed but no bar is drawn for it.
+    vals = [1.25, 0.0, 1.38, 3.00, 3.35]
+    status, reason, checks = verify_proportional(readings(vals), BARS)
+    assert status == "verified", reason
+    assert len(checks) == 4
+
+
+def test_extraction_printed_keeps_only_cited_pairs():
+    ex = ChartExtraction(
+        title="Net Sales",
+        unit="$B",
+        categories=["Q3 2025", "Q4 2025", "Q3 2026"],
+        values=[180.2, None, 201.9],
+        value_labels=["$180.2", None, "$201.9"],
+    )
+    assert ex.printed() == (["Q3 2025", "Q3 2026"], [180.2, 201.9])
+    assert [r.value for r in ex.to_bar_readings()] == [180.2, None, 201.9]
+
+
+def test_merge_finds_halves_separated_by_another_chart_in_sort_order():
+    # Duke p9 shape: a two-bar chart above, a split two-bar chart below.
+    above = box(1076, 323, 1497, 507)
+    left, right = box(1076, 956, 1239, 1048), box(1335, 820, 1497, 1048)
+    bars = [
+        box(1090, 400, 1220, 505),
+        box(1350, 340, 1480, 505),
+        box(1090, 960, 1230, 1046),
+        box(1345, 830, 1490, 1046),
+    ]
+    merged = merge_split_charts([left, above, right], bars)
+    assert len(merged) == 2
+    lower = [c for c in merged if c.y2 == 1048][0]
+    assert (lower.x1, lower.x2) == (1076, 1497)

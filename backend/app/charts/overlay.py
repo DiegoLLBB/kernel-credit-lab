@@ -50,7 +50,7 @@ def crop_overlay_png(
     chart_box: Region,
     bar_boxes: list[Region],
     *,
-    checks_ok: list[bool] | None = None,
+    checks_ok: list[bool | None] | None = None,
     pad_x: float = 0.12,
     pad_y: float = 0.35,
 ) -> bytes:
@@ -75,7 +75,7 @@ def crop_overlay_png(
 
     for i, bar in enumerate(bar_boxes, 1):
         ok = True if checks_ok is None or i - 1 >= len(checks_ok) else checks_ok[i - 1]
-        color = COLORS["ok" if ok else "bad"]
+        color = COLORS["none" if ok is None else "ok" if ok else "bad"]
         x1 = bar.x1 * sx - left
         y1 = bar.y1 * sy - top
         x2 = bar.x2 * sx - left

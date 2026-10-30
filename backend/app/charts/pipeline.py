@@ -118,7 +118,9 @@ def _persist_chart(
 ) -> ChartReading:
     image = Image.open(io.BytesIO(page_png))
     crop_bytes = crop(image, res.chart_box)
-    checks_ok = [c.ok for c in res.checks] if res.checks else None
+    # One entry per detected bar: True/False if checked, None if it had no printed value.
+    checked = {id(c.box): c.ok for c in res.checks}
+    checks_ok = [checked.get(id(b)) for b in res.bar_boxes] if res.checks else None
     overlay = crop_overlay_png(
         page_png,
         res.chart_box,
@@ -129,8 +131,7 @@ def _persist_chart(
     _ = overlay_png(page_png, [res])
 
     ex = res.extraction
-    categories = list(ex.categories) if ex else []
-    values = [float(v) for v in (ex.values if ex else [])]
+    categories, values = ex.printed() if ex else ([], [])
     if not categories and res.checks:
         categories = [c.reading.category for c in res.checks]
         values = [float(c.reading.value) for c in res.checks]

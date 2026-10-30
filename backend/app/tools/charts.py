@@ -24,25 +24,25 @@ from app.llm.sam import Region, image_data_url, segment_image
 
 CHART_PROMPT = "bar chart"
 BAR_PROMPT = "bar"
-PROMPT_VERSION = "chart_reader_v1"
+PROMPT_VERSION = "chart_reader_v2"
 
 
 # --------------------------------------------------------------------------- schemas
 class BarReading(BaseModel):
     category: str = Field(description="x-axis category under the bar, e.g. 'Q2' or '2027'")
     series: str | None = Field(description="legend series of the bar, e.g. '2025', or null")
-    value: float = Field(description="numeric value printed on or above the bar")
+    value: float | None = Field(description="value printed on or above the bar, or null")
 
 
 class ChartExtraction(BaseModel):
     title: str | None
     unit: str | None = Field(description="unit of the values, e.g. 'USD per share', '$bn'")
     categories: list[str] = Field(
-        description="x-axis categories left to right (one per bar)",
+        description="x-axis label of EVERY bar left to right, including unlabelled bars",
         default_factory=list,
     )
-    values: list[float] = Field(
-        description="numeric values left to right matching categories",
+    values: list[float | None] = Field(
+        description="printed value of each bar, aligned with categories; null if none printed",
         default_factory=list,
     )
     value_labels: list[str | None] = Field(
@@ -54,17 +54,32 @@ class ChartExtraction(BaseModel):
         """Bars left-to-right for geometry check."""
         n = min(len(self.categories), len(self.values))
         return [
-            BarReading(category=self.categories[i], series=None, value=float(self.values[i]))
+            BarReading(
+                category=self.categories[i],
+                series=None,
+                value=None if self.values[i] is None else float(self.values[i]),
+            )
             for i in range(n)
         ]
+
+    def printed(self) -> tuple[list[str], list[float]]:
+        """Only the bars with a printed value: the pairs that can be checked and cited."""
+        pairs = [
+            (c, float(v))
+            for c, v in zip(self.categories, self.values, strict=False)
+            if v is not None
+        ]
+        return [c for c, _ in pairs], [v for _, v in pairs]
 
 
 SYSTEM_PROMPT = (
     "You read bar charts from financial presentations. The FIRST image is a crop containing "
     "exactly one chart; the SECOND image is the full slide for context (titles, legend). "
-    "Read only the chart in the first image. Return title, unit, categories (left to right), "
-    "values (left to right), and value_labels (the text printed on or above each bar, or null). "
-    "Never estimate a value that is not printed; omit bars without a printed value. "
+    "Read only the chart in the first image. Return title, unit, categories (the x-axis label "
+    "of EVERY bar, left to right, one entry per bar), values (aligned with categories: the "
+    "number printed on or above that bar, or null when the bar has no printed number) and "
+    "value_labels (the printed text, or null). Never estimate a value that is not printed; "
+    "use null instead, but keep the bar in the list. "
     "categories and values must have the same length."
 )
 
@@ -137,12 +152,13 @@ def merge_split_charts(
     while changed:
         changed = False
         counts = assign_bars(merged, bars)
-        for i in range(len(merged) - 1):
-            a, b = merged[i], merged[i + 1]
+        pairs = [(i, j) for i in range(len(merged)) for j in range(i + 1, len(merged))]
+        for i, j in pairs:
+            a, b = merged[i], merged[j]
             same_base = abs(a.y2 - b.y2) <= baseline_tol * a.frame_height
-            gap = b.x1 - a.x2
+            gap = max(b.x1 - a.x2, a.x1 - b.x2)
             close = 0 <= gap <= max(a.x2 - a.x1, b.x2 - b.x1)
-            sparse = len(counts[i]) <= 1 and len(counts[i + 1]) <= 1
+            sparse = len(counts[i]) <= 1 and len(counts[j]) <= 1
             if same_base and close and sparse:
                 union = Region(
                     object_id=a.object_id,
@@ -154,7 +170,8 @@ def merge_split_charts(
                     frame_height=a.frame_height,
                     confidence=min(a.confidence or 0, b.confidence or 0) or None,
                 )
-                merged[i : i + 2] = [union]
+                merged = [c for k, c in enumerate(merged) if k not in (i, j)] + [union]
+                merged.sort(key=lambda c: c.x1)
                 changed = True
                 break
     return merged
@@ -175,12 +192,20 @@ def verify_proportional(
     if not readings or not boxes:
         return "unverified", "no bars detected or read", []
     if len(readings) != len(boxes):
-        return (
-            "unverified",
-            f"bar count differs: SAM found {len(boxes)}, Spark read {len(readings)}",
-            [],
-        )
-    if any(r.value <= 0 for r in readings):
+        # A printed 0.0 has no visible bar; drop zeros if that reconciles the counts.
+        nonzero = [r for r in readings if r.value != 0]
+        if len(nonzero) == len(boxes):
+            readings = nonzero
+        else:
+            return (
+                "unverified",
+                f"bar count differs: SAM found {len(boxes)}, Spark read {len(readings)}",
+                [],
+            )
+    pairs = [(r, b) for r, b in zip(readings, boxes, strict=True) if r.value is not None]
+    if len(pairs) < 2:
+        return "unverified", "fewer than two printed values: nothing to compare", []
+    if any(r.value is not None and r.value <= 0 for r, _ in pairs):
         return "unverified", "non-positive values: zero-baseline check does not apply", []
 
     heights = [b.y2 - b.y1 for b in boxes]
@@ -189,9 +214,10 @@ def verify_proportional(
     if max(baselines) - min(baselines) > 0.05 * tallest:
         return "unverified", "bars do not share a baseline (stacked or offset chart)", []
 
-    scale = statistics.median(r.value / h for r, h in zip(readings, heights, strict=True))
+    scale = statistics.median(r.value / (b.y2 - b.y1) for r, b in pairs)
     checks: list[BarCheck] = []
-    for reading, box, height in zip(readings, boxes, heights, strict=True):
+    for reading, box in pairs:
+        height = box.y2 - box.y1
         implied = height * scale
         diff = abs(implied - reading.value)
         allowed = max(tolerance * reading.value, pixel_slack * scale)

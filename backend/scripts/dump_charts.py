@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 
 from sqlalchemy import select
@@ -32,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
             query = query.where(Issuer.key == args.issuer)
         rows = session.execute(query.order_by(Issuer.key, ChartReading.page)).all()
         summary: dict[str, list[dict]] = {}
+        for key in {k for _, k in rows}:
+            shutil.rmtree(out_root / key, ignore_errors=True)  # drop files from earlier runs
         for reading, key in rows:
             out = out_root / key
             out.mkdir(parents=True, exist_ok=True)

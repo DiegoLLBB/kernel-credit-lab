@@ -226,3 +226,21 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     another), so the report lists every run per event. Remaining days go to the SAM chart reader, the
     dashboard, live mode and the submission. Before the final deploy, one fresh full replay with the final
     code gives the number of record.
+
+### SAM chart reader on real decks
+23. **26 of 34 charts verified across five Q2/Q3 2026 decks** (Duke, Intel, Verizon, Boeing, Amazon;
+    `scripts/fetch_decks.py`, `scripts/process_decks.py`, ≈ $0.40 per full pass). SAM 3.1 finds charts
+    and bars, Muse Spark reads the printed values, and bar heights must be proportional to them. Only
+    printed values that passed are stored as citable; the agent's `read_chart` and `record_fact` refuse
+    anything else. The 8 refusals were reviewed: stacked share-count bars (3), guidance ranges such as
+    "1.5% – 2%" (2), a chart where only one bar was found (1) and regions with no printed bar values (2).
+24. **Fixes from reviewing real overlays** (`scripts/dump_charts.py` exports crop, overlay and readings
+    per issuer): SAM sometimes boxes each bar of a sparse chart as its own chart, so neighbouring
+    single-bar boxes on one baseline are joined; a short bar cannot be measured to 8%, so 2 px of bar
+    height is also allowed (a misread label still fails); Amazon prints only the first and last values,
+    so Spark returns every bar with null for unlabelled ones (prompt `chart_reader_v2`) and only printed
+    bars are checked; a printed 0.0% with no bar is dropped before matching. **Two false passes found
+    and closed:** a single bar is trivially proportional to itself, so verification now needs at least
+    two printed values; and the v1 prompt let Spark turn a printed range into its midpoint (1.75 for
+    "1.5% – 2%"), a number that appears nowhere on the slide. First pass: 15 of 32 verified, three of
+    them falsely; final: 26 of 34, none of them single-bar.
