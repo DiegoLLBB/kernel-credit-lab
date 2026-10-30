@@ -159,6 +159,7 @@ class EvalReport:
     end_state: list[EndStateResult] = field(default_factory=list)
     coverage: list[dict[str, Any]] = field(default_factory=list)
     per_event: list[EventCostRow] = field(default_factory=list)
+    variance: list[dict[str, Any]] = field(default_factory=list)
     totals: dict[str, Any] = field(default_factory=dict)
     incomplete: bool = False
     error: str | None = None
@@ -172,6 +173,7 @@ class EvalReport:
             "end_state": [e.to_dict() for e in self.end_state],
             "coverage": self.coverage,
             "per_event": [r.to_dict() for r in self.per_event],
+            "variance": self.variance,
             "totals": self.totals,
         }
 
@@ -497,6 +499,47 @@ def _latest_run_for_event(session: Session, event: Event) -> AgentRun | None:
     ).first()
 
 
+def _visible_runs_for_event(session: Session, event: Event) -> list[AgentRun]:
+    """Non-superseded / non-abandoned runs for ``event``, oldest first."""
+    return list(
+        session.scalars(
+            select(AgentRun)
+            .where(
+                AgentRun.event_id == event.id,
+                AgentRun.status.not_in(sorted(HIDDEN_RUN_STATUSES)),
+            )
+            .order_by(AgentRun.created_at.asc())
+        ).all()
+    )
+
+
+def _score_alert_outcome(
+    report: EvalReport,
+    *,
+    expected_alert: bool,
+    alerted: bool | None,
+    failed: bool,
+) -> None:
+    if failed:
+        if expected_alert:
+            report.alert.failed_expected_alert += 1
+        else:
+            report.alert.failed_expected_no_alert += 1
+    elif alerted is None:
+        if expected_alert:
+            report.alert.incomplete_expected_alert += 1
+        else:
+            report.alert.incomplete_expected_no_alert += 1
+    elif expected_alert and alerted:
+        report.alert.true_positive += 1
+    elif expected_alert and not alerted:
+        report.alert.false_negative += 1
+    elif not expected_alert and alerted:
+        report.alert.false_positive += 1
+    else:
+        report.alert.true_negative += 1
+
+
 def evaluate_replay(
     session: Session,
     *,
@@ -510,8 +553,13 @@ def evaluate_replay(
 
     Skipped ``--only`` events (still pending / logged as skipped) are excluded.
     When ``prefer_latest_run`` is True (``--eval-latest``), each expectation uses the
-    latest non-superseded AgentRun for its linked event — the merged-event outcome
-    counts once for every linked expectation.
+    latest non-superseded AgentRun for its linked event.
+
+    Merged filing events (several expectations → one Event): alert confusion counts
+    once per event. ``expected_alert`` is true if *any* linked expectation expects an
+    alert, so a sibling ``log`` expectation is not scored as a false positive when the
+    event alerted. Cost/tokens are attributed once per event. ``totals.events`` is the
+    expectation count (not calendar/rate extras).
     """
     report = EvalReport()
     if log:
@@ -523,6 +571,11 @@ def evaluate_replay(
     expectations = session.scalars(
         select(ReplayExpectation).order_by(ReplayExpectation.available_from, ReplayExpectation.key)
     ).all()
+
+    siblings_by_event: dict[str, list[ReplayExpectation]] = {}
+    for exp in expectations:
+        if exp.event_id:
+            siblings_by_event.setdefault(exp.event_id, []).append(exp)
 
     log_by_key: dict[str, dict[str, Any]] = {}
     skipped_keys: set[str] = set()
@@ -547,6 +600,15 @@ def evaluate_replay(
                 if event.replay_key in skipped_keys:
                     skipped_keys.add(exp.key)
 
+    scored_alert_groups: set[str] = set()
+    cost_groups: set[str] = set()
+    variance_events: set[str] = set()
+    scored_event_ids: set[str] = set()
+    expectation_rows = 0
+    total_cost = 0.0
+    total_tokens = 0
+    total_turns = 0
+
     for exp in expectations:
         if only_keys is not None and exp.key not in only_keys:
             continue
@@ -568,7 +630,16 @@ def evaluate_replay(
                 run = session.get(AgentRun, event.run_id)
 
         alerted = _event_alerted_material(session, event, run) if event else None
-        expected_alert = bool(exp.expected_alert)
+        own_expected_alert = bool(exp.expected_alert)
+        if exp.event_id and exp.event_id in siblings_by_event:
+            group_expected_alert = any(
+                bool(s.expected_alert) for s in siblings_by_event[exp.event_id]
+            )
+            score_key = f"event:{exp.event_id}"
+        else:
+            group_expected_alert = own_expected_alert
+            score_key = f"key:{exp.key}"
+
         failed = _event_failed(event, run, log_row)
         status = (
             (run.status if run else None)
@@ -577,34 +648,57 @@ def evaluate_replay(
             or "missing"
         )
         got = _got_label(alerted, status)
-        # Miss = wrong terminal alert decision (not incomplete/failed).
-        miss = alerted is not None and (alerted != expected_alert)
-
-        if failed:
-            if expected_alert:
-                report.alert.failed_expected_alert += 1
-            else:
-                report.alert.failed_expected_no_alert += 1
-        elif alerted is None:
-            if expected_alert:
-                report.alert.incomplete_expected_alert += 1
-            else:
-                report.alert.incomplete_expected_no_alert += 1
-        elif expected_alert and alerted:
-            report.alert.true_positive += 1
-        elif expected_alert and not alerted:
-            report.alert.false_negative += 1
-        elif not expected_alert and alerted:
-            report.alert.false_positive += 1
+        # Sibling log of an expected-alert merge is not a miss when the event alerted.
+        if alerted is not None and (not own_expected_alert and group_expected_alert and alerted):
+            miss = False
         else:
-            report.alert.true_negative += 1
+            miss = alerted is not None and (alerted != own_expected_alert)
+
+        if score_key not in scored_alert_groups:
+            scored_alert_groups.add(score_key)
+            _score_alert_outcome(
+                report,
+                expected_alert=group_expected_alert,
+                alerted=alerted,
+                failed=failed,
+            )
 
         if event is not None:
+            scored_event_ids.add(event.id)
             applied = _applied_changes_for_event(session, event)
             for change in exp.expected_changes or []:
                 if not isinstance(change, dict):
                     continue
                 report.changes.append(_match_change(session, exp.key, change, applied))
+
+            if event.id not in variance_events:
+                variance_events.add(event.id)
+                runs = _visible_runs_for_event(session, event)
+                if len(runs) > 1:
+                    report.variance.append(
+                        {
+                            "event_id": event.id,
+                            "replay_key": event.replay_key,
+                            "expectation_keys": [
+                                s.key for s in siblings_by_event.get(event.id, [exp])
+                            ],
+                            "runs": [
+                                {
+                                    "run_id": r.id,
+                                    "status": r.status,
+                                    "created_at": (
+                                        r.created_at.isoformat() if r.created_at else None
+                                    ),
+                                    "material": (r.result or {}).get("material"),
+                                    "got": _got_label(
+                                        _event_alerted_material(session, event, r),
+                                        r.status,
+                                    ),
+                                }
+                                for r in runs
+                            ],
+                        }
+                    )
 
         coverage = _coverage_score_value(run.coverage_score if run else None)
         report.coverage.append(
@@ -628,6 +722,17 @@ def evaluate_replay(
             tokens = int(log_row.get("tokens") or 0)
             turns = int(log_row.get("turns") or 0)
 
+        # Attribute cost once per merged event (first expectation in iteration order).
+        if score_key not in cost_groups:
+            cost_groups.add(score_key)
+            total_cost += cost
+            total_tokens += tokens
+            total_turns += turns
+            row_cost, row_tokens, row_turns = cost, tokens, turns
+        else:
+            row_cost, row_tokens, row_turns = 0.0, 0, 0
+
+        expectation_rows += 1
         report.per_event.append(
             EventCostRow(
                 replay_key=exp.key,
@@ -635,11 +740,11 @@ def evaluate_replay(
                     event.event_date.isoformat() if event else exp.available_from.isoformat()
                 ),
                 status=status,
-                cost_usd=cost,
-                tokens=tokens,
-                turns=turns,
+                cost_usd=row_cost,
+                tokens=row_tokens,
+                turns=row_turns,
                 coverage_score=coverage,
-                expected_alert=expected_alert,
+                expected_alert=own_expected_alert,
                 got=got,
                 miss=miss,
                 last_tool=_last_tool_call(session, run) if miss else None,
@@ -647,18 +752,21 @@ def evaluate_replay(
         )
 
     # Calendar / rate events — include when not skipped and (no only filter).
+    # Cost rows only; never scored as alerts; excluded from totals.events.
+    # Skip events already covered by a ReplayExpectation (incl. merged filing: keys).
     if only_keys is None:
         seen = {r.replay_key for r in report.per_event}
         extra_events = session.scalars(
             select(Event).where(Event.replay_key.is_not(None)).order_by(Event.event_date)
         ).all()
         for event in extra_events:
+            if event.id in scored_event_ids:
+                continue
             if event.replay_key in seen or event.replay_key in skipped_keys:
                 continue
             rk = str(event.replay_key or "")
             if rk.startswith("rate_update:") and event.status != "processed":
                 continue
-            # Calendar maturity / rate_update: cost rows only — never scored as alerts.
             run = session.get(AgentRun, event.run_id) if event.run_id else None
             tokens = 0
             cost = 0.0
@@ -674,6 +782,9 @@ def evaluate_replay(
                     select(ModelCall).where(ModelCall.run_id == run.id)
                 ).all():
                     tokens += int(mc.input_tokens or 0) + int(mc.output_tokens or 0)
+            total_cost += cost
+            total_tokens += tokens
+            total_turns += turns
             report.per_event.append(
                 EventCostRow(
                     replay_key=event.replay_key,
@@ -705,10 +816,10 @@ def evaluate_replay(
                 report.end_state.append(_eval_end_state_check(session, as_of, source, str(check)))
 
     report.totals = {
-        "events": len(report.per_event),
-        "cost_usd": sum(r.cost_usd for r in report.per_event),
-        "tokens": sum(r.tokens for r in report.per_event),
-        "turns": sum(r.turns for r in report.per_event),
+        "events": expectation_rows,
+        "cost_usd": total_cost,
+        "tokens": total_tokens,
+        "turns": total_turns,
         "changes_matched": sum(1 for c in report.changes if c.matched),
         "changes_total": len(report.changes),
         "end_state_passed": sum(1 for e in report.end_state if e.passed),
@@ -840,12 +951,34 @@ def render_eval_markdown(report: EvalReport) -> str:
             lines.append(f"| {c.get('key')} | {score_s} | {c.get('status')} |")
         lines.append("")
 
+    lines.extend(["## Variance", ""])
+    if not report.variance:
+        lines.append("_No events with multiple non-superseded runs._")
+        lines.append("")
+    else:
+        lines.append(
+            "Events with more than one non-superseded / non-abandoned run "
+            "(latest is used for scoring):"
+        )
+        lines.append("")
+        for row in report.variance:
+            keys = ", ".join(row.get("expectation_keys") or []) or "—"
+            lines.append(
+                f"**{row.get('replay_key') or row.get('event_id')}** (expectations: {keys})"
+            )
+            for run in row.get("runs") or []:
+                lines.append(
+                    f"- `{run.get('run_id')}` — {run.get('got') or run.get('status')} "
+                    f"({run.get('created_at') or '—'})"
+                )
+            lines.append("")
+
     t = report.totals
     lines.extend(
         [
             "## Cost, tokens, turns",
             "",
-            f"- Events: {t.get('events', 0)}",
+            f"- Expectations: {t.get('events', 0)}",
             f"- Total cost (USD): {t.get('cost_usd', 0):.6f}",
             f"- Total tokens: {t.get('tokens', 0)}",
             f"- Total turns: {t.get('turns', 0)}",

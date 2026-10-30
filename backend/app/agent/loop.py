@@ -35,13 +35,13 @@ logger = logging.getLogger(__name__)
 TERMINAL_STATUSES = frozenset({"alerted", "logged", "needs_input"})
 NO_TOOL_NUDGE = "reply with exactly one tool call"
 ONE_TOOL_MSG = "one tool per turn"
-DEFAULT_MAX_TURNS = 30
-PERIODIC_MAX_TURNS = 40
+DEFAULT_MAX_TURNS = 40
+PERIODIC_MAX_TURNS = 50
 DEFAULT_WALL_SECONDS = 600.0
 MAX_CONSECUTIVE_NO_TOOL = 3
 # Defaults mirrored from Settings (tests / callers may override via RunLimits).
-MAX_RUN_TOKENS = 400_000
-MAX_RUN_TOKENS_LONG = 900_000
+MAX_RUN_TOKENS = 600_000
+MAX_RUN_TOKENS_LONG = 1_200_000
 # Agent-visible event types that get the higher turn / token budget (long 10-Q / 10-K bodies).
 PERIODIC_EVENT_TYPES = frozenset(
     {
@@ -116,7 +116,7 @@ def _uses_long_limits(session: Session | None, event: Event | None) -> bool:
 
 
 def max_turns_for_event(event: Event | None, session: Session | None = None) -> int:
-    """40 turns for periodic filings or any attached doc >20 pages; 30 otherwise."""
+    """50 turns for periodic filings or any attached doc >20 pages; 40 otherwise."""
     if _uses_long_limits(session, event):
         return PERIODIC_MAX_TURNS
     return DEFAULT_MAX_TURNS

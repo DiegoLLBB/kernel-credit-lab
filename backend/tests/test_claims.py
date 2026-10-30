@@ -108,11 +108,80 @@ def test_claims_prompt_is_v2() -> None:
     assert "Waterfall Notes" in text
     assert "names and defined terms" in text.lower()
     assert "undrawn" in text.lower()
+    assert "trusted_facts" in text
+    assert "event_date" in text
+    assert "Aug 28 2026" in text
     # v1 kept on disk
     v1 = (Path(__file__).resolve().parents[1] / "app/agent/prompts/claims_v1.md").read_text()
     assert "claims_v1" in v1
     assert "add a fact, number, date or certainty" not in v1
     assert "Waterfall Notes" not in v1
+
+
+@pytest.mark.asyncio
+async def test_claims_payload_includes_event_trusted_facts(session: Session) -> None:
+    from datetime import date
+
+    from app.models import Event, EventFiling, Filing, Issuer
+
+    issuer = Issuer(key="ba", name="The Boeing Company", ticker="BA")
+    session.add(issuer)
+    session.flush()
+    filing = Filing(
+        issuer_id=issuer.id,
+        form_type="8-K",
+        url="https://example.com/ba-8k",
+        title="Boeing Current Report",
+        filed_at=date(2026, 8, 28),
+        body_text="Boeing filed an 8-K.",
+    )
+    session.add(filing)
+    session.flush()
+    event = Event(
+        event_type="8-K",
+        issuer_id=issuer.id,
+        event_date=date(2026, 8, 28),
+        source_filing_id=filing.id,
+        status="processing",
+    )
+    session.add(event)
+    session.flush()
+    session.add(EventFiling(event_id=event.id, filing_id=filing.id))
+    run = AgentRun(
+        question="claims metadata",
+        workflow="event_monitor",
+        mode="standard",
+        status="running",
+        state="AGENT",
+        event_id=event.id,
+        metrics_outputs=[],
+    )
+    session.add(run)
+    session.flush()
+
+    fact = SimpleNamespace(id="fact-ba", exact_quote="no borrowings outstanding")
+    client = FakeClaimsClient([_supported_script()])
+    result = await claims_check(
+        session,
+        run,
+        "Boeing reported on Aug 28 2026.",
+        [
+            {
+                "item_key": "instrument",
+                "statement": "Boeing reported on Aug 28 2026.",
+                "citations": [fact.id],
+            }
+        ],
+        client=client,
+        facts_by_id={fact.id: fact},  # type: ignore[dict-item]
+    )
+    assert result.status == "pass"
+    body = client.requests[-1]["messages"][-1]["content"]
+    assert "trusted_facts" in body
+    assert "The Boeing Company" in body
+    assert "2026-08-28" in body
+    assert "Boeing Current Report" in body
+    assert "8-K" in body
 
 
 def _supported_script() -> dict:

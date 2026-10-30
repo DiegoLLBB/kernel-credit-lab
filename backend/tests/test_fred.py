@@ -145,6 +145,31 @@ def test_latest_on_or_before_skips_missing_dot(fred: FredClient) -> None:
     assert got == (date(2026, 1, 16), Decimal("3.82"))
 
 
+def test_load_rates_idempotent(fred: FredClient, session: Session) -> None:
+    from scripts.load_rates import load_rates
+
+    # Fixture transport only covers DGS5 + DEXUSEU.
+    first = load_rates(
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+        series=("DGS5", "DEXUSEU"),
+        client=fred,
+        session=session,
+    )
+    assert first["DGS5"] >= 1
+    assert first["DEXUSEU"] >= 1
+    n1 = session.scalar(select(func.count()).select_from(RateObservation))
+    second = load_rates(
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+        series=("DGS5", "DEXUSEU"),
+        client=fred,
+        session=session,
+    )
+    assert second == first
+    assert session.scalar(select(func.count()).select_from(RateObservation)) == n1
+
+
 def test_upsert_observations_idempotent(fred: FredClient, session: Session) -> None:
     rows = fred.series_observations("DGS5", date(2026, 6, 15), date(2026, 6, 15))
     first = fred.upsert_observations(session, "DGS5", rows)

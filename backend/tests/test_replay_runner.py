@@ -835,3 +835,138 @@ async def test_runner_isolates_event_failure_and_continues(
     assert report.alert.true_negative == 1
     assert report.alert.incomplete_expected_alert == 0
     assert report.alert.incomplete_expected_no_alert == 0
+
+
+def test_merged_event_alert_scores_once_and_variance_note(session: Session) -> None:
+    """Merged alert+log siblings → one TP; multi-run events appear under variance."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.eval.replay_eval import render_eval_markdown
+    from app.models import ReplayExpectation
+
+    issuer = Issuer(key="duke_corp", name="Duke Energy Corporation", ticker="DUK")
+    session.add(issuer)
+    session.flush()
+    event = Event(
+        replay_key="filing:duke-q1-merged",
+        event_type="10-Q",
+        issuer_id=issuer.id,
+        event_date=date(2026, 5, 5),
+        status="processed",
+    )
+    session.add(event)
+    session.flush()
+    exp_alert = ReplayExpectation(
+        key="dec_term_loan",
+        issuer_key="duke_carolinas",
+        event_type="new_debt_found",
+        event_date=date(2026, 3, 13),
+        available_from=date(2026, 5, 5),
+        title="Carolinas TL",
+        sources=[],
+        expected_changes=[],
+        expected_alert=True,
+        event_id=event.id,
+    )
+    exp_log = ReplayExpectation(
+        key="duk_parent_tl_repaid",
+        issuer_key="duke_corp",
+        event_type="debt_repaid",
+        event_date=date(2026, 3, 31),
+        available_from=date(2026, 5, 5),
+        title="Parent TL repaid",
+        sources=[],
+        expected_changes=[],
+        expected_alert=False,
+        event_id=event.id,
+    )
+    session.add_all([exp_alert, exp_log])
+    session.flush()
+
+    older = AgentRun(
+        question="first",
+        workflow="event_monitor",
+        mode="standard",
+        status="logged",
+        state="DONE",
+        event_id=event.id,
+        result={"material": False},
+    )
+    newer = AgentRun(
+        question="second",
+        workflow="event_monitor",
+        mode="standard",
+        status="alerted",
+        state="DONE",
+        event_id=event.id,
+        result={"material": True},
+        total_cost_usd=Decimal("1.25"),
+        turn_count=12,
+    )
+    session.add_all([older, newer])
+    session.flush()
+    # Distinct created_at so variance ordering is stable.
+    older.created_at = datetime(2026, 5, 5, 10, 0, tzinfo=UTC)
+    newer.created_at = datetime(2026, 5, 5, 12, 0, tzinfo=UTC)
+    event.run_id = newer.id
+    session.flush()
+
+    report = evaluate_replay(session, prefer_latest_run=True)
+    assert report.alert.true_positive == 1
+    assert report.alert.false_positive == 0
+    assert report.alert.true_negative == 0
+    assert report.alert.false_negative == 0
+    assert report.totals["events"] == 2
+    # Cost attributed once for the merged event.
+    assert report.totals["cost_usd"] == pytest.approx(1.25)
+    by_key = {r.replay_key: r for r in report.per_event}
+    assert by_key["dec_term_loan"].miss is False
+    assert by_key["duk_parent_tl_repaid"].miss is False
+    assert by_key["duk_parent_tl_repaid"].got == "alerted"
+    assert len(report.variance) == 1
+    assert {r["status"] for r in report.variance[0]["runs"]} == {"logged", "alerted"}
+    md = render_eval_markdown(report)
+    assert "## Variance" in md
+    assert "filing:duke-q1-merged" in md
+
+    # Without a sibling alert expectation, an unexpected alert is still an FP.
+    solo_event = Event(
+        replay_key="solo-log",
+        event_type="8-K",
+        issuer_id=issuer.id,
+        event_date=date(2026, 6, 1),
+        status="processed",
+    )
+    session.add(solo_event)
+    session.flush()
+    solo_exp = ReplayExpectation(
+        key="solo_log_only",
+        issuer_key="duke_corp",
+        event_type="other",
+        event_date=date(2026, 6, 1),
+        available_from=date(2026, 6, 1),
+        title="Should log",
+        sources=[],
+        expected_changes=[],
+        expected_alert=False,
+        event_id=solo_event.id,
+    )
+    solo_run = AgentRun(
+        question="solo",
+        workflow="event_monitor",
+        mode="standard",
+        status="alerted",
+        state="DONE",
+        event_id=solo_event.id,
+        result={"material": True},
+        created_at=datetime.now(UTC) + timedelta(seconds=1),
+    )
+    session.add_all([solo_exp, solo_run])
+    session.flush()
+    solo_event.run_id = solo_run.id
+    session.flush()
+
+    report2 = evaluate_replay(session, prefer_latest_run=True)
+    assert report2.alert.true_positive == 1
+    assert report2.alert.false_positive == 1
+    assert report2.totals["events"] == 3

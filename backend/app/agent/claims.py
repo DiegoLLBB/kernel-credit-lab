@@ -12,13 +12,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.normalize import extract_numbers
 from app.config import get_settings
 from app.llm.client import LLMClient, LLMError, Provider, StructuredOutputError
 from app.llm.recorder import db_recorder
-from app.models import Fact
+from app.models import Event, EventFiling, Fact, Filing, Issuer
 from app.models.trace import AgentRun
 
 logger = logging.getLogger(__name__)
@@ -121,12 +122,53 @@ def _metric_number_strings(metrics_outputs: list[Any] | None) -> list[str]:
     return [str(n) for n in sorted(found, key=lambda d: (abs(d), str(d)))]
 
 
+def event_trusted_facts(session: Session, event: Event | None) -> dict[str, Any]:
+    """Issuer name, document titles/forms, and filing/event dates for the claims check."""
+    if event is None:
+        return {}
+    issuer_name: str | None = None
+    if event.issuer_id:
+        issuer = session.get(Issuer, event.issuer_id)
+        if issuer is not None:
+            issuer_name = issuer.name
+    documents: list[dict[str, Any]] = []
+    seen_filing_ids: set[str] = set()
+    filing_ids: list[str] = []
+    if event.source_filing_id:
+        filing_ids.append(event.source_filing_id)
+    links = session.scalars(select(EventFiling).where(EventFiling.event_id == event.id)).all()
+    for link in links:
+        if link.filing_id not in filing_ids:
+            filing_ids.append(link.filing_id)
+    for fid in filing_ids:
+        if fid in seen_filing_ids:
+            continue
+        seen_filing_ids.add(fid)
+        filing = session.get(Filing, fid)
+        if filing is None:
+            continue
+        documents.append(
+            {
+                "title": filing.title,
+                "form_type": filing.form_type,
+                "filed_at": filing.filed_at.isoformat() if filing.filed_at else None,
+            }
+        )
+    return {
+        "issuer_name": issuer_name,
+        "event_date": event.event_date.isoformat() if event.event_date else None,
+        "event_type": event.event_type,
+        "documents": documents,
+    }
+
+
 def _build_payload(
     *,
     summary: str,
     findings: Sequence[dict[str, Any]],
     facts_by_id: dict[str, Fact],
     metrics_outputs: list[Any] | None,
+    trusted_facts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metric_numbers = _metric_number_strings(metrics_outputs)
     finding_payloads: list[dict[str, Any]] = []
@@ -154,7 +196,7 @@ def _build_payload(
                 "metric_numbers": cited_metrics or metric_numbers,
             }
         )
-    return {
+    payload: dict[str, Any] = {
         "summary": {
             "text": summary,
             "quotes": all_quotes,
@@ -163,6 +205,9 @@ def _build_payload(
         "metric_numbers": metric_numbers,
         "findings": finding_payloads,
     }
+    if trusted_facts:
+        payload["trusted_facts"] = trusted_facts
+    return payload
 
 
 def _provider_model_attempts(settings: Any) -> list[tuple[Provider, str]]:
@@ -215,11 +260,16 @@ async def claims_check(
     *,
     client: Any | None = None,
     facts_by_id: dict[str, Fact] | None = None,
+    trusted_facts: dict[str, Any] | None = None,
 ) -> ClaimsResult:
     """Await the independent claims check on the caller's event loop; fail closed."""
-    del session  # ModelCall persistence uses db_recorder's own session
     if facts_by_id is None:
         facts_by_id = {}
+    if trusted_facts is None:
+        event: Event | None = None
+        if run.event_id:
+            event = session.get(Event, run.event_id)
+        trusted_facts = event_trusted_facts(session, event)
 
     local = client if client is not None else _claims_client_override.get()
     close = False
@@ -233,6 +283,7 @@ async def claims_check(
         findings=findings,
         facts_by_id=facts_by_id,
         metrics_outputs=list(run.metrics_outputs or []),
+        trusted_facts=trusted_facts or None,
     )
     system = load_claims_prompt()
     messages = [
