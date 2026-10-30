@@ -33,3 +33,6 @@ replay_runs/
 # Local test images (smoke tests)
 backend/*.png
 replay_errors.log
+
+# Captured API responses used while building the dashboard
+web/lib/__fixtures__/
