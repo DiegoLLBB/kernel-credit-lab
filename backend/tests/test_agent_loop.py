@@ -134,6 +134,22 @@ def test_assemble_user_input_excludes_expectation_text(
     assert payload["watchlist"]["on_watchlist"] is True
 
 
+def test_checklists_include_credit_facility_and_equity_issuance() -> None:
+    from app.agent.checklists import COUNTER_EVIDENCE, EVENT_KINDS, missing_required, required_keys
+
+    assert "credit_facility" in EVENT_KINDS
+    assert "equity_issuance" in EVENT_KINDS
+    assert required_keys("credit_facility") == frozenset(
+        {"facility", "size", "maturity", "drawn_amount", COUNTER_EVIDENCE}
+    )
+    assert required_keys("equity_issuance") == frozenset(
+        {"security", "size", "use_of_proceeds", COUNTER_EVIDENCE}
+    )
+    assert missing_required("credit_facility", {"facility", "size"}) == sorted(
+        {"maturity", "drawn_amount", COUNTER_EVIDENCE}
+    )
+
+
 def test_event_v9_prompt_inserts_available_from(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
@@ -165,11 +181,18 @@ def test_event_v9_prompt_inserts_available_from(
     assert "turns_left" in text and "tokens_left" in text
     assert "New debt maturing after 2029" in text
     assert "logged, not alerted" in text
+    assert "Event kinds for `set_checklist`" in text
+    assert "credit_facility" in text
+    assert "equity_issuance" in text
+    assert "drawn_amount" in text
+    assert "use_of_proceeds" in text
+    assert "revolver / facility renewals" in text
     # Prior versions kept on disk
     v8 = load_event_prompt(version="event_v8", today=as_of)
     assert "Stop investigating once every checklist item has a fact" not in v8
     assert "bridge facilities" in v8
     assert "New debt maturing after 2029" not in v8
+    assert "credit_facility" not in v8
 
 
 def test_attach_run_budget_warns_below_quarter() -> None:

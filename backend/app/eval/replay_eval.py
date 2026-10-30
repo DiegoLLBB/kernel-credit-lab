@@ -751,55 +751,28 @@ def evaluate_replay(
             )
         )
 
-    # Calendar / rate events — include when not skipped and (no only filter).
-    # Cost rows only; never scored as alerts; excluded from totals.events.
-    # Skip events already covered by a ReplayExpectation (incl. merged filing: keys).
+    # Calendar / rate events contribute cost only — never rows in per_event and never
+    # alert scores. Skip events already covered by a ReplayExpectation.
     if only_keys is None:
-        seen = {r.replay_key for r in report.per_event}
+        seen_keys = {r.replay_key for r in report.per_event}
         extra_events = session.scalars(
             select(Event).where(Event.replay_key.is_not(None)).order_by(Event.event_date)
         ).all()
         for event in extra_events:
             if event.id in scored_event_ids:
                 continue
-            if event.replay_key in seen or event.replay_key in skipped_keys:
+            if event.replay_key in seen_keys or event.replay_key in skipped_keys:
                 continue
             rk = str(event.replay_key or "")
             if rk.startswith("rate_update:") and event.status != "processed":
                 continue
             run = session.get(AgentRun, event.run_id) if event.run_id else None
-            tokens = 0
-            cost = 0.0
-            turns = 0
-            status = event.status
-            coverage = None
-            if run is not None:
-                status = run.status
-                cost = float(run.total_cost_usd or 0)
-                turns = int(run.turn_count or 0)
-                coverage = _coverage_score_value(run.coverage_score)
-                for mc in session.scalars(
-                    select(ModelCall).where(ModelCall.run_id == run.id)
-                ).all():
-                    tokens += int(mc.input_tokens or 0) + int(mc.output_tokens or 0)
-            total_cost += cost
-            total_tokens += tokens
-            total_turns += turns
-            report.per_event.append(
-                EventCostRow(
-                    replay_key=event.replay_key,
-                    event_date=event.event_date.isoformat(),
-                    status=status,
-                    cost_usd=cost,
-                    tokens=tokens,
-                    turns=turns,
-                    coverage_score=coverage,
-                    expected_alert=None,
-                    got=status,
-                    miss=False,
-                    last_tool=None,
-                )
-            )
+            if run is None:
+                continue
+            total_cost += float(run.total_cost_usd or 0)
+            total_turns += int(run.turn_count or 0)
+            for mc in session.scalars(select(ModelCall).where(ModelCall.run_id == run.id)).all():
+                total_tokens += int(mc.input_tokens or 0) + int(mc.output_tokens or 0)
 
     # End-state checks only on a full (non --only) evaluation.
     if only_keys is None:
@@ -816,6 +789,8 @@ def evaluate_replay(
                 report.end_state.append(_eval_end_state_check(session, as_of, source, str(check)))
 
     report.totals = {
+        # Always the replay-expectation count (e.g. 29), never calendar/rate extras.
+        "expectations": expectation_rows,
         "events": expectation_rows,
         "cost_usd": total_cost,
         "tokens": total_tokens,
@@ -978,7 +953,7 @@ def render_eval_markdown(report: EvalReport) -> str:
         [
             "## Cost, tokens, turns",
             "",
-            f"- Expectations: {t.get('events', 0)}",
+            f"- Expectations: {t.get('expectations', t.get('events', 0))}",
             f"- Total cost (USD): {t.get('cost_usd', 0):.6f}",
             f"- Total tokens: {t.get('tokens', 0)}",
             f"- Total turns: {t.get('turns', 0)}",
@@ -988,6 +963,7 @@ def render_eval_markdown(report: EvalReport) -> str:
         ]
     )
     for r in report.per_event:
+        # per_event holds replay expectations only (no calendar/rate extras).
         exp_s = "—" if r.expected_alert is None else ("alert" if r.expected_alert else "log")
         lines.append(
             f"| {r.replay_key or '—'} | {r.event_date} | {exp_s} | {r.got or '—'} | "

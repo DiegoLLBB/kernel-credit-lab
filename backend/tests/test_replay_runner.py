@@ -837,6 +837,81 @@ async def test_runner_isolates_event_failure_and_continues(
     assert report.alert.incomplete_expected_no_alert == 0
 
 
+def test_eval_counts_replay_expectations_not_calendar_extras(session: Session) -> None:
+    """totals.expectations / events = ReplayExpectation count; calendar extras omitted."""
+    from app.eval.replay_eval import render_eval_markdown
+    from app.models import ReplayExpectation
+
+    issuer = Issuer(key="vz", name="Verizon", ticker="VZ")
+    session.add(issuer)
+    session.flush()
+    for i, key in enumerate(("exp_a", "exp_b")):
+        event = Event(
+            replay_key=key,
+            event_type="press_release",
+            issuer_id=issuer.id,
+            event_date=date(2026, 5, 11 + i),
+            status="processed",
+        )
+        session.add(event)
+        session.flush()
+        run = AgentRun(
+            question=key,
+            workflow="event_monitor",
+            mode="standard",
+            status="logged",
+            state="DONE",
+            event_id=event.id,
+            result={"material": False},
+        )
+        session.add(run)
+        session.flush()
+        event.run_id = run.id
+        session.add(
+            ReplayExpectation(
+                key=key,
+                issuer_key="vz",
+                event_type="other",
+                event_date=event.event_date,
+                available_from=event.event_date,
+                title=key,
+                sources=[],
+                expected_changes=[],
+                expected_alert=False,
+                event_id=event.id,
+            )
+        )
+    # Calendar / rate extras must not inflate the expectation count.
+    for n in range(5):
+        session.add(
+            Event(
+                replay_key=f"rate_update:2026-01-{n + 3:02d}",
+                event_type="rate_update",
+                event_date=date(2026, 1, n + 3),
+                status="processed",
+            )
+        )
+        session.add(
+            Event(
+                replay_key=f"maturity:bond_{n}:2026-06-15",
+                event_type="maturity",
+                issuer_id=issuer.id,
+                event_date=date(2026, 6, 15),
+                status="processed",
+            )
+        )
+    session.flush()
+
+    report = evaluate_replay(session, prefer_latest_run=True)
+    assert report.totals["expectations"] == 2
+    assert report.totals["events"] == 2
+    assert len(report.per_event) == 2
+    assert {r.replay_key for r in report.per_event} == {"exp_a", "exp_b"}
+    md = render_eval_markdown(report)
+    assert "Expectations: **2**" in md or "Expectations: 2" in md
+    assert "rate_update:" not in md
+
+
 def test_merged_event_alert_scores_once_and_variance_note(session: Session) -> None:
     """Merged alert+log siblings → one TP; multi-run events appear under variance."""
     from datetime import UTC, datetime, timedelta

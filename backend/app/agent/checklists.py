@@ -90,6 +90,23 @@ REQUIRED_ITEMS: Final[dict[str, frozenset[str]]] = {
             COUNTER_EVIDENCE,
         }
     ),
+    "credit_facility": frozenset(
+        {
+            "facility",
+            "size",
+            "maturity",
+            "drawn_amount",
+            COUNTER_EVIDENCE,
+        }
+    ),
+    "equity_issuance": frozenset(
+        {
+            "security",
+            "size",
+            "use_of_proceeds",
+            COUNTER_EVIDENCE,
+        }
+    ),
     "other": frozenset({"subject", "effect", COUNTER_EVIDENCE}),
 }
 

@@ -138,7 +138,11 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "kind": {
                     "type": "string",
-                    "description": "Event kind (redemption, tender_results, issuance, …)",
+                    "description": (
+                        "Event kind: redemption, tender_results, new_issuance, new_loan, "
+                        "loan_repaid, maturity, periodic_filing, rate_update, "
+                        "credit_facility, equity_issuance, other"
+                    ),
                 },
                 "items": {
                     "type": "array",
