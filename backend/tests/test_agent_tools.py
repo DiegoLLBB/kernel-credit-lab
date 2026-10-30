@@ -891,6 +891,54 @@ def test_submit_alert_refuses_number_not_in_outputs(
     assert any("777" in p or "appears in no" in p for p in bad["problems"])
 
 
+def test_submit_alert_auto_runs_compute_metrics(
+    session: Session, verizon_event: tuple[Event, Filing, Instrument]
+) -> None:
+    """If the agent skips compute_metrics, submit_alert runs it (deterministic, free)."""
+    event, filing, _bond = verizon_event
+    run = start_agent_run(session, event)
+    assert set_checklist(session, run, "redemption", REDEMPTION_ITEMS)["ok"]
+    assert read_document(session, run, filing.id, page=0)["ok"]
+    fact_ids = _record_all_facts(session, run, filing)
+    assert propose_change(
+        session,
+        run,
+        {
+            "action": "mark_redeemed",
+            "instrument_key": "vz_4329_2028",
+            "effective_date": "2026-09-21",
+            "evidence": {
+                "instrument": fact_ids["instrument"],
+                "effective_date": fact_ids["redemption_date"],
+            },
+        },
+    )["ok"]
+    assert not run.metrics_outputs
+    findings = [
+        {
+            "item_key": key,
+            "statement": f"Settled {key} with amount $1,250,000,000 on September 21, 2026.",
+            "citations": [fact_ids[key]],
+        }
+        for key in fact_ids
+    ]
+    alert = submit_alert(
+        session,
+        run,
+        summary=(
+            "Verizon will redeem all $1,250,000,000 of its 4.329% Notes due 2028 "
+            "on September 21, 2026, cutting the FY2028 wall by $1,250,000,000."
+        ),
+        findings=findings,
+        material=True,
+        claims_client=_claims_supported(findings),
+    )
+    assert alert["ok"], alert
+    assert alert["status"] == "alerted"
+    assert run.metrics_outputs
+    assert "compute_metrics has not been run" not in str(alert)
+
+
 def test_request_input_refuses_before_all_pages_read(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:

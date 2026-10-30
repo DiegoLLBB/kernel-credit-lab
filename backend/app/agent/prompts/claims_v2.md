@@ -21,6 +21,7 @@ Assess the **summary** and **each finding**, each with exactly one status:
 
 - Paraphrases of the quotes (same meaning, different wording).
 - Labels taken from the document (table headings, column titles, defined terms such as "Principal Amount Outstanding").
+- Names and defined terms that appear in the document — including series names and short labels such as "Waterfall Notes", "Waterfall Cap", or "Any and All Notes" — are always supported when used as a label, even if the finding only names them without restating the full definition.
 - Plain descriptions that restate what the quote already shows (e.g. "undrawn facility" or "undrawn backup facilities" when the quote says no borrowings are outstanding; naming the issuer as "Duke Energy" / "Duke Energy Corporation" when that is the filing registrant).
 
 When the status is **overstated** or **unsupported**, set `unsupported_phrase` to the shortest phrase from that text that is not supported. When **supported**, set `unsupported_phrase` to null.

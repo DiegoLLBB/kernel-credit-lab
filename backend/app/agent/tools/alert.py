@@ -26,6 +26,7 @@ from app.agent.normalize import (
 )
 from app.agent.run import get_event
 from app.agent.tools.base import ok, refuse
+from app.agent.tools.metrics import compute_metrics
 from app.models import (
     Alert,
     ChecklistItem,
@@ -167,9 +168,16 @@ async def submit_alert(
                 problems.append(f"cited fact {cid!r} does not exist in this run")
 
     quote_nums = _quote_numbers_with_scale(list(facts))
-    metric_nums = _collect_metric_numbers(list(run.metrics_outputs or []))
+    # Deterministic, no model cost — safer to compute than refuse when the agent forgot.
     if not run.metrics_outputs:
-        problems.append("compute_metrics has not been run")
+        metrics_result = compute_metrics(session, run)
+        if not metrics_result.get("ok"):
+            reason = metrics_result.get("reason") or "; ".join(
+                str(p) for p in (metrics_result.get("problems") or [])
+            )
+            problems.append(f"compute_metrics failed: {reason or 'unknown'}")
+
+    metric_nums = _collect_metric_numbers(list(run.metrics_outputs or []))
 
     finding_texts = [str(f.get("statement") or f.get("text") or "") for f in findings or []]
     for text in [summary, *finding_texts]:

@@ -9,7 +9,6 @@ import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -144,15 +143,6 @@ def _run_tokens(session: Session, run: AgentRun) -> int:
         return total
     meta = run.result or {}
     return int(meta.get("total_tokens") or 0)
-
-
-def _cost_from_db(session: Session) -> Decimal:
-    """Sum of AgentRun.total_cost_usd for all event-linked runs."""
-    runs = session.scalars(select(AgentRun).where(AgentRun.event_id.is_not(None))).all()
-    total = Decimal("0")
-    for run in runs:
-        total += Decimal(str(run.total_cost_usd or 0))
-    return total
 
 
 def _is_terminal_event(session: Session, event: Event) -> bool:
@@ -590,6 +580,9 @@ async def run_replay(
     ``paused`` / ``needs_input`` / ``failed`` are reported and the replay continues;
     only ``max_cost_usd`` or Ctrl+C stops the whole run.
 
+    ``max_cost_usd`` counts only the cost of runs started by this invocation (outcomes
+    appended to the log), not historical AgentRun rows already in the database.
+
     With ``only_keys``, non-matching events stay ``pending`` (logged as skipped) so a
     later full replay can still process them.
 
@@ -623,7 +616,7 @@ async def run_replay(
         window_from=start,
         window_until=until,
         after_date=_resume_after_date(session, start),
-        total_cost_usd=float(_cost_from_db(session)),
+        total_cost_usd=0.0,
         only_keys=sorted(only_keys) if only_keys is not None else None,
         rerun_keys=sorted(rerun_keys) if rerun_keys is not None else None,
     )
@@ -701,7 +694,7 @@ async def run_replay(
 
                     handled_ids.add(event.id)
                     result.events.append(outcome)
-                    result.total_cost_usd = float(_cost_from_db(session))
+                    result.total_cost_usd += float(outcome.cost_usd or 0)
                     result.after_date = day
                     if print_line is not None:
                         print_line(format_event_line(outcome))
@@ -767,7 +760,6 @@ async def run_replay(
         result.stopped_reason = "error"
         result.error = str(exc)
     finally:
-        result.total_cost_usd = float(_cost_from_db(session))
         _mark_incomplete(result)
         _write_log(result)
 

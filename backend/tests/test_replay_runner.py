@@ -335,6 +335,65 @@ async def test_replay_cost_limit_stops_cleanly(
 
 
 @pytest.mark.asyncio
+async def test_replay_max_cost_ignores_prior_db_runs(
+    seeded: Session, clients: ReplayClients, tmp_path: Path
+) -> None:
+    """--max-cost-usd counts only this invocation, not historical AgentRun spend."""
+    session = seeded
+    issuer = session.scalars(select(Issuer).limit(1)).one()
+    # ~$20 already spent on earlier event-linked runs (the old bug summed these).
+    for i in range(4):
+        prior_event = Event(
+            replay_key=f"prior_spend_{i}",
+            event_type="other",
+            issuer_id=issuer.id,
+            event_date=date(2026, 1, 1),
+            summary=f"prior spend {i}",
+            status="processed",
+        )
+        session.add(prior_event)
+        session.flush()
+        prior_run = AgentRun(
+            question=f"prior spend {i}",
+            workflow="event_monitor",
+            mode="standard",
+            status="logged",
+            state="DONE",
+            event_id=prior_event.id,
+            total_cost_usd=Decimal("5.00"),
+            metrics_outputs=[],
+        )
+        session.add(prior_run)
+        session.flush()
+        prior_event.run_id = prior_run.id
+    session.commit()
+
+    load_replay_events(session, MINI_JSON)
+    session.commit()
+
+    result = await run_replay(
+        session,
+        clients,
+        _client_factory(session, cost_per_call=Decimal("0.000001")),
+        window_from=date(2026, 5, 11),
+        window_until=date(2026, 5, 13),
+        replay_path=MINI_JSON,
+        runs_dir=tmp_path,
+        max_cost_usd=5.0,
+        limits=RunLimits(max_turns=40, max_cost_usd=100.0, max_tokens=10_000_000),
+        print_line=None,
+    )
+    # Old behaviour: total_cost seeded from DB (~$20) → immediate cost_limit, 0 events.
+    assert result.stopped_reason == "complete"
+    assert result.total_cost_usd < 5.0
+    assert {e.replay_key for e in result.events} >= {
+        "vz_log_a",
+        "vz_redemption_mini",
+        "vz_log_b",
+    }
+
+
+@pytest.mark.asyncio
 async def test_rate_update_logged_by_code(seeded: Session, tmp_path: Path) -> None:
     """rate_update events never call the model."""
     from app.replay.runner import complete_rate_update_by_code

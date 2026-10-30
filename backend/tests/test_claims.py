@@ -55,6 +55,20 @@ SUPPORTED_CASES = [
         ],
         "why": "issuer name as appearing in the filing",
     },
+    {
+        "id": "verizon_waterfall_notes_label",
+        "statement": (
+            "Waterfall Notes are included in the tender; the Waterfall Cap limits aggregate "
+            "purchase price."
+        ),
+        "quotes": [
+            'outstanding series of debt securities listed in Table 2 below (the "Waterfall '
+            'Notes" and, together with the Any and All Notes, the "Notes"); Verizon is '
+            "offering to accept for purchase validly tendered Waterfall Notes subject to a "
+            '$1.25 billion cap (the "Waterfall Cap")'
+        ],
+        "why": ("defined term / series name from the document (Verizon tender launch needs_input)"),
+    },
 ]
 
 # Real overstatements that must still fail.
@@ -91,11 +105,14 @@ def test_claims_prompt_is_v2() -> None:
     assert "claims_v2" in text
     assert "add a fact, number, date or certainty" in text
     assert "Principal Amount Outstanding" in text or "table headings" in text
+    assert "Waterfall Notes" in text
+    assert "names and defined terms" in text.lower()
     assert "undrawn" in text.lower()
     # v1 kept on disk
     v1 = (Path(__file__).resolve().parents[1] / "app/agent/prompts/claims_v1.md").read_text()
     assert "claims_v1" in v1
     assert "add a fact, number, date or certainty" not in v1
+    assert "Waterfall Notes" not in v1
 
 
 def _supported_script() -> dict:

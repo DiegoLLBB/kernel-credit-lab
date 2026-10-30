@@ -111,7 +111,10 @@ async def _async_main(argv: list[str] | None = None) -> int:
         "--max-cost-usd",
         type=float,
         default=None,
-        help="Stop when total event-run cost reaches this USD amount",
+        help=(
+            "Stop when the cost of runs started by this invocation reaches this USD amount "
+            "(prior AgentRun rows in the database are not counted)"
+        ),
     )
     parser.add_argument(
         "--replay-path",
