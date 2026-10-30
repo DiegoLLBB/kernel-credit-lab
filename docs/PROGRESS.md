@@ -203,3 +203,26 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
 | Mon 2 | Dashboard 1: alerts feed, alert detail (quotes, before/after wall, applied change, confirm/dismiss), trace (every turn, check and refusal) |
 | Tue 3 | Dashboard 2: full issuer page (records, wall, timeline, verified charts with SAM overlays), replay control with evaluation score; "Run agent" with Cloud Tasks and rate limits; **live mode** (daily Cloud Scheduler job polling EDGAR and newsrooms for the watchlist); Wonder daily brief; headline, custom domain, README. Stretch: add any issuer by ticker (XBRL onboarding) |
 | Wed 4 | Walkthrough fixes, 3-minute video, submission by evening (deadline 03:00 Thu Madrid) |
+
+## Day 4 — Fri 30 Oct 2026
+
+### Replay result (final for the demo)
+20. **Full 29-event replay: precision 1.00, recall 0.86** (12 of 14 expected alerts; 28 of 29 events
+    completed; `replay_runs/latest_eval.md`, latest non-superseded run per event). Both misses are Intel:
+    the April notes refinancing (logged as not material) and the August equity raise (the one event
+    expected to alert by judgement). Duke's debt-details PDF stopped at its token limit (a log-only
+    event). Cost per event ≈ $0.25 (press release) to ≈ $1 (10-Q); total model spend across all replay
+    rounds ≈ $60 of a $150 budget.
+21. **How we got there (Thu night → Fri afternoon), each step from a real run:** runner and evaluation
+    (`bdca06c`); PDF extraction and `--only` that leaves other events pending (`60d054a`); tools that
+    never raise and isolated event failures (`72ef8f7`); replay continues past paused runs, calendar
+    maturities by code, prompt v8 (`f7754ec`); prompt v9 with focus and a visible budget, claims check v2,
+    year-precision maturities and a guard against judgement upgrades for long-dated issuance (`df0caa3`);
+    per-run cost limit, metrics auto-run, document terms accepted by the claims check (`cf51376`); FX for
+    CAD, size-based limits, one event per shared filing (Duke's combined 10-Q), latest-run evaluation
+    (`c58aa0d`); higher limits, event metadata as trusted claims evidence, FRED rate loader (`7c4dc7b`);
+    event kinds for credit facilities and equity issuance (`5789e54`).
+22. **Stop tuning.** Model choices vary between runs (the same event alerted in one run and logged in
+    another), so the report lists every run per event. Remaining days go to the SAM chart reader, the
+    dashboard, live mode and the submission. Before the final deploy, one fresh full replay with the final
+    code gives the number of record.

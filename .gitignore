@@ -22,6 +22,9 @@ next-env.d.ts
 data/raw/
 data/cache/
 
+# Local replay runner output
+replay_runs/
+
 # OS / editors
 .DS_Store
 .idea/
@@ -29,3 +32,4 @@ data/cache/
 
 # Local test images (smoke tests)
 backend/*.png
+replay_errors.log
