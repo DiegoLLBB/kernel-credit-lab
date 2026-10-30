@@ -17,6 +17,7 @@ from app.agent.tools import (
     get_issuer_debt,
     list_documents,
     propose_change,
+    read_chart,
     read_document,
     record_fact,
     request_input,
@@ -191,17 +192,56 @@ TOOLS: list[dict[str, Any]] = [
         ),
     ),
     _tool(
+        "read_chart",
+        (
+            "Read bar charts on one page of a presentation/PDF filing via SAM 3.1 + Spark. "
+            "Returns only geometry-verified readings (chart_id, categories, values). "
+            "Use for slides and image-heavy PDFs; record a chart_reading fact to cite values."
+        ),
+        _object(
+            {
+                "filing_id": {"type": "string"},
+                "page": {
+                    **_NULLABLE_INT,
+                    "description": "0-based page index; null reads page 0",
+                },
+            }
+        ),
+    ),
+    _tool(
         "record_fact",
-        "Record one exact quote from a read document for one checklist item, with a short claim.",
+        (
+            "Record evidence for one checklist item. Default: exact quote from a read page. "
+            "Or fact_type=chart_reading with chart_id/category/value from a verified read_chart."
+        ),
         _object(
             {
                 "item_key": {"type": "string"},
                 "filing_id": {"type": "string"},
                 "quote": {
                     "type": "string",
-                    "description": "Verbatim substring of the page text (copy word for word)",
+                    "description": (
+                        "Verbatim page substring for quote facts; for chart_reading use a "
+                        "short label such as 'FY2027=1.25'"
+                    ),
                 },
-                "claim": {"type": "string", "description": "What the quote means for credit"},
+                "claim": {"type": "string", "description": "What the evidence means for credit"},
+                "fact_type": {
+                    **_NULLABLE_STRING,
+                    "description": "quote (default) or chart_reading",
+                },
+                "chart_id": {
+                    **_NULLABLE_STRING,
+                    "description": "Required when fact_type=chart_reading",
+                },
+                "category": {
+                    **_NULLABLE_STRING,
+                    "description": "Chart category when fact_type=chart_reading",
+                },
+                "value": {
+                    **_NULLABLE_STRING,
+                    "description": "Chart numeric value when fact_type=chart_reading",
+                },
             }
         ),
     ),
@@ -278,6 +318,13 @@ async def _dispatch_tool_body(
             arguments["filing_id"],
             arguments["query"],
         )
+    if name == "read_chart":
+        return await read_chart(
+            session,
+            run,
+            arguments["filing_id"],
+            arguments.get("page"),
+        )
     if name == "record_fact":
         return record_fact(
             session,
@@ -286,6 +333,10 @@ async def _dispatch_tool_body(
             arguments["filing_id"],
             arguments["quote"],
             arguments["claim"],
+            fact_type=arguments.get("fact_type"),
+            chart_id=arguments.get("chart_id"),
+            category=arguments.get("category"),
+            value=arguments.get("value"),
         )
     if name == "propose_change":
         change = dict(arguments.get("change") or {})

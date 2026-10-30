@@ -150,7 +150,7 @@ def test_checklists_include_credit_facility_and_equity_issuance() -> None:
     )
 
 
-def test_event_v9_prompt_inserts_available_from(
+def test_event_v10_prompt_inserts_available_from(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
     from app.agent.prompts import PROMPT_VERSION, load_event_prompt
@@ -159,7 +159,7 @@ def test_event_v9_prompt_inserts_available_from(
     event, _filing, _bond = verizon_event
     as_of = available_from_for_event(session, event)
     text = load_event_prompt(today=as_of)
-    assert PROMPT_VERSION == "event_v9"
+    assert PROMPT_VERSION == "event_v10"
     assert "2026-08-20" in text
     assert "{available_from}" not in text
     assert "do not use knowledge of anything after today" in text
@@ -187,7 +187,12 @@ def test_event_v9_prompt_inserts_available_from(
     assert "drawn_amount" in text
     assert "use_of_proceeds" in text
     assert "revolver / facility renewals" in text
+    assert "read_chart" in text
+    assert "chart_reading" in text
     # Prior versions kept on disk
+    v9 = load_event_prompt(version="event_v9", today=as_of)
+    assert "credit_facility" in v9
+    assert "read_chart" not in v9
     v8 = load_event_prompt(version="event_v8", today=as_of)
     assert "Stop investigating once every checklist item has a fact" not in v8
     assert "bridge facilities" in v8
@@ -485,7 +490,7 @@ async def test_plain_text_three_times_pauses(
     assert run.status == "paused"
     assert "without a tool call" in (run.error or "")
     assert len(run.steps) == 3
-    assert (run.result or {}).get("prompt_version") == "event_v9"
+    assert (run.result or {}).get("prompt_version") == "event_v10"
     assert (run.result or {}).get("available_from") == "2026-08-20"
 
 

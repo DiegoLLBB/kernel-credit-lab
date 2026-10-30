@@ -249,3 +249,25 @@ class ReplayStatusOut(BaseModel):
     window_until: date | None = None
     event_counts_by_status: dict[str, int] = Field(default_factory=dict)
     latest_eval: ReplayEvalSummary | None = None
+
+
+class ChartReadingOut(BaseModel):
+    id: str
+    issuer_key: str | None = None
+    filing_id: str
+    filing_title: str | None = None
+    page: int
+    title: str | None = None
+    unit: str | None = None
+    categories: list[Any] = Field(default_factory=list)
+    values: list[Any] = Field(default_factory=list)
+    verified: bool
+    verification_detail: dict[str, Any] | None = None
+    bbox: dict[str, Any] = Field(default_factory=dict)
+    has_crop: bool = False
+    has_overlay: bool = False
+
+
+class ChartListOut(BaseModel):
+    items: list[ChartReadingOut]
+    total: int

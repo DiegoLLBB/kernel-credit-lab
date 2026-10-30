@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -150,9 +151,12 @@ class Filing(TimestampMixin, Base):
     title: Mapped[str | None] = mapped_column(String(512))
     # Extracted plain text for agent read_document (HTML/PDF extracted once at ingest).
     body_text: Mapped[str | None] = mapped_column(Text)
+    # Raw PDF/HTML bytes for presentations (SAM page render); optional for other forms.
+    content_bytes: Mapped[bytes | None] = mapped_column(LargeBinary)
 
     issuer: Mapped[Issuer | None] = relationship()
     events: Mapped[list["Event"]] = relationship(back_populates="source_filing")
+    chart_readings: Mapped[list["ChartReading"]] = relationship(back_populates="filing")
 
 
 class Event(TimestampMixin, Base):
@@ -371,3 +375,32 @@ class RateObservation(TimestampMixin, Base):
     series_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     obs_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     value: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+
+
+class ChartReading(TimestampMixin, Base):
+    """SAM + Spark chart extraction with geometry verification (CONTEXT.md Part B §5)."""
+
+    __tablename__ = "chart_reading"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    issuer_id: Mapped[str | None] = mapped_column(
+        ForeignKey("issuer.id", ondelete="SET NULL"), index=True
+    )
+    filing_id: Mapped[str] = mapped_column(
+        ForeignKey("filing.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    page: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    # SAM frame coordinates for the chart region.
+    bbox: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False, default=dict)
+    title: Mapped[str | None] = mapped_column(String(512))
+    unit: Mapped[str | None] = mapped_column(String(128))
+    categories: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    values: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    # status/reason/checks/ratios; kept for unverified rows too.
+    verification_detail: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+    crop_png: Mapped[bytes | None] = mapped_column(LargeBinary)
+    overlay_png: Mapped[bytes | None] = mapped_column(LargeBinary)
+
+    issuer: Mapped[Issuer | None] = relationship()
+    filing: Mapped[Filing] = relationship(back_populates="chart_readings")

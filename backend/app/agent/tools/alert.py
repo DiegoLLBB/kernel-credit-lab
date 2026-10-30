@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.audit import record_check, refusal_count
+from app.agent.chart_evidence import chart_reading_verified, chart_value, is_chart_reading
 from app.agent.claims import ClaimsResult, claims_check
 from app.agent.materiality import (
     LONG_DATED_JUDGEMENT_REFUSAL,
@@ -80,16 +81,27 @@ def _collect_metric_numbers(metrics_outputs: list[Any]) -> set[Decimal]:
     return found
 
 
-def _quote_numbers_with_scale(facts: list[Fact]) -> set[Decimal]:
-    """Numbers from fact quotes, plus table units × scale when an 'in millions' fact exists."""
+def _quote_numbers_with_scale(facts: list[Fact], session: Session | None = None) -> set[Decimal]:
+    """Numbers from fact quotes / verified chart readings, plus table-scale multiples."""
     found: set[Decimal] = set()
-    scales = [s for f in facts if (s := detect_amount_scale(f.exact_quote)) is not None]
+    scales = [
+        s
+        for f in facts
+        if not is_chart_reading(f) and (s := detect_amount_scale(f.exact_quote)) is not None
+    ]
     for fact in facts:
+        if is_chart_reading(fact):
+            if session is not None:
+                ok_chart, _ = chart_reading_verified(session, fact)
+                if ok_chart:
+                    cv = chart_value(fact)
+                    if cv is not None:
+                        found.add(cv)
+            continue
         nums = extract_numbers(fact.exact_quote)
         found.update(nums)
         if detect_amount_scale(fact.exact_quote) is not None:
             continue
-        # Scale comma-grouped / money-like figures the way propose_change does.
         moneyish = extract_numbers(fact.exact_quote, money_only=True)
         for scale in scales:
             for n in moneyish:
@@ -167,7 +179,17 @@ async def submit_alert(
             if str(cid) not in facts_by_id:
                 problems.append(f"cited fact {cid!r} does not exist in this run")
 
-    quote_nums = _quote_numbers_with_scale(list(facts))
+    # Refuse citations to unverified chart_reading facts before spending on claims.
+    for finding in findings or []:
+        for cid in finding.get("citations") or finding.get("fact_ids") or []:
+            fact = facts_by_id.get(str(cid))
+            if fact is None or not is_chart_reading(fact):
+                continue
+            ok_chart, detail = chart_reading_verified(session, fact)
+            if not ok_chart:
+                problems.append(detail or f"cited chart_reading {cid!r} is unverified")
+
+    quote_nums = _quote_numbers_with_scale(list(facts), session)
     # Deterministic, no model cost — safer to compute than refuse when the agent forgot.
     if not run.metrics_outputs:
         metrics_result = compute_metrics(session, run)

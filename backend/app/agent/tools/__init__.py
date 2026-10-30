@@ -2,6 +2,7 @@
 
 from app.agent.tools.alert import submit_alert
 from app.agent.tools.changes import propose_change
+from app.agent.tools.charts_tool import read_chart
 from app.agent.tools.checklist import set_checklist
 from app.agent.tools.debt import get_issuer_debt
 from app.agent.tools.documents import list_documents, read_document, search_document
@@ -14,6 +15,7 @@ __all__ = [
     "get_issuer_debt",
     "list_documents",
     "propose_change",
+    "read_chart",
     "read_document",
     "record_fact",
     "request_input",

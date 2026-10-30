@@ -3,6 +3,7 @@
 from app.models.credit import (
     Alert,
     CallTerms,
+    ChartReading,
     CuratedSource,
     Event,
     EventFiling,
@@ -25,6 +26,7 @@ __all__ = [
     "Alert",
     "AuditEntry",
     "CallTerms",
+    "ChartReading",
     "CheckResult",
     "ChecklistItem",
     "CuratedSource",

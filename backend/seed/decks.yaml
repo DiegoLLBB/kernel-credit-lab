@@ -1,0 +1,33 @@
+# Investor presentation decks for SAM chart reading (CONTEXT.md Part B §5).
+# Keys match snapshot issuer keys. fetch via: python -m scripts.fetch_decks
+
+decks:
+  - issuer: duke_corp
+    title: Duke Energy Q2 2026 Earnings Presentation
+    period: Q2 2026
+    published: 2026-08-04
+    url: https://s201.q4cdn.com/583395453/files/doc_financials/2026/q2/Q2-2026-Earnings-Presentation_vF-w-Reg-G-FINAL.pdf
+
+  - issuer: intel
+    title: Intel Q3 2026 Earnings Presentation
+    period: Q3 2026
+    published: 2026-10-23
+    url: https://d1io3yog0oux5.cloudfront.net/_47986fe477a6ac84fe34efbcbf38dd13/intel/db/887/9273/earnings_presentation/Q3_2026_Earnings_Deck.pdf
+
+  - issuer: verizon
+    title: Verizon 3Q 2026 Earnings Presentation
+    period: 3Q 2026
+    published: 2026-10-26
+    url: https://www.verizon.com/about/file/78469/download?token=jQ7nJewO
+
+  - issuer: amazon
+    title: Amazon Q3 2026 Earnings Presentation
+    period: Q3 2026
+    published: 2026-10-29
+    url: https://s2.q4cdn.com/299287126/files/doc_earnings/2026/q3/presentation/Webslides_Q326.pdf
+
+  - issuer: boeing
+    title: Boeing Q3 2026 Investor Presentation
+    period: Q3 2026
+    published: 2026-10-27
+    url: https://s2.q4cdn.com/661678649/files/doc_financials/2026/q3/Presentation.pdf

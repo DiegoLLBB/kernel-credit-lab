@@ -58,7 +58,8 @@ async def main() -> int:
     for n, res in enumerate(results, 1):
         ex = res.extraction
         print(f"\nChart {n}: {ex.title if ex else '?'} ({ex.unit if ex else '?'})")
-        print(f"  SAM bars: {len(res.bar_boxes)} | Spark bars: {len(ex.bars) if ex else 0}")
+        n_spark = len(ex.to_bar_readings()) if ex else 0
+        print(f"  SAM bars: {len(res.bar_boxes)} | Spark bars: {n_spark}")
         if res.checks:
             for chk in res.checks:
                 mark = "✓" if chk.ok else "✗"
@@ -68,7 +69,7 @@ async def main() -> int:
                     f"geometry={chk.implied_value:<8.3g} dev={chk.deviation:.1%}"
                 )
         else:
-            for r in ex.bars if ex else []:
+            for r in ex.to_bar_readings() if ex else []:
                 print(f"  · {r.category:<10} {str(r.series):<8} read={r.value:g}")
         print(f"  => {res.status.upper()}" + (f": {res.reason}" if res.reason else ""))
         if res.llm:

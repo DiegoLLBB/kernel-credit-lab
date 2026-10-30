@@ -37,15 +37,35 @@ class BarReading(BaseModel):
 class ChartExtraction(BaseModel):
     title: str | None
     unit: str | None = Field(description="unit of the values, e.g. 'USD per share', '$bn'")
-    bars: list[BarReading] = Field(description="every bar, strictly ordered left to right")
+    categories: list[str] = Field(
+        description="x-axis categories left to right (one per bar)",
+        default_factory=list,
+    )
+    values: list[float] = Field(
+        description="numeric values left to right matching categories",
+        default_factory=list,
+    )
+    value_labels: list[str | None] = Field(
+        description="printed labels on/above each bar when present; else null",
+        default_factory=list,
+    )
+
+    def to_bar_readings(self) -> list[BarReading]:
+        """Bars left-to-right for geometry check."""
+        n = min(len(self.categories), len(self.values))
+        return [
+            BarReading(category=self.categories[i], series=None, value=float(self.values[i]))
+            for i in range(n)
+        ]
 
 
 SYSTEM_PROMPT = (
     "You read bar charts from financial presentations. The FIRST image is a crop containing "
     "exactly one chart; the SECOND image is the full slide for context (titles, legend). "
-    "Read only the chart in the first image. List every bar strictly from left to right, "
-    "using the value printed on or above each bar. Never estimate a value that is not "
-    "printed; if a bar has no printed value, omit it. Use null when unsure of series or unit."
+    "Read only the chart in the first image. Return title, unit, categories (left to right), "
+    "values (left to right), and value_labels (the text printed on or above each bar, or null). "
+    "Never estimate a value that is not printed; omit bars without a printed value. "
+    "categories and values must have the same length."
 )
 
 
@@ -196,7 +216,8 @@ async def read_charts(
                 },
             ],
         )
-        status, reason, checks = verify_proportional(extraction.bars, by_chart[i])
+        readings = extraction.to_bar_readings()
+        status, reason, checks = verify_proportional(readings, by_chart[i])
         results.append(
             ChartResult(
                 chart_box=chart,

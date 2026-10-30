@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.audit import record_check, refusal_count
+from app.agent.chart_evidence import chart_reading_verified, fact_supports_amount, is_chart_reading
 from app.agent.normalize import (
     AMOUNT_FORMAT_HINT,
     RATE_FORMAT_HINT,
@@ -107,6 +108,26 @@ def _require_fact(
 
 def _amount_in_quote(value: Any, quote: str, *, scale: Decimal | None = None) -> bool:
     return amount_in_quote(value, quote, scale=scale)
+
+
+def _amount_supported(
+    session: Session,
+    fact: Fact,
+    value: Any,
+    *,
+    scale: Decimal | None = None,
+) -> bool:
+    if is_chart_reading(fact):
+        ok_chart, _ = chart_reading_verified(session, fact)
+        if not ok_chart:
+            return False
+        return fact_supports_amount(
+            session,
+            fact,
+            value,
+            quote_check=lambda v, _q: False,
+        )
+    return _amount_in_quote(value, fact.exact_quote, scale=scale)
 
 
 def _date_in_quote(value: Any, quote: str) -> bool:
@@ -270,9 +291,13 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
                 elif (
                     reduce_dec is not None
                     and amt_fact is not None
-                    and not _amount_in_quote(reduce_dec, amt_fact.exact_quote, scale=scale)
+                    and not _amount_supported(session, amt_fact, reduce_dec, scale=scale)
                 ):
-                    problems.append(f"amount {reduce_dec!r} not found in cited quote")
+                    if is_chart_reading(amt_fact):
+                        _, detail = chart_reading_verified(session, amt_fact)
+                        problems.append(detail or f"amount {reduce_dec!r} not in chart reading")
+                    else:
+                        problems.append(f"amount {reduce_dec!r} not found in cited quote")
                 if reduce_dec is not None and reduce_dec > Decimal(inst.amount_outstanding):
                     problems.append("reduction exceeds outstanding amount")
                 new_amount = (
@@ -294,9 +319,13 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
                 elif (
                     new_amount is not None
                     and amt_fact is not None
-                    and not _amount_in_quote(new_amount, amt_fact.exact_quote, scale=scale)
+                    and not _amount_supported(session, amt_fact, new_amount, scale=scale)
                 ):
-                    problems.append(f"amount {new_amount!r} not found in cited quote")
+                    if is_chart_reading(amt_fact):
+                        _, detail = chart_reading_verified(session, amt_fact)
+                        problems.append(detail or f"amount {new_amount!r} not in chart reading")
+                    else:
+                        problems.append(f"amount {new_amount!r} not found in cited quote")
 
             proposed_diff = {
                 "action": action,
@@ -366,10 +395,14 @@ def propose_change(session: Session, run: AgentRun, change: dict[str, Any]) -> d
             )
             if err:
                 problems.append(err)
-            elif amt_fact is not None and not _amount_in_quote(
-                amount_dec, amt_fact.exact_quote, scale=scale
+            elif amt_fact is not None and not _amount_supported(
+                session, amt_fact, amount_dec, scale=scale
             ):
-                problems.append(f"amount {amount_dec!r} not found in cited quote")
+                if is_chart_reading(amt_fact):
+                    _, detail = chart_reading_verified(session, amt_fact)
+                    problems.append(detail or f"amount {amount_dec!r} not in chart reading")
+                else:
+                    problems.append(f"amount {amount_dec!r} not found in cited quote")
 
         if maturity is not None:
             mat_fact, err = _require_fact(facts, evidence.get("maturity"), "maturity")

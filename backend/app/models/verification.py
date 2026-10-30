@@ -58,7 +58,12 @@ class ChecklistItem(TimestampMixin, Base):
 
 
 class Fact(TimestampMixin, Base):
-    """Recorded evidence: document/filing, location, exact quote, and claim (interpretation)."""
+    """Recorded evidence: document/filing, location, exact quote, and claim (interpretation).
+
+    ``fact_type`` is ``quote`` (default) or ``chart_reading``. Chart readings store
+    ``meta = {chart_id, category, value}`` and are accepted as evidence only when the
+    linked ChartReading is verified.
+    """
 
     __tablename__ = "fact"
 
@@ -75,6 +80,8 @@ class Fact(TimestampMixin, Base):
     location: Mapped[str | None] = mapped_column(String(256))
     exact_quote: Mapped[str] = mapped_column(Text, nullable=False)
     claim: Mapped[str] = mapped_column(Text, nullable=False)
+    fact_type: Mapped[str] = mapped_column(String(32), nullable=False, default="quote", index=True)
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
 
     checklist_item: Mapped[ChecklistItem] = relationship(back_populates="facts")
     filing: Mapped["Filing | None"] = relationship()
