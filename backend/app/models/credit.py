@@ -404,3 +404,29 @@ class ChartReading(TimestampMixin, Base):
 
     issuer: Mapped[Issuer | None] = relationship()
     filing: Mapped[Filing] = relationship(back_populates="chart_readings")
+
+
+class ReplayEvaluation(TimestampMixin, Base):
+    """Persisted replay evaluation summary (one row per ``--eval-latest`` run).
+
+    Cloud Run jobs have no durable filesystem, so the dashboard reads the latest
+    row here instead of ``replay_runs/latest_eval.json``. The JSON files are still
+    written locally for inspection; per-event rows live in ``per_event``.
+    """
+
+    __tablename__ = "replay_evaluation"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    precision: Mapped[Decimal | None] = mapped_column(Numeric(6, 5))
+    recall: Mapped[Decimal | None] = mapped_column(Numeric(6, 5))
+    incomplete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    event_count: Mapped[int | None] = mapped_column(Integer)
+    expectation_count: Mapped[int | None] = mapped_column(Integer)
+    per_event: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    git_sha: Mapped[str | None] = mapped_column(String(40))
+    prompt_version: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[str | None] = mapped_column(Text)

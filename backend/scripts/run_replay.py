@@ -28,6 +28,7 @@ from app.db import SessionLocal
 from app.eval.replay_eval import (
     evaluate_latest,
     evaluate_replay,
+    store_latest_evaluation,
     write_eval_reports,
     write_latest_eval_reports,
 )
@@ -68,6 +69,34 @@ def _parse_date(value: str | None, *, flag: str) -> date | None:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise SystemExit(f"{flag}: invalid date {value!r}") from exc
+
+
+def _print_latest_eval(report) -> None:
+    prec = report.alert.precision
+    rec = report.alert.recall
+    print(f"precision\t{prec if prec is not None else 'n/a'}")
+    print(f"recall\t{rec if rec is not None else 'n/a'}")
+    print(f"expectations\t{len(report.per_event)}")
+    print(f"total_cost_usd\t{float(report.totals.get('cost_usd') or 0):.6f}")
+    if report.incomplete:
+        print("incomplete\tTrue")
+    if report.error:
+        print(f"error\t{report.error}")
+
+
+def _store_latest_eval(session: Session, report, *, runs_dir) -> None:
+    """Write latest files (local inspection) and persist the DB row (dashboard).
+
+    Cloud Run jobs have no durable filesystem, so the database row is what the
+    live API reads; the files still land in replay_runs/ when run locally.
+    """
+    md_path, json_path = write_latest_eval_reports(report, runs_dir or DEFAULT_RUNS_DIR)
+    row = store_latest_evaluation(session, report)
+    session.commit()
+    print(f"eval_md\t{md_path}")
+    print(f"eval_json\t{json_path}")
+    print(f"eval_row\t{row.id}")
+    _print_latest_eval(report)
 
 
 def _write_eval(session: Session, result: ReplayResult, *, replay_path: Path | None) -> None:
@@ -143,8 +172,10 @@ async def _async_main(argv: list[str] | None = None) -> int:
         "--eval-latest",
         action="store_true",
         help=(
-            "Skip the runner; evaluate all expectations against the latest "
-            "non-superseded run per event; write replay_runs/latest_eval.md and .json"
+            "Also evaluate all expectations against the latest non-superseded run "
+            "per event: writes replay_runs/latest_eval.md and .json plus a "
+            "replay_evaluation database row (the row is what the live API reads). "
+            "Alone it skips the runner; combined with a run it evaluates after it."
         ),
     )
     parser.add_argument(
@@ -157,7 +188,14 @@ async def _async_main(argv: list[str] | None = None) -> int:
     _configure_logging()
     settings = get_settings()
 
-    if args.eval_latest:
+    # --eval-latest alone skips the runner; combined with a run it evaluates after it
+    # (this is how the cloud replay job works: full window, then latest eval + DB row).
+    eval_latest_only = (
+        args.eval_latest
+        and args.eval_only is None
+        and not any([args.window_from, args.window_until, args.only, args.rerun, args.max_cost_usd])
+    )
+    if eval_latest_only:
         runs_dir = args.runs_dir or DEFAULT_RUNS_DIR
         with SessionLocal() as session:
             _ensure_seed(session)
@@ -172,14 +210,7 @@ async def _async_main(argv: list[str] | None = None) -> int:
                 session,
                 replay_path=args.replay_path or DEFAULT_REPLAY_PATH,
             )
-            md_path, json_path = write_latest_eval_reports(report, runs_dir)
-        print(f"eval_md\t{md_path}")
-        print(f"eval_json\t{json_path}")
-        prec = report.alert.precision
-        rec = report.alert.recall
-        print(f"precision\t{prec if prec is not None else 'n/a'}")
-        print(f"recall\t{rec if rec is not None else 'n/a'}")
-        print(f"expectations\t{len(report.per_event)}")
+            _store_latest_eval(session, report, runs_dir=runs_dir)
         return 0
 
     if args.eval_only is not None:
@@ -249,6 +280,14 @@ async def _async_main(argv: list[str] | None = None) -> int:
                     print(f"events\t{len([e for e in result.events if not e.skipped])}")
                     if not args.no_eval:
                         _write_eval(session, result, replay_path=args.replay_path)
+                    if args.eval_latest:
+                        latest = evaluate_latest(
+                            session,
+                            replay_path=args.replay_path or DEFAULT_REPLAY_PATH,
+                        )
+                        _store_latest_eval(
+                            session, latest, runs_dir=args.runs_dir or DEFAULT_RUNS_DIR
+                        )
     finally:
         await llm.aclose()
         for client in (clients.edgar, clients.newsroom):

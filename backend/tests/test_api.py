@@ -33,6 +33,18 @@ def test_readiness_with_dependencies():
 
 
 @integration
+def test_readiness_skips_redis_when_queue_disabled(monkeypatch):
+    """Production has no Redis and nothing uses the queue: redis must not gate readiness."""
+    from app.api import health
+    from app.config import Settings
+
+    monkeypatch.setattr(health, "get_settings", lambda: Settings(queue_enabled=False))
+    resp = client.get("/health/ready")
+    assert resp.status_code == 200, resp.json()
+    assert resp.json()["checks"] == {"database": True}
+
+
+@integration
 def test_runs_endpoints_against_migrated_schema():
     runs = client.get("/api/runs")
     calls = client.get("/api/model-calls")

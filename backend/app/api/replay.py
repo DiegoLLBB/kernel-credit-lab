@@ -1,4 +1,10 @@
-"""Replay window status and latest evaluation summary."""
+"""Replay window status and latest evaluation summary.
+
+The summary comes from the latest ``replay_evaluation`` database row (written by
+``run_replay --eval-latest``); the ``replay_runs/*.json`` files are only a fallback
+for databases that predate the table. Cloud Run jobs have no durable filesystem,
+so in production the row is the only source.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.schemas import ReplayEvalSummary, ReplayStatusOut
 from app.db import get_session
 from app.ingest.replay import DEFAULT_REPLAY_PATH
-from app.models import Event
+from app.models import Event, ReplayEvaluation
 from app.replay.runner import DEFAULT_RUNS_DIR
 
 router = APIRouter(prefix="/api/replay", tags=["replay"])
@@ -40,7 +46,24 @@ def _window_from_replay_json(path: Path) -> tuple[date | None, date | None]:
         return None, None
 
 
-def _latest_eval_summary(runs_dir: Path) -> ReplayEvalSummary | None:
+def _latest_eval_summary(session: Session, runs_dir: Path) -> ReplayEvalSummary | None:
+    row = session.scalars(
+        select(ReplayEvaluation).order_by(ReplayEvaluation.evaluated_at.desc())
+    ).first()
+    if row is not None:
+        return ReplayEvalSummary(
+            precision=float(row.precision) if row.precision is not None else None,
+            recall=float(row.recall) if row.recall is not None else None,
+            incomplete=bool(row.incomplete),
+            cost_usd=float(row.cost_usd) if row.cost_usd is not None else None,
+            source_path=f"replay_evaluation:{row.id}",
+            evaluated_at=row.evaluated_at.isoformat() if row.evaluated_at else None,
+        )
+    # Fallback for databases that predate the replay_evaluation table rows.
+    return _latest_eval_summary_from_files(runs_dir)
+
+
+def _latest_eval_summary_from_files(runs_dir: Path) -> ReplayEvalSummary | None:
     if not runs_dir.is_dir():
         return None
     # Prefer the stable ``latest_eval.json`` written by ``run_replay --eval-latest``.
@@ -82,5 +105,5 @@ def get_replay_status(session: DbSession) -> ReplayStatusOut:
         window_from=window_from,
         window_until=window_until,
         event_counts_by_status=counts,
-        latest_eval=_latest_eval_summary(DEFAULT_RUNS_DIR),
+        latest_eval=_latest_eval_summary(session, DEFAULT_RUNS_DIR),
     )

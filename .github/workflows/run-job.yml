@@ -1,0 +1,81 @@
+name: Run job
+
+# One-click execution of the data jobs (seed, replay, decks) against Cloud SQL.
+# workflow_dispatch only: pick a job, optionally override its default arguments, and
+# the execution's logs link appears in the run summary. Same keyless auth as deploy.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Job to run
+        required: true
+        type: choice
+        options:
+          - seed
+          - replay
+          - decks
+      args:
+        description: >-
+          Override the job's default arguments (space-separated, e.g.
+          --only vz_redemption_notice --max-cost-usd 2 --eval-latest).
+          Empty keeps the defaults.
+        required: false
+        default: ""
+        type: string
+      wait:
+        description: Wait for the execution to finish
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: kernel-credit-lab
+  REGION: europe-west1
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ vars.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: kcl-deployer@kernel-credit-lab.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Execute job
+        run: |
+          NAME="kernel-${{ inputs.job }}"
+          ARGS="${{ inputs.args }}"
+          WAIT=""
+          if [ "${{ inputs.wait }}" = "true" ]; then WAIT="--wait"; fi
+          if [ -z "$ARGS" ]; then
+            echo "Executing $NAME with default arguments"
+            # shellcheck disable=SC2086
+            gcloud run jobs execute "$NAME" --region="$REGION" $WAIT
+          else
+            # gcloud takes comma-separated args; the input is space-separated.
+            read -ra PARTS <<< "$ARGS"
+            CSV="$(IFS=,; echo "${PARTS[*]}")"
+            echo "Executing $NAME with arguments: $ARGS"
+            # shellcheck disable=SC2086
+            gcloud run jobs execute "$NAME" --region="$REGION" --args="$CSV" $WAIT
+          fi
+          EXEC="$(gcloud run jobs executions list --job="$NAME" --region="$REGION" \
+            --limit=1 --format='value(name)')"
+          {
+            echo "## Cloud Run job execution"
+            echo ""
+            echo "- Job: \`$NAME\`"
+            echo "- Arguments: \`${ARGS:-<defaults>}\`"
+            echo "- Wait: \`${{ inputs.wait }}\`"
+            echo "- Execution: \`$EXEC\`"
+            echo "- Logs: https://console.cloud.google.com/run/jobs/details/$REGION/$NAME/executions?project=$PROJECT_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Execution: $EXEC"
+          echo "Logs: https://console.cloud.google.com/run/jobs/details/$REGION/$NAME/executions?project=$PROJECT_ID"

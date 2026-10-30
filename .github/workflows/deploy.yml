@@ -26,6 +26,12 @@ env:
   SITE_URL: https://kernel-credit-lab.web.app
   RUNTIME_SA: kcl-runtime@kernel-credit-lab.iam.gserviceaccount.com
   WEB_SA: kcl-web@kernel-credit-lab.iam.gserviceaccount.com
+  # Shared by kernel-api and every Cloud Run job (seed, replay, decks): same service
+  # account, Cloud SQL instance, secrets and env vars, so the jobs write to Cloud SQL
+  # through the same code paths that run locally. Only --set-secrets references here;
+  # no secret values anywhere in code, workflow files or logs.
+  JOB_SECRETS: DATABASE_URL=DATABASE_URL:latest,MODEL_API_KEY=MODEL_API_KEY:latest,SEC_USER_AGENT=SEC_USER_AGENT:latest,FRED_API_KEY=FRED_API_KEY:latest,BASETEN_API_KEY=BASETEN_API_KEY:latest
+  JOB_ENV_VARS: '^@^APP_ENV=production@LOG_LEVEL=INFO@META_MODEL_API_BASE_URL=https://api.meta.ai/v1@DEFAULT_MODEL=muse-spark-1.3@DEEP_RESEARCH_MODEL=muse-wonder-1.0@VISION_SEGMENTATION_MODEL=sam-3.1@BASETEN_BASE_URL=https://inference.baseten.co/v1@OPEN_MODEL=meta-models/muse-spark-open-1026@MODEL_PRICING_JSON={"muse-spark-1.3": [1.25, 4.25], "meta-models/muse-spark-open-1026": [0, 0]}@MAX_RUN_COST_USD=2.0@QUEUE_ENABLED=false'
 
 jobs:
   deploy:
@@ -68,8 +74,46 @@ jobs:
             --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
             --allow-unauthenticated --min-instances=0 --max-instances=2 --concurrency=20 \
             --cpu=1 --memory=512Mi --timeout=900 \
-            --set-secrets=DATABASE_URL=DATABASE_URL:latest,MODEL_API_KEY=MODEL_API_KEY:latest,SEC_USER_AGENT=SEC_USER_AGENT:latest,FRED_API_KEY=FRED_API_KEY:latest,BASETEN_API_KEY=BASETEN_API_KEY:latest \
-            --set-env-vars="^@^APP_ENV=production@LOG_LEVEL=INFO@META_MODEL_API_BASE_URL=https://api.meta.ai/v1@DEFAULT_MODEL=muse-spark-1.3@DEEP_RESEARCH_MODEL=muse-wonder-1.0@VISION_SEGMENTATION_MODEL=sam-3.1@BASETEN_BASE_URL=https://inference.baseten.co/v1@OPEN_MODEL=meta-models/muse-spark-open-1026@MODEL_PRICING_JSON={\"muse-spark-1.3\": [1.25, 4.25], \"meta-models/muse-spark-open-1026\": [0, 0]}@MAX_RUN_COST_USD=2.0"
+            --set-secrets="$JOB_SECRETS" \
+            --set-env-vars="$JOB_ENV_VARS"
+
+      # Data jobs: deployed on every deploy, never executed by it (only kernel-migrate
+      # above keeps --execute-now). Started on demand via the Run job workflow.
+      - name: Deploy seed job
+        run: |
+          # 1 CPU / 1 GiB: pure DB writes plus FRED HTTP, no model calls. A 30-minute
+          # timeout is generous for 9 issuers and 8 FRED series. --max-retries=0 so a
+          # failed execution never double-writes (load_seed/load_rates are idempotent).
+          gcloud run jobs deploy kernel-seed --region="$REGION" --image="$REGISTRY/api:$SHA" \
+            --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
+            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
+            --cpu=1 --memory=1Gi --task-timeout=1800 --max-retries=0 \
+            --command=python --args="-m,scripts.seed_job"
+
+      - name: Deploy replay job
+        run: |
+          # 1 CPU / 1 GiB: the agent loop holds filing text and transcripts in memory;
+          # 1 GiB is plenty (no PDF rendering here). 6 hours fits a full 29-event replay
+          # (~$15 of model calls at current prices); the runner is resumable, so a
+          # re-execution continues where it stopped. Defaults run the full window then
+          # --eval-latest, which writes the replay_evaluation row the API reads.
+          # Arguments are supplied at execution time (Run job workflow) and override these.
+          gcloud run jobs deploy kernel-replay --region="$REGION" --image="$REGISTRY/api:$SHA" \
+            --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
+            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
+            --cpu=1 --memory=1Gi --task-timeout=21600 --max-retries=0 \
+            --command=python --args="-m,scripts.run_replay,--max-cost-usd,30,--eval-latest"
+
+      - name: Deploy decks job
+        run: |
+          # 2 CPU / 2 GiB: PDF page rendering (pypdfium2) is the hungry part; SAM/Spark
+          # calls are HTTP. 2 hours fits all 5 decks (~$0.40). Commits after every page,
+          # so a re-execution keeps finished pages (--reprocess to redo).
+          gcloud run jobs deploy kernel-decks --region="$REGION" --image="$REGISTRY/api:$SHA" \
+            --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
+            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
+            --cpu=2 --memory=2Gi --task-timeout=7200 --max-retries=0 \
+            --command=python --args="-m,scripts.decks_job"
 
       - name: Deploy web
         run: |

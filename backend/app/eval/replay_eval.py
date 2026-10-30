@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -13,8 +14,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.prompts import PROMPT_VERSION
 from app.ingest.replay import DEFAULT_REPLAY_PATH
-from app.models import Alert, Event, Instrument, ReplayExpectation, StateChange
+from app.models import Alert, Event, Instrument, ReplayEvaluation, ReplayExpectation, StateChange
 from app.models.trace import AgentRun, ModelCall, ToolCall
 from app.tools.maturity import instrument_state_at
 
@@ -1020,3 +1022,50 @@ def write_latest_eval_reports(
     )
     md_path.write_text(render_eval_markdown(report), encoding="utf-8")
     return md_path, json_path
+
+
+def _git_sha() -> str | None:
+    """Current commit SHA for the evaluation row (None when git is unavailable)."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return None
+    sha = (proc.stdout or "").strip()
+    return sha if proc.returncode == 0 and sha else None
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def store_latest_evaluation(session: Session, report: EvalReport) -> ReplayEvaluation:
+    """Persist an ``--eval-latest`` report as a ``ReplayEvaluation`` row.
+
+    Cloud Run jobs have no durable filesystem, so this row (not the JSON files) is
+    what the dashboard reads in production. The files are still written locally.
+    """
+    row = ReplayEvaluation(
+        precision=_decimal_or_none(report.alert.precision),
+        recall=_decimal_or_none(report.alert.recall),
+        incomplete=bool(report.incomplete),
+        cost_usd=_decimal_or_none(report.totals.get("cost_usd")),
+        event_count=report.totals.get("events"),
+        expectation_count=report.totals.get("expectations"),
+        per_event=[r.to_dict() for r in report.per_event],
+        git_sha=_git_sha(),
+        prompt_version=PROMPT_VERSION,
+        error=report.error,
+    )
+    session.add(row)
+    session.flush()
+    return row

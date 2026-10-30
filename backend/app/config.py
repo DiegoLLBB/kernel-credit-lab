@@ -14,6 +14,9 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://kernel:kernel@localhost:5432/kernel"
     redis_url: str = "redis://localhost:6379/0"
+    # Background queue (ARQ over Redis). Production has no Redis and nothing there
+    # uses the queue, so readiness skips the Redis check when this is off.
+    queue_enabled: bool = True
 
     # Meta Model API (hosted). Verify base URL and model IDs against the official model list.
     model_api_key: str = Field(default="", repr=False)

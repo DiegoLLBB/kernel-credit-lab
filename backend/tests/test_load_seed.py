@@ -234,3 +234,48 @@ def test_active_instruments_never_exceed_schedule_by_year(session: Session) -> N
                 f"issuer {sched.issuer_id} basis={sched.basis} bucket {label}: "
                 f"instruments {instrument_sum} exceed schedule {schedule_amount}"
             )
+
+
+def test_reload_never_deletes_unrelated_rows(session: Session) -> None:
+    """Reloading on a database that already holds the seed must not delete rows.
+
+    Simulates the cloud database (seed plus replay-produced rows): an extra issuer,
+    instrument and watchlist entry survive a second load untouched, and seed
+    counts are unchanged.
+    """
+    from datetime import date
+
+    load_seed(session, SEED_PATH)
+    session.commit()
+    n_instruments = session.scalar(select(func.count()).select_from(Instrument))
+    n_issuers = session.scalar(select(func.count()).select_from(Issuer))
+
+    extra_issuer = Issuer(key="extra_corp", name="Extra Corp", cik="9999999999")
+    session.add(extra_issuer)
+    session.flush()
+    extra_bond = Instrument(
+        key="extra_bond_2030",
+        issuer_id=extra_issuer.id,
+        name="5.000% Notes due 2030",
+        coupon=Decimal("5.0"),
+        maturity=date(2030, 6, 1),
+        amount_outstanding=Decimal("100000000"),
+    )
+    session.add(extra_bond)
+    session.add(Watchlist(issuer_id=extra_issuer.id, label="extra"))
+    session.commit()
+
+    stats = load_seed(session, SEED_PATH)
+    session.commit()
+
+    assert stats.issuers_created == 0
+    assert stats.instruments_created == 0
+    assert session.scalar(select(func.count()).select_from(Issuer)) == n_issuers + 1
+    assert session.scalar(select(func.count()).select_from(Instrument)) == n_instruments + 1
+    kept = session.scalars(select(Instrument).where(Instrument.key == "extra_bond_2030")).one()
+    assert kept.amount_outstanding == Decimal("100000000")
+    assert kept.issuer_id == extra_issuer.id
+    assert (
+        session.scalars(select(Watchlist).where(Watchlist.issuer_id == extra_issuer.id)).one().label
+        == "extra"
+    )

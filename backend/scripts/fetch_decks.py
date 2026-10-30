@@ -102,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with NewsroomClient() as client, SessionLocal() as session:
+            failed = 0
             for deck in decks:
                 try:
                     row = upsert_deck(session, client, deck)
@@ -113,7 +114,11 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 except Exception as exc:  # noqa: BLE001 — continue other decks
                     session.rollback()
+                    failed += 1
                     print(f"{deck.get('issuer')}: ERROR {exc}", file=sys.stderr)
+            if failed:
+                print(f"{failed} of {len(decks)} deck(s) failed", file=sys.stderr)
+                return 1
     except NewsroomError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
