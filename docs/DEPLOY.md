@@ -69,11 +69,15 @@ name, the arguments used, the execution id and the link to its logs.
 ```bash
 gcloud run jobs execute kernel-seed --region=europe-west1 --wait
 gcloud run jobs execute kernel-replay --region=europe-west1 \
-  --args=--only,vz_redemption_notice,--max-cost-usd,2,--eval-latest --wait
+  --args=-m,scripts.run_replay,--only,vz_redemption_notice,--max-cost-usd,2,--eval-latest \
+  --wait
 gcloud run jobs execute kernel-decks --region=europe-west1 --wait
 ```
 
-(`--args` is comma-separated; each comma becomes one container argument.)
+(`--args` is comma-separated; each comma becomes one container argument. It replaces the
+deployed defaults entirely, so include `-m scripts.<job>` when passing `--args` from a
+terminal. The GitHub workflow adds the module automatically — there, only script flags
+are needed.)
 
 ### Reading the logs
 

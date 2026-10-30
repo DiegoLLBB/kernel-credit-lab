@@ -16,9 +16,10 @@ on:
           - decks
       args:
         description: >-
-          Override the job's default arguments (space-separated, e.g.
+          Replace the job's default arguments entirely (the python module is added
+          automatically, so only pass script flags, e.g.
           --only vz_redemption_notice --max-cost-usd 2 --eval-latest).
-          Empty keeps the defaults.
+          Empty keeps the deployed defaults.
         required: false
         default: ""
         type: string
@@ -52,6 +53,14 @@ jobs:
         run: |
           NAME="kernel-${{ inputs.job }}"
           ARGS="${{ inputs.args }}"
+          # Execution-time --args replaces the deployed args entirely (including the
+          # python module), so re-add the module here; deployed defaults are used as-is
+          # when no args are given.
+          case "${{ inputs.job }}" in
+            seed) BASE="-m,scripts.seed_job" ;;
+            replay) BASE="-m,scripts.run_replay" ;;
+            decks) BASE="-m,scripts.decks_job" ;;
+          esac
           WAIT=""
           if [ "${{ inputs.wait }}" = "true" ]; then WAIT="--wait"; fi
           if [ -z "$ARGS" ]; then
@@ -61,7 +70,7 @@ jobs:
           else
             # gcloud takes comma-separated args; the input is space-separated.
             read -ra PARTS <<< "$ARGS"
-            CSV="$(IFS=,; echo "${PARTS[*]}")"
+            CSV="$BASE,$(IFS=,; echo "${PARTS[*]}")"
             echo "Executing $NAME with arguments: $ARGS"
             # shellcheck disable=SC2086
             gcloud run jobs execute "$NAME" --region="$REGION" --args="$CSV" $WAIT
