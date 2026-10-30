@@ -57,9 +57,7 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
         for key, items in summary.items():
-            (out_root / key / "readings.json").write_text(
-                json.dumps(items, indent=2, default=str)
-            )
+            (out_root / key / "readings.json").write_text(json.dumps(items, indent=2, default=str))
             print(f"{key}: {len(items)} readings -> {out_root / key}")
     if not rows:
         print("no chart readings stored")
