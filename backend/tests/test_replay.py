@@ -47,6 +47,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPLAY_JSON = FIXTURES / "replay" / "minimal_events.json"
 INTEL_JSON = FIXTURES / "replay" / "intel_notes_apr.json"
 DUKE_Q1_JSON = FIXTURES / "replay" / "duke_q1_10q.json"
+DUKE_Q1_MERGED_JSON = FIXTURES / "replay" / "duke_q1_merged.json"
 VERIZON_8K_JSON = FIXTURES / "replay" / "verizon_8k_frontier.json"
 NEWSROOM = FIXTURES / "newsroom"
 EDGAR_FIX = FIXTURES / "edgar"
@@ -521,6 +522,43 @@ def test_duke_q1_index_resolves_to_10q_body(
     assert filing.body_text
     assert "Term Loan Facilities" in filing.body_text or "term loan" in filing.body_text.lower()
     assert event.source_filing_id == filing.id
+
+
+def test_shared_duke_10q_merges_into_one_parent_event(
+    session: Session, duke_corp: Issuer, edgar_client: EdgarClient
+) -> None:
+    """Two expectations sharing one 10-Q → one event on duke_corp; both expectations linked."""
+    carolinas = Issuer(
+        key="duke_carolinas",
+        name="Duke Energy Carolinas, LLC",
+        cik="17797",
+        parent_id=duke_corp.id,
+    )
+    session.add(carolinas)
+    session.flush()
+    clients = ReplayClients(edgar=edgar_client, newsroom=FakeFetcher({}))
+    load_replay_events(session, DUKE_Q1_MERGED_JSON)
+    session.commit()
+    created = advance_to(session, date(2026, 5, 5), clients)
+    session.commit()
+    # One merged event (not two).
+    seeded = [e for e in created if e.replay_key and not e.replay_key.startswith("rate_update")]
+    assert len(seeded) == 1
+    event = seeded[0]
+    assert event.replay_key.startswith("filing:0001326160-26-000026:")
+    assert event.issuer_id == duke_corp.id
+    assert "registrants:" in (event.summary or "")
+    assert "Duke Energy Corporation" in (event.summary or "")
+    assert "Duke Energy Carolinas" in (event.summary or "")
+    exps = session.scalars(select(ReplayExpectation).order_by(ReplayExpectation.key)).all()
+    assert {e.key for e in exps} == {"dec_term_loan", "duk_parent_tl_repaid"}
+    assert all(e.event_id == event.id for e in exps)
+
+    from app.agent.loop import assemble_user_input
+
+    payload = json.loads(assemble_user_input(session, event))
+    keys = {r["key"] for r in payload["registrants"]}
+    assert keys == {"duke_corp", "duke_carolinas"}
 
 
 def test_verizon_8k_index_resolves_primary_and_ex99(

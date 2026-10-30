@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,7 @@ from app.tools.maturity import instrument_state_at
 
 INCOMPLETE_STATUSES = frozenset({"needs_input", "paused"})
 FAILED_STATUSES = frozenset({"failed"})
+HIDDEN_RUN_STATUSES = frozenset({"superseded", "abandoned"})
 AMOUNT_TOLERANCE = Decimal("0.01")  # 1%
 
 
@@ -480,6 +481,22 @@ def _event_alerted_material(session: Session, event: Event, run: AgentRun | None
     return alert is not None
 
 
+def _latest_run_for_event(session: Session, event: Event) -> AgentRun | None:
+    """Latest non-superseded / non-abandoned run for ``event`` (prefers ``event.run_id``)."""
+    if event.run_id:
+        run = session.get(AgentRun, event.run_id)
+        if run is not None and (run.status or "") not in HIDDEN_RUN_STATUSES:
+            return run
+    return session.scalars(
+        select(AgentRun)
+        .where(
+            AgentRun.event_id == event.id,
+            AgentRun.status.not_in(sorted(HIDDEN_RUN_STATUSES)),
+        )
+        .order_by(AgentRun.created_at.desc())
+    ).first()
+
+
 def evaluate_replay(
     session: Session,
     *,
@@ -487,10 +504,14 @@ def evaluate_replay(
     log: dict[str, Any] | None = None,
     end_state_as_of: date | None = None,
     only_keys: set[str] | None = None,
+    prefer_latest_run: bool = False,
 ) -> EvalReport:
     """Compare agent outcomes with ``ReplayExpectation`` and end-state checks.
 
     Skipped ``--only`` events (still pending / logged as skipped) are excluded.
+    When ``prefer_latest_run`` is True (``--eval-latest``), each expectation uses the
+    latest non-superseded AgentRun for its linked event — the merged-event outcome
+    counts once for every linked expectation.
     """
     report = EvalReport()
     if log:
@@ -514,6 +535,17 @@ def evaluate_replay(
             log_by_key[key_s] = row
             if row.get("skipped") or row.get("status") == "skipped":
                 skipped_keys.add(key_s)
+        # Merged filing events: map every linked expectation key to the same log row.
+        for exp in expectations:
+            if exp.key in log_by_key or not exp.event_id:
+                continue
+            event = session.get(Event, exp.event_id)
+            if event is None or not event.replay_key:
+                continue
+            if event.replay_key in log_by_key:
+                log_by_key[exp.key] = log_by_key[event.replay_key]
+                if event.replay_key in skipped_keys:
+                    skipped_keys.add(exp.key)
 
     for exp in expectations:
         if only_keys is not None and exp.key not in only_keys:
@@ -529,8 +561,11 @@ def evaluate_replay(
 
         log_row = log_by_key.get(exp.key)
         run: AgentRun | None = None
-        if event and event.run_id:
-            run = session.get(AgentRun, event.run_id)
+        if event is not None:
+            if prefer_latest_run or not log_row:
+                run = _latest_run_for_event(session, event)
+            elif event.run_id:
+                run = session.get(AgentRun, event.run_id)
 
         alerted = _event_alerted_material(session, event, run) if event else None
         expected_alert = bool(exp.expected_alert)
@@ -840,6 +875,38 @@ def write_eval_reports(
     md_path = Path(f"{stem}_eval.md")
     json_path.write_text(
         json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    md_path.write_text(render_eval_markdown(report), encoding="utf-8")
+    return md_path, json_path
+
+
+def evaluate_latest(
+    session: Session,
+    *,
+    replay_path: Path | str | None = None,
+) -> EvalReport:
+    """Score all expectations against the latest non-superseded run per event."""
+    return evaluate_replay(
+        session,
+        replay_path=replay_path,
+        log=None,
+        prefer_latest_run=True,
+    )
+
+
+def write_latest_eval_reports(
+    report: EvalReport,
+    runs_dir: Path,
+) -> tuple[Path, Path]:
+    """Write ``replay_runs/latest_eval.md`` and ``.json`` for the dashboard."""
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    json_path = runs_dir / "latest_eval.json"
+    md_path = runs_dir / "latest_eval.md"
+    payload = report.to_dict()
+    payload["evaluated_at"] = datetime.now(UTC).isoformat()
+    json_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     md_path.write_text(render_eval_markdown(report), encoding="utf-8")

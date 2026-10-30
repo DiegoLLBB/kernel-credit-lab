@@ -205,17 +205,27 @@ def test_attach_run_budget_warns_below_quarter() -> None:
 def test_max_turns_for_event_periodic_vs_other(
     session: Session, verizon_event: tuple[Event, Filing, Instrument]
 ) -> None:
-    event, _filing, _bond = verizon_event
+    event, filing, _bond = verizon_event
     assert event.event_type == "press_release"
-    assert max_turns_for_event(event) == DEFAULT_MAX_TURNS
-    assert max_tokens_for_event(event) == MAX_RUN_TOKENS
+    assert max_turns_for_event(event, session=session) == DEFAULT_MAX_TURNS
+    assert max_tokens_for_event(event, session=session) == MAX_RUN_TOKENS
     event.event_type = "10-Q"
-    assert max_turns_for_event(event) == PERIODIC_MAX_TURNS
-    assert max_tokens_for_event(event) == MAX_RUN_TOKENS_LONG
+    assert max_turns_for_event(event, session=session) == PERIODIC_MAX_TURNS
+    assert max_tokens_for_event(event, session=session) == MAX_RUN_TOKENS_LONG
     event.event_type = "periodic_filing"
-    assert max_turns_for_event(event) == PERIODIC_MAX_TURNS
+    assert max_turns_for_event(event, session=session) == PERIODIC_MAX_TURNS
     assert max_turns_for_event(None) == DEFAULT_MAX_TURNS
     assert max_tokens_for_event(None) == MAX_RUN_TOKENS
+
+    # Long attached document (>20 pages) forces long limits regardless of form.
+    from app.agent.loop import LONG_DOC_PAGE_THRESHOLD
+    from app.agent.text import PAGE_CHARS
+
+    event.event_type = "8-K"
+    filing.body_text = "x" * (PAGE_CHARS * (LONG_DOC_PAGE_THRESHOLD + 1))
+    session.flush()
+    assert max_turns_for_event(event, session=session) == PERIODIC_MAX_TURNS
+    assert max_tokens_for_event(event, session=session) == MAX_RUN_TOKENS_LONG
 
 
 def _verizon_script(filing_id: str) -> list:

@@ -54,6 +54,8 @@ PERIODIC_EVENT_TYPES = frozenset(
         "10k",
     }
 )
+# Any attached filing over this page count gets the long-run budget (regardless of form).
+LONG_DOC_PAGE_THRESHOLD = 20
 _FACT_PAGE_RE = re.compile(r"page=(\d+)", re.I)
 _CLAIM_STUB_CHARS = 100
 
@@ -92,19 +94,44 @@ def _is_periodic_event(event: Event | None) -> bool:
     return et in PERIODIC_EVENT_TYPES or et.upper() in PERIODIC_EVENT_TYPES
 
 
-def max_turns_for_event(event: Event | None) -> int:
-    """40 turns for periodic filings (10-Q / 10-K); 30 otherwise."""
-    if _is_periodic_event(event):
+def event_has_long_document(session: Session | None, event: Event | None) -> bool:
+    """True when any EventFiling-linked document has more than ``LONG_DOC_PAGE_THRESHOLD`` pages."""
+    if session is None or event is None:
+        return False
+    from app.agent.text import page_count
+    from app.models import EventFiling, Filing
+
+    links = session.scalars(select(EventFiling).where(EventFiling.event_id == event.id)).all()
+    for link in links:
+        filing = session.get(Filing, link.filing_id)
+        if filing is None:
+            continue
+        if page_count(filing.body_text or "") > LONG_DOC_PAGE_THRESHOLD:
+            return True
+    return False
+
+
+def _uses_long_limits(session: Session | None, event: Event | None) -> bool:
+    return _is_periodic_event(event) or event_has_long_document(session, event)
+
+
+def max_turns_for_event(event: Event | None, session: Session | None = None) -> int:
+    """40 turns for periodic filings or any attached doc >20 pages; 30 otherwise."""
+    if _uses_long_limits(session, event):
         return PERIODIC_MAX_TURNS
     return DEFAULT_MAX_TURNS
 
 
-def max_tokens_for_event(event: Event | None, settings: Any | None = None) -> int:
-    """``MAX_RUN_TOKENS`` for short docs; ``MAX_RUN_TOKENS_LONG`` for 10-Q / 10-K."""
+def max_tokens_for_event(
+    event: Event | None,
+    settings: Any | None = None,
+    session: Session | None = None,
+) -> int:
+    """``MAX_RUN_TOKENS_LONG`` for 10-Q/10-K or any attached doc >20 pages."""
     cfg = settings if settings is not None else get_settings()
     short = int(getattr(cfg, "max_run_tokens", MAX_RUN_TOKENS) or MAX_RUN_TOKENS)
     long = int(getattr(cfg, "max_run_tokens_long", MAX_RUN_TOKENS_LONG) or MAX_RUN_TOKENS_LONG)
-    if _is_periodic_event(event):
+    if _uses_long_limits(session, event):
         return long
     return short
 
@@ -127,14 +154,46 @@ class LoopState:
 def assemble_user_input(session: Session, event: Event) -> str:
     """First user message: agent-visible event + issuer name + watchlist context.
 
-    Never includes ReplayExpectation fields.
+    Never includes ReplayExpectation evaluation fields (expected_*, why, …). When several
+    registrants share a filing, ``registrants`` lists each issuer the combined document covers.
     """
+    from app.models import ReplayExpectation
+
     issuer = session.get(Issuer, event.issuer_id) if event.issuer_id else None
     watch = None
     if event.issuer_id:
         watch = session.scalars(
             select(Watchlist).where(Watchlist.issuer_id == event.issuer_id)
         ).first()
+    registrants: list[dict[str, Any]] = []
+    linked = session.scalars(
+        select(ReplayExpectation).where(ReplayExpectation.event_id == event.id)
+    ).all()
+    seen_keys: set[str] = set()
+    for exp in linked:
+        iss = session.scalars(select(Issuer).where(Issuer.key == exp.issuer_key)).first()
+        if iss is None:
+            continue
+        if (iss.key or iss.id) in seen_keys:
+            continue
+        seen_keys.add(iss.key or iss.id)
+        registrants.append(
+            {
+                "id": iss.id,
+                "key": iss.key,
+                "name": iss.name,
+                "ticker": iss.ticker,
+            }
+        )
+    if not registrants and issuer is not None:
+        registrants = [
+            {
+                "id": issuer.id,
+                "key": issuer.key,
+                "name": issuer.name,
+                "ticker": issuer.ticker,
+            }
+        ]
     payload = {
         "event": agent_visible_payload(event),
         "issuer": (
@@ -148,6 +207,7 @@ def assemble_user_input(session: Session, event: Event) -> str:
             if issuer
             else None
         ),
+        "registrants": registrants,
         "watchlist": (
             {"on_watchlist": True, "label": watch.label}
             if watch
@@ -507,7 +567,7 @@ async def _run_loop(
         max_tokens = int(limits.max_tokens)
     else:
         event = session.get(Event, run.event_id) if run.event_id else None
-        max_tokens = max_tokens_for_event(event, settings)
+        max_tokens = max_tokens_for_event(event, settings, session=session)
 
     _begin_session(run, state)
     session.commit()

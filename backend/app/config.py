@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     # Empty → backend/seed/newsrooms.yaml.
     newsrooms_path: str = ""
 
+    # Dashboard CORS (Firebase Hosting + local Next.js). Comma-separated overrides allowed.
+    cors_origins: str = (
+        "http://localhost:3000,https://kernel-credit-lab.web.app,https://credit.kernelterminal.com"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

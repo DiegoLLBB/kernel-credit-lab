@@ -60,14 +60,26 @@ def supersede_event_runs(session: Session, event: Event) -> int:
 
 
 def prepare_rerun(session: Session, keys: set[str]) -> list[Event]:
-    """Supersede prior runs for each ``replay_key`` in ``keys``; return matching events."""
+    """Supersede prior runs for each ``replay_key`` / expectation key in ``keys``."""
     if not keys:
         return []
-    events = session.scalars(select(Event).where(Event.replay_key.in_(sorted(keys)))).all()
-    for event in events:
+    from app.models import ReplayExpectation
+
+    by_id: dict[str, Event] = {}
+    for event in session.scalars(select(Event).where(Event.replay_key.in_(sorted(keys)))).all():
+        by_id[event.id] = event
+    # Merged filing events: keys may be expectation keys linked via event_id.
+    for exp in session.scalars(
+        select(ReplayExpectation).where(ReplayExpectation.key.in_(sorted(keys)))
+    ).all():
+        if exp.event_id and exp.event_id not in by_id:
+            ev = session.get(Event, exp.event_id)
+            if ev is not None:
+                by_id[ev.id] = ev
+    for event in by_id.values():
         supersede_event_runs(session, event)
     session.flush()
-    return list(events)
+    return list(by_id.values())
 
 
 def start_agent_run(session: Session, event: Event, *, question: str | None = None) -> AgentRun:

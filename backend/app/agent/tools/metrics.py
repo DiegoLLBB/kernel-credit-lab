@@ -175,6 +175,11 @@ def compute_metrics(session: Session, run: AgentRun) -> dict[str, Any]:
     finally:
         nested.rollback()
 
+    fx_rates: dict[str, Any] = {}
+    for wall in (before_issuer, before_group, after_issuer, after_group):
+        for cur, info in (wall.get("fx_rates_used") or {}).items():
+            fx_rates[cur] = info
+
     output_id = str(uuid.uuid4())
     output = {
         "id": output_id,
@@ -185,6 +190,7 @@ def compute_metrics(session: Session, run: AgentRun) -> dict[str, Any]:
         "before": {"issuer": before_issuer, "group": before_group},
         "after": {"issuer": after_issuer, "group": after_group},
         "proposed_change_ids": [c.id for c in proposed],
+        "fx_rates_used": fx_rates,
     }
     outputs = list(run.metrics_outputs or [])
     outputs.append(output)

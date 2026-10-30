@@ -191,9 +191,7 @@ class Event(TimestampMixin, Base):
         back_populates="event", cascade="all, delete-orphan"
     )
     alerts: Mapped[list["Alert"]] = relationship(back_populates="event")
-    replay_expectation: Mapped["ReplayExpectation | None"] = relationship(
-        back_populates="event", uselist=False
-    )
+    replay_expectations: Mapped[list["ReplayExpectation"]] = relationship(back_populates="event")
 
 
 class EventFiling(TimestampMixin, Base):
@@ -232,11 +230,13 @@ class ReplayExpectation(TimestampMixin, Base):
     expected_alert: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     why: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Multiple expectations may share one Event when they share a source filing
+    # (e.g. combined Duke 10-Q covering several registrants).
     event_id: Mapped[str | None] = mapped_column(
-        ForeignKey("event.id", ondelete="SET NULL"), unique=True, index=True
+        ForeignKey("event.id", ondelete="SET NULL"), index=True
     )
 
-    event: Mapped[Event | None] = relationship(back_populates="replay_expectation")
+    event: Mapped[Event | None] = relationship(back_populates="replay_expectations")
 
 
 class StateChange(TimestampMixin, Base):

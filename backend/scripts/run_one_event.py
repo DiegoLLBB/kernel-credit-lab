@@ -144,6 +144,12 @@ def _expect(session: Session, replay_key: str) -> ReplayExpectation:
 def _event_for_key(session: Session, replay_key: str) -> Event:
     event = session.scalars(select(Event).where(Event.replay_key == replay_key)).first()
     if event is None:
+        exp = session.scalars(
+            select(ReplayExpectation).where(ReplayExpectation.key == replay_key)
+        ).first()
+        if exp is not None and exp.event_id:
+            event = session.get(Event, exp.event_id)
+    if event is None:
         raise SystemExit(f"No Event row for replay_key={replay_key!r} after advance_to")
     return event
 
@@ -468,10 +474,15 @@ def _build_limits(
     max_turns: int | None,
     max_seconds: float | None,
     event: Event | None = None,
+    session: Session | None = None,
 ) -> RunLimits:
     settings = get_settings()
-    turns = max_turns if max_turns is not None else max_turns_for_event(event)
-    tokens = max_tokens if max_tokens is not None else max_tokens_for_event(event, settings)
+    turns = max_turns if max_turns is not None else max_turns_for_event(event, session=session)
+    tokens = (
+        max_tokens
+        if max_tokens is not None
+        else max_tokens_for_event(event, settings, session=session)
+    )
     limits = RunLimits(
         max_turns=turns,
         max_cost_usd=float(settings.max_run_cost_usd),
@@ -521,6 +532,7 @@ async def _run_fresh(
                 max_turns=max_turns,
                 max_seconds=max_seconds,
                 event=event,
+                session=session,
             )
             _log(
                 f"Event {event.id} status={event.status} "
@@ -605,6 +617,7 @@ async def _run_resume(
             max_turns=max_turns,
             max_seconds=max_seconds,
             event=event,
+            session=session,
         )
         _log(
             f"Resuming run {run_id} (status={existing.status}, "

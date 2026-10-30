@@ -188,14 +188,69 @@ def test_maturity_wall_new_issuance_adds_to_total_without_breach(
     assert fy2028["total_outstanding"] == fy2028_before["total_outstanding"] + Decimal("500000000")
 
 
-def test_maturity_wall_non_usd_raises(seeded_session: Session) -> None:
+def test_maturity_wall_non_usd_raises_without_fx_rate(seeded_session: Session) -> None:
     duke = seeded_session.scalars(select(Issuer).where(Issuer.cik == "1326160")).one()
     bond = seeded_session.scalars(select(Instrument).where(Instrument.key == "duk_2650_2026")).one()
     bond.currency = "EUR"
     seeded_session.commit()
 
-    with pytest.raises(NonUsdAmountError, match="non-USD"):
+    with pytest.raises(NonUsdAmountError, match="DEXUSEU|cannot convert"):
         maturity_wall(seeded_session, duke.id, date(2025, 12, 31))
+
+
+def test_maturity_wall_cad_converts_with_dexcaus_invert(seeded_session: Session) -> None:
+    """C$1.25bn at DEXCAUS=1.25 (CAD per USD) → $1.00bn USD after invert."""
+    from app.models import RateObservation
+    from app.tools.fx import amount_to_usd, usd_per_unit
+
+    assert usd_per_unit("DEXCAUS", Decimal("1.25")) == Decimal("0.80000000")
+
+    amazon = seeded_session.scalars(select(Issuer).where(Issuer.key == "amazon")).one()
+    as_of = date(2026, 6, 12)
+    seeded_session.add(
+        RateObservation(
+            series_id="DEXCAUS",
+            obs_date=date(2026, 6, 11),
+            value=Decimal("1.25"),
+        )
+    )
+    seeded_session.add(
+        Instrument(
+            key="amzn_cad_3400_2029_test",
+            issuer_id=amazon.id,
+            name="3.400% Notes due 2029 (CAD)",
+            instrument_type="bond",
+            coupon=Decimal("3.400"),
+            rate_type="fixed",
+            maturity=date(2029, 6, 12),
+            issue_date=date(2026, 6, 12),
+            amount_outstanding=Decimal("1250000000"),
+            currency="CAD",
+            status="active",
+        )
+    )
+    seeded_session.commit()
+
+    usd = amount_to_usd(seeded_session, Decimal("1250000000"), "CAD", as_of)
+    assert usd == Decimal("1000000000.00")
+
+    wall = maturity_wall(seeded_session, amazon.id, as_of)
+    assert "CAD" in wall["fx_rates_used"]
+    assert wall["fx_rates_used"]["CAD"]["series_id"] == "DEXCAUS"
+    assert wall["fx_rates_used"]["CAD"]["inverted"] is True
+    assert Decimal(wall["fx_rates_used"]["CAD"]["raw_rate"]) == Decimal("1.25")
+    # Find the CAD note in FY2029 (or whichever bucket) new_since_schedule.
+    found = False
+    for bucket in (wall.get("buckets") or {}).values():
+        for row in bucket.get("new_since_schedule") or []:
+            if row.get("key") == "amzn_cad_3400_2029_test":
+                found = True
+                # Row keeps native amount; bucket sum is USD.
+                assert Decimal(str(row["amount_outstanding"])) == Decimal("1250000000")
+        if found:
+            assert Decimal(str(bucket["new_since_schedule_sum"])) >= Decimal("1000000000")
+            break
+    assert found, "CAD instrument missing from wall"
 
 
 def test_verizon_tender_replay_amounts(seeded_session: Session) -> None:

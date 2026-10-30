@@ -10,10 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Instrument, Issuer, MaturitySchedule, StateChange
+from app.tools.fx import FxRateMissingError, amount_to_usd
 
 
 class NonUsdAmountError(ValueError):
-    """Raised when a non-USD amount would be included in a wall sum (FX not yet supported)."""
+    """Raised when a non-USD amount cannot be converted (no FX series / rate)."""
 
 
 def _period_end(bucket: dict[str, Any]) -> date | None:
@@ -118,19 +119,28 @@ def _instrument_row(inst: Instrument, *, amount: Decimal, status: str) -> dict[s
     }
 
 
-def _require_usd(inst: Instrument, *, context: str) -> None:
-    if (inst.currency or "USD").upper() != "USD":
-        raise NonUsdAmountError(
-            f"{context}: cannot sum non-USD amount for instrument "
-            f"{inst.key or inst.id} ({inst.currency}); FX conversion not implemented"
-        )
-
-
-def _sum_rows(rows: list[tuple[Instrument, Decimal, str]], *, context: str) -> Decimal:
+def _sum_rows_usd(
+    session: Session,
+    rows: list[tuple[Instrument, Decimal, str]],
+    *,
+    as_of: date,
+    context: str,
+    rates_used: dict[str, dict],
+) -> Decimal:
     total = Decimal("0")
     for inst, amount, _status in rows:
-        _require_usd(inst, context=context)
-        total += amount
+        try:
+            total += amount_to_usd(
+                session,
+                amount,
+                inst.currency or "USD",
+                as_of,
+                rates_used=rates_used,
+            )
+        except FxRateMissingError as exc:
+            raise NonUsdAmountError(
+                f"{context}: cannot convert {inst.key or inst.id} ({inst.currency}) to USD: {exc}"
+            ) from exc
     return total
 
 
@@ -171,6 +181,7 @@ def maturity_wall(session: Session, issuer_id: str, as_of: date) -> dict[str, An
         "basis": None,
         "source_url": None,
         "buckets": {},
+        "fx_rates_used": {},
     }
     if schedule is None:
         return result
@@ -180,6 +191,7 @@ def maturity_wall(session: Session, issuer_id: str, as_of: date) -> dict[str, An
     result["basis"] = schedule.basis
     result["source_url"] = schedule.source_url
     schedule_as_of = schedule.as_of
+    rates_used: dict[str, dict] = {}
 
     issuer_ids = {issuer_id}
     if schedule.basis == "consolidated":
@@ -241,10 +253,35 @@ def maturity_wall(session: Session, issuer_id: str, as_of: date) -> dict[str, An
         repaid = sorted(repaid, key=_instrument_sort_key)
         new_named = sorted(new_named, key=_instrument_sort_key)
 
-        schedule_sum = _sum_rows(schedule_named, context=f"bucket {label} schedule set")
-        named_active_sum = _sum_rows(named_active, context=f"bucket {label} named_active")
-        new_sum = _sum_rows(new_named, context=f"bucket {label} new_since_schedule")
-        repaid_sum = _sum_rows(repaid, context=f"bucket {label} repaid_since_schedule")
+        # Schedule backbone is already USD; convert named instrument notionals at as_of.
+        schedule_sum = _sum_rows_usd(
+            session,
+            schedule_named,
+            as_of=schedule_as_of,
+            context=f"bucket {label} schedule set",
+            rates_used=rates_used,
+        )
+        named_active_sum = _sum_rows_usd(
+            session,
+            named_active,
+            as_of=as_of,
+            context=f"bucket {label} named_active",
+            rates_used=rates_used,
+        )
+        new_sum = _sum_rows_usd(
+            session,
+            new_named,
+            as_of=as_of,
+            context=f"bucket {label} new_since_schedule",
+            rates_used=rates_used,
+        )
+        repaid_sum = _sum_rows_usd(
+            session,
+            repaid,
+            as_of=as_of,
+            context=f"bucket {label} repaid_since_schedule",
+            rates_used=rates_used,
+        )
 
         breach = schedule_sum > schedule_amount
         unattributed = max(Decimal("0"), schedule_amount - schedule_sum)
@@ -266,4 +303,5 @@ def maturity_wall(session: Session, issuer_id: str, as_of: date) -> dict[str, An
         }
 
     result["buckets"] = buckets_out
+    result["fx_rates_used"] = rates_used
     return result

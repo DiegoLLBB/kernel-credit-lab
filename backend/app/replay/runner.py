@@ -186,10 +186,20 @@ def _unfinished_events(session: Session, *, until: date) -> list[Event]:
     return out
 
 
-def _selected(event: Event, only_keys: set[str] | None) -> bool:
+def _selected(event: Event, only_keys: set[str] | None, session: Session | None = None) -> bool:
     if only_keys is None:
         return True
-    return (event.replay_key or "") in only_keys
+    if (event.replay_key or "") in only_keys:
+        return True
+    # Merged filing events: match any linked ReplayExpectation key.
+    if session is not None:
+        from app.models import ReplayExpectation
+
+        linked = session.scalars(
+            select(ReplayExpectation.key).where(ReplayExpectation.event_id == event.id)
+        ).all()
+        return any(k in only_keys for k in linked)
+    return False
 
 
 def complete_rate_update_by_code(session: Session, event: Event) -> AgentRun:
@@ -538,14 +548,14 @@ async def process_one_event(
 
     if limits is None:
         limits = RunLimits(
-            max_turns=max_turns_for_event(event),
-            max_tokens=max_tokens_for_event(event),
+            max_turns=max_turns_for_event(event, session=session),
+            max_tokens=max_tokens_for_event(event, session=session),
         )
     elif limits.max_tokens is None:
         limits = RunLimits(
             max_turns=limits.max_turns,
             max_cost_usd=limits.max_cost_usd,
-            max_tokens=max_tokens_for_event(event),
+            max_tokens=max_tokens_for_event(event, session=session),
             max_wall_seconds=limits.max_wall_seconds,
         )
     started = time.perf_counter()
@@ -632,8 +642,8 @@ async def run_replay(
             unfinished = [
                 e for e in _unfinished_events(session, until=until) if e.id not in handled_ids
             ]
-            selected = [e for e in unfinished if _selected(e, only_keys)]
-            not_selected = [e for e in unfinished if not _selected(e, only_keys)]
+            selected = [e for e in unfinished if _selected(e, only_keys, session)]
+            not_selected = [e for e in unfinished if not _selected(e, only_keys, session)]
 
             if selected:
                 day = selected[0].event_date
@@ -658,7 +668,7 @@ async def run_replay(
                         handled_ids.add(event.id)
                         continue
 
-                    if not _selected(event, only_keys):
+                    if not _selected(event, only_keys, session):
                         # Leave pending for a later full replay; only record in the log.
                         outcome = _skipped_outcome(session, event)
                         handled_ids.add(event.id)

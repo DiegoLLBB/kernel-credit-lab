@@ -7,7 +7,7 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, runs
+from app.api import alerts, documents, health, issuers, replay, runs
 from app.config import get_settings
 from app.core.logging import configure_logging, request_id_var
 
@@ -21,10 +21,11 @@ app = FastAPI(
     description="Agentic, verifiable research for USD investment-grade bonds.",
 )
 
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_methods=["GET", "POST"],
+    allow_origins=_cors_origins or ["http://localhost:3000"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -55,3 +56,7 @@ async def request_context(request: Request, call_next):
 
 app.include_router(health.router)
 app.include_router(runs.router)
+app.include_router(alerts.router)
+app.include_router(issuers.router)
+app.include_router(documents.router)
+app.include_router(replay.router)

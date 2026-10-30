@@ -1,0 +1,44 @@
+{
+  "window": {"from": "2026-01-01", "to": "2026-12-31"},
+  "description": "Two expectations sharing one Duke Q1 10-Q → one merged event on the parent.",
+  "events": [
+    {
+      "key": "dec_term_loan",
+      "event_date": "2026-03-13",
+      "available_from": "2026-05-05",
+      "issuer": "duke_carolinas",
+      "event_type": "new_debt_found",
+      "title": "Duke Carolinas term loan (eval only)",
+      "sources": [
+        {
+          "form": "10-Q",
+          "filed": "2026-05-05",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000026/0001326160-26-000026-index.htm",
+          "description": "hidden"
+        }
+      ],
+      "expected_changes": [],
+      "expected_alert": true,
+      "why": "hidden"
+    },
+    {
+      "key": "duk_parent_tl_repaid",
+      "event_date": "2026-03-31",
+      "available_from": "2026-05-05",
+      "issuer": "duke_corp",
+      "event_type": "debt_repaid",
+      "title": "Duke parent term loan repaid (eval only)",
+      "sources": [
+        {
+          "form": "10-Q",
+          "filed": "2026-05-05",
+          "url": "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000026/0001326160-26-000026-index.htm",
+          "description": "hidden"
+        }
+      ],
+      "expected_changes": [],
+      "expected_alert": false,
+      "why": "hidden"
+    }
+  ]
+}

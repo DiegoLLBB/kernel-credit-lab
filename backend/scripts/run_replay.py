@@ -25,7 +25,12 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.eval.replay_eval import evaluate_replay, write_eval_reports
+from app.eval.replay_eval import (
+    evaluate_latest,
+    evaluate_replay,
+    write_eval_reports,
+    write_latest_eval_reports,
+)
 from app.ingest.replay import DEFAULT_REPLAY_PATH, default_clients
 from app.llm import LLMClient
 from app.models import Issuer, ReplayExpectation
@@ -135,6 +140,14 @@ async def _async_main(argv: list[str] | None = None) -> int:
         help="Skip the runner; evaluate an existing replay_runs/*.json log",
     )
     parser.add_argument(
+        "--eval-latest",
+        action="store_true",
+        help=(
+            "Skip the runner; evaluate all expectations against the latest "
+            "non-superseded run per event; write replay_runs/latest_eval.md and .json"
+        ),
+    )
+    parser.add_argument(
         "--no-eval",
         action="store_true",
         help="Write the run log but skip the evaluation report",
@@ -143,6 +156,31 @@ async def _async_main(argv: list[str] | None = None) -> int:
 
     _configure_logging()
     settings = get_settings()
+
+    if args.eval_latest:
+        runs_dir = args.runs_dir or DEFAULT_RUNS_DIR
+        with SessionLocal() as session:
+            _ensure_seed(session)
+            n_exp = session.scalar(select(func.count()).select_from(ReplayExpectation)) or 0
+            if n_exp == 0:
+                _log("Loading replay expectations…")
+                from app.ingest.replay import load_replay_events
+
+                load_replay_events(session, args.replay_path or DEFAULT_REPLAY_PATH)
+                session.commit()
+            report = evaluate_latest(
+                session,
+                replay_path=args.replay_path or DEFAULT_REPLAY_PATH,
+            )
+            md_path, json_path = write_latest_eval_reports(report, runs_dir)
+        print(f"eval_md\t{md_path}")
+        print(f"eval_json\t{json_path}")
+        prec = report.alert.precision
+        rec = report.alert.recall
+        print(f"precision\t{prec if prec is not None else 'n/a'}")
+        print(f"recall\t{rec if rec is not None else 'n/a'}")
+        print(f"expectations\t{len(report.per_event)}")
+        return 0
 
     if args.eval_only is not None:
         log_path = Path(args.eval_only)

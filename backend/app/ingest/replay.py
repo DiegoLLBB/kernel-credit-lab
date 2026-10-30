@@ -608,56 +608,187 @@ def _link_event_filing(session: Session, event: Event, filing: Filing) -> None:
         session.add(EventFiling(event_id=event.id, filing_id=filing.id))
 
 
-def _create_seeded_event(
+def _source_identity(src: dict[str, Any] | None) -> str | None:
+    """Stable identity for a primary source (accession preferred, else URL)."""
+    if not src:
+        return None
+    acc = src.get("accession")
+    if acc:
+        return str(acc).strip()
+    url = str(src.get("url") or "").strip()
+    if not url:
+        return None
+    match = re.search(r"(\d{10}-\d{2}-\d{6})", url)
+    if match:
+        return match.group(1)
+    return url
+
+
+def _filing_group_key(expectation: ReplayExpectation) -> tuple[str, str] | None:
+    primary = (expectation.sources or [None])[0]
+    ident = _source_identity(primary if isinstance(primary, dict) else None)
+    if not ident:
+        return None
+    return (ident, expectation.available_from.isoformat())
+
+
+def _top_parent_issuer(session: Session, issuers: list[Issuer]) -> Issuer:
+    """Among a set of issuers, pick the top parent in the group (holdco if present)."""
+    if len(issuers) == 1:
+        return issuers[0]
+    ids = {i.id for i in issuers}
+    roots = [i for i in issuers if i.parent_id is None or i.parent_id not in ids]
+    if not roots:
+        roots = list(issuers)
+    for r in roots:
+        if r.parent_id is None:
+            return r
+    # Prefer the issuer whose key looks like a corp/holdco.
+    for r in roots:
+        key = (r.key or "").lower()
+        if key.endswith("_corp") or "parent" in key or key.endswith("_inc"):
+            return r
+    return sorted(roots, key=lambda i: i.key or i.name)[0]
+
+
+def _merged_replay_key(identity: str, available_from: date) -> str:
+    return f"filing:{identity}:{available_from.isoformat()}"
+
+
+def _create_seeded_event_group(
     session: Session,
-    expectation: ReplayExpectation,
+    expectations: list[ReplayExpectation],
     clients: ReplayClients,
 ) -> Event | None:
-    existing = _existing_event(session, expectation.key)
-    if existing is not None:
-        if expectation.event_id is None:
-            expectation.event_id = existing.id
+    """Create one Event for a group of expectations that share a source filing + date.
+
+    Single-expectation groups keep ``replay_key == expectation.key``. Multi-expectation
+    groups (combined 10-Q etc.) use the top parent issuer, a ``filing:…`` replay_key,
+    list every registrant in the summary, and link all expectations to the event.
+    """
+    if not expectations:
+        return None
+    expectations = sorted(expectations, key=lambda e: e.key)
+
+    # Already linked → nothing to create.
+    if all(exp.event_id for exp in expectations):
+        return None
+    # Partial links: attach remaining to the existing event.
+    linked_ids = {exp.event_id for exp in expectations if exp.event_id}
+    if linked_ids:
+        event_id = next(iter(linked_ids))
+        event = session.get(Event, event_id)
+        if event is not None:
+            for exp in expectations:
+                exp.event_id = event.id
+            session.flush()
         return None
 
-    issuer = resolve_issuer(session, expectation.issuer_key)
-    issuer_name = issuer.name if issuer else expectation.issuer_key
-    primary_src = (expectation.sources or [None])[0]
-    if primary_src is None:
+    # Idempotent: merged key or any member key already has an event.
+    group_key = _filing_group_key(expectations[0])
+    if group_key and len(expectations) > 1:
+        merged_key = _merged_replay_key(group_key[0], expectations[0].available_from)
+        existing = _existing_event(session, merged_key)
+        if existing is not None:
+            for exp in expectations:
+                exp.event_id = existing.id
+            session.flush()
+            return None
+    for exp in expectations:
+        existing = _existing_event(session, exp.key)
+        if existing is not None:
+            for e in expectations:
+                e.event_id = existing.id
+            session.flush()
+            return None
+
+    issuers: list[Issuer] = []
+    for exp in expectations:
+        iss = resolve_issuer(session, exp.issuer_key)
+        if iss is not None and all(i.id != iss.id for i in issuers):
+            issuers.append(iss)
+    primary_exp = expectations[0]
+    if not issuers:
+        parent = None
+    elif len(expectations) == 1:
+        parent = issuers[0]
+    else:
+        parent = _top_parent_issuer(session, issuers)
+
+    primary_src = (primary_exp.sources or [None])[0]
+    if primary_src is None or not isinstance(primary_src, dict):
         return None
 
     filings: list[Filing] = []
-    for src in expectation.sources or []:
+    # Fetch sources once (from the parent issuer context); link all docs to the event.
+    for src in primary_exp.sources or []:
+        if not isinstance(src, dict):
+            continue
         filings.extend(
             _filings_for_source(
                 session,
                 clients,
-                issuer=issuer,
+                issuer=parent,
                 src=src,
-                available_from=expectation.available_from,
+                available_from=primary_exp.available_from,
             )
         )
 
     primary_form = _normalize_form(primary_src.get("form"))
     primary_filed_s = primary_src.get("filed")
     primary_filed = (
-        date.fromisoformat(str(primary_filed_s)) if primary_filed_s else expectation.available_from
+        date.fromisoformat(str(primary_filed_s)) if primary_filed_s else primary_exp.available_from
     )
+    registrant_names = [i.name for i in issuers] if issuers else [primary_exp.issuer_key]
+    if len(expectations) > 1:
+        issuer_name = parent.name if parent else primary_exp.issuer_key
+        summary = (
+            f"{neutral_summary(issuer_name=issuer_name, form=primary_form, filed=primary_filed)}; "
+            f"registrants: {', '.join(registrant_names)}"
+        )
+        replay_key = _merged_replay_key(
+            _source_identity(primary_src) or primary_exp.key,
+            primary_exp.available_from,
+        )
+        # Prefer a substantive event_type from the group (not just periodic_filing).
+        event_type = _agent_event_type(primary_form)
+        for exp in expectations:
+            et = (exp.event_type or "").strip()
+            if et and et not in {"periodic_filing", "10-Q", "10-K"}:
+                event_type = et
+                break
+    else:
+        issuer_name = parent.name if parent else primary_exp.issuer_key
+        summary = neutral_summary(issuer_name=issuer_name, form=primary_form, filed=primary_filed)
+        replay_key = primary_exp.key
+        event_type = _agent_event_type(primary_form)
+
     event = Event(
-        replay_key=expectation.key,
-        event_type=_agent_event_type(primary_form),
-        issuer_id=issuer.id if issuer else None,
-        event_date=expectation.available_from,
+        replay_key=replay_key,
+        event_type=event_type,
+        issuer_id=parent.id if parent else None,
+        event_date=primary_exp.available_from,
         source_filing_id=filings[0].id if filings else None,
-        summary=neutral_summary(issuer_name=issuer_name, form=primary_form, filed=primary_filed),
+        summary=summary,
         status="pending",
     )
     session.add(event)
     session.flush()
     for filing in filings:
         _link_event_filing(session, event, filing)
-    expectation.event_id = event.id
+    for exp in expectations:
+        exp.event_id = event.id
     session.flush()
     return event
+
+
+def _create_seeded_event(
+    session: Session,
+    expectation: ReplayExpectation,
+    clients: ReplayClients,
+) -> Event | None:
+    """Back-compat single-expectation create (used by tests). Prefer group create."""
+    return _create_seeded_event_group(session, [expectation], clients)
 
 
 def _create_maturity_events(session: Session, until: date, window_start: date) -> list[Event]:
@@ -739,8 +870,19 @@ def advance_day(
         .where(ReplayExpectation.available_from == d)
         .order_by(ReplayExpectation.key)
     ).all()
+    groups: dict[tuple[str, str] | None, list[ReplayExpectation]] = {}
     for exp in expectations:
-        event = _create_seeded_event(session, exp, sources)
+        groups.setdefault(_filing_group_key(exp), []).append(exp)
+    # Ungrouped (no source identity) stay one-per-expectation under a unique None bucket
+    # — split them so they don't falsely merge.
+    for key, group in list(groups.items()):
+        if key is None:
+            for exp in group:
+                event = _create_seeded_event_group(session, [exp], sources)
+                if event is not None:
+                    created.append(event)
+            continue
+        event = _create_seeded_event_group(session, group, sources)
         if event is not None:
             created.append(event)
 
@@ -797,8 +939,17 @@ def advance_to(
         .where(ReplayExpectation.available_from <= d)
         .order_by(ReplayExpectation.available_from, ReplayExpectation.key)
     ).all()
+    groups: dict[tuple[str, str] | None, list[ReplayExpectation]] = {}
     for exp in expectations:
-        event = _create_seeded_event(session, exp, sources)
+        groups.setdefault(_filing_group_key(exp), []).append(exp)
+    for key, group in groups.items():
+        if key is None:
+            for exp in group:
+                event = _create_seeded_event_group(session, [exp], sources)
+                if event is not None:
+                    created.append(event)
+            continue
+        event = _create_seeded_event_group(session, group, sources)
         if event is not None:
             created.append(event)
 
