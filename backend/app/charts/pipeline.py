@@ -81,6 +81,7 @@ def _verification_detail(res: ChartResult) -> dict[str, Any]:
                 "implied": c.implied_value,
                 "deviation": c.deviation,
                 "ok": c.ok,
+                "allowed": c.allowed,
             }
             for c in res.checks
         ],

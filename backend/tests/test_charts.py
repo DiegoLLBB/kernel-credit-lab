@@ -3,7 +3,13 @@ import io
 from PIL import Image
 
 from app.llm.sam import Region
-from app.tools.charts import BarReading, assign_bars, crop, verify_proportional
+from app.tools.charts import (
+    BarReading,
+    assign_bars,
+    crop,
+    merge_split_charts,
+    verify_proportional,
+)
 
 W, H = 2812, 1568
 
@@ -63,3 +69,41 @@ def test_crop_scales_from_frame_to_image_and_pads():
     chart_w, chart_h = (CHART.x2 - CHART.x1) / 2, (CHART.y2 - CHART.y1) / 2
     assert cropped.width > chart_w and cropped.height > chart_h
     assert cropped.width <= chart_w * 1.25 + 2
+
+
+def test_verify_tolerates_pixel_error_on_short_bars():
+    # Verizon 3Q26 p4 shape: 44 and 55 drawn ~7 px tall next to a 616 bar.
+    unit = 0.15  # px per 1K
+    vals = [44, 616, 55, 184, 406]
+    drawn = [44 + 6.7, 616, 55 + 6.7, 184, 406]  # one px of SAM error on the short bars
+    bars = [box(100 + i * 150, BASE - v * unit, 200 + i * 150, BASE) for i, v in enumerate(drawn)]
+    status, reason, checks = verify_proportional(readings(vals), bars)
+    assert status == "verified", reason
+    assert checks[0].allowed > 0.08 * 44  # pixel allowance, not the 8% rule, let it pass
+
+
+def test_pixel_slack_still_catches_a_misread_short_bar():
+    unit = 0.15
+    vals = [44, 616, 55, 184, 406]
+    bars = [box(100 + i * 150, BASE - v * unit, 200 + i * 150, BASE) for i, v in enumerate(vals)]
+    wrong = [440, 616, 55, 184, 406]  # 44 misread as 440
+    status, _, checks = verify_proportional(readings(wrong), bars)
+    assert status == "mismatch" and not checks[0].ok
+
+
+def test_merge_split_charts_joins_one_box_per_bar():
+    # Verizon 3Q26 p5 shape: SAM returned each of two tall bars as its own "bar chart".
+    left, right = box(190, 383, 342, 730), box(444, 383, 598, 730)
+    bars = [box(200, 400, 330, 728), box(455, 390, 590, 728)]
+    merged = merge_split_charts([right, left], bars)
+    assert len(merged) == 1
+    assert (merged[0].x1, merged[0].x2) == (190, 598)
+    assert assign_bars(merged, bars)[0] == bars
+
+
+def test_merge_leaves_real_charts_alone():
+    stacked = [CHART, box(533, 800, 1143, 1150)]  # two charts, one above the other
+    assert merge_split_charts(stacked, BARS) == sorted(stacked, key=lambda c: c.x1)
+    side = [CHART, box(1200, 380, 1800, 735)]  # neighbour chart with several bars
+    more = [*BARS, box(1250, 500, 1350, 728), box(1400, 450, 1500, 728)]
+    assert len(merge_split_charts(side, more)) == 2

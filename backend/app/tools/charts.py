@@ -77,6 +77,7 @@ class BarCheck:
     implied_value: float
     deviation: float  # relative difference between implied and read value
     ok: bool
+    allowed: float = 0.0  # absolute value difference accepted for this bar
 
 
 @dataclass
@@ -119,10 +120,58 @@ def assign_bars(charts: list[Region], bars: list[Region]) -> dict[int, list[Regi
     return assigned
 
 
+def merge_split_charts(
+    charts: list[Region], bars: list[Region], baseline_tol: float = 0.02
+) -> list[Region]:
+    """Join chart boxes that SAM split into one box per bar.
+
+    SAM sometimes returns each bar of a sparse chart (e.g. two tall bars) as its own
+    "bar chart". Boxes are joined only when each holds at most one bar, they sit on the
+    same baseline and the gap between them is no wider than the wider box. A wrong join
+    cannot verify silently: the proportionality check still has to pass on the result.
+    """
+    if len(charts) < 2:
+        return list(charts)
+    merged = sorted(charts, key=lambda c: c.x1)
+    changed = True
+    while changed:
+        changed = False
+        counts = assign_bars(merged, bars)
+        for i in range(len(merged) - 1):
+            a, b = merged[i], merged[i + 1]
+            same_base = abs(a.y2 - b.y2) <= baseline_tol * a.frame_height
+            gap = b.x1 - a.x2
+            close = 0 <= gap <= max(a.x2 - a.x1, b.x2 - b.x1)
+            sparse = len(counts[i]) <= 1 and len(counts[i + 1]) <= 1
+            if same_base and close and sparse:
+                union = Region(
+                    object_id=a.object_id,
+                    x1=min(a.x1, b.x1),
+                    y1=min(a.y1, b.y1),
+                    x2=max(a.x2, b.x2),
+                    y2=max(a.y2, b.y2),
+                    frame_width=a.frame_width,
+                    frame_height=a.frame_height,
+                    confidence=min(a.confidence or 0, b.confidence or 0) or None,
+                )
+                merged[i : i + 2] = [union]
+                changed = True
+                break
+    return merged
+
+
 def verify_proportional(
-    readings: list[BarReading], boxes: list[Region], tolerance: float = 0.08
+    readings: list[BarReading],
+    boxes: list[Region],
+    tolerance: float = 0.08,
+    pixel_slack: float = 2.0,
 ) -> tuple[str, str | None, list[BarCheck]]:
-    """Check bar heights against read values, assuming a shared zero baseline."""
+    """Check bar heights against read values, assuming a shared zero baseline.
+
+    A bar passes when its implied value is within ``tolerance`` (relative) of the value
+    read, or within ``pixel_slack`` pixels of bar height: a 7-px bar cannot be measured
+    to 8%, and the check should not claim more precision than the image has.
+    """
     if not readings or not boxes:
         return "unverified", "no bars detected or read", []
     if len(readings) != len(boxes):
@@ -144,8 +193,10 @@ def verify_proportional(
     checks: list[BarCheck] = []
     for reading, box, height in zip(readings, boxes, heights, strict=True):
         implied = height * scale
-        deviation = abs(implied - reading.value) / reading.value
-        checks.append(BarCheck(reading, box, implied, deviation, deviation <= tolerance))
+        diff = abs(implied - reading.value)
+        allowed = max(tolerance * reading.value, pixel_slack * scale)
+        deviation = diff / reading.value
+        checks.append(BarCheck(reading, box, implied, deviation, diff <= allowed, allowed))
     if all(c.ok for c in checks):
         return "verified", None, checks
     bad = [c for c in checks if not c.ok]
@@ -189,6 +240,7 @@ async def read_charts(
     bars, _ = await segment_image(
         client, image_bytes, BAR_PROMPT, filename=filename, run_id=run_id, step_id=step_id
     )
+    charts = merge_split_charts(charts, bars)
     charts.sort(key=lambda c: (round(c.y1 / max(c.frame_height, 1), 1), c.x1))
     by_chart = assign_bars(charts, bars)
     full_slide = image_data_url(image_bytes, filename)
