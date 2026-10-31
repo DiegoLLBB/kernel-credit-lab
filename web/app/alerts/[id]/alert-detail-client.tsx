@@ -16,7 +16,7 @@ import {
   type AlertDetailOut,
   type AlertReviewOut,
 } from "@/lib/api";
-import { formatDate, formatUsdMillions } from "@/lib/format";
+import { formatDate, formatUsdMillions, formatUsdMillionsDelta } from "@/lib/format";
 
 function changeCell(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
@@ -113,6 +113,31 @@ export function AlertDetailClient() {
               </p>
             ) : null}
           </header>
+
+          <section aria-labelledby="impact-heading" className="rounded-lg border border-slate-700/60 bg-ink-soft/50 p-5">
+            <h3 id="impact-heading" className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+              What this means
+            </h3>
+            {alert.impact_sentence ? (
+              <p className="mt-2 text-base leading-relaxed text-slate-100">
+                {alert.impact_sentence}
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-slate-400">
+                Analyst summary still being written for this alert.
+              </p>
+            )}
+            {alert.affected_buckets.length > 0 ? (
+              <ul className="mt-3 space-y-1 font-mono text-xs text-slate-300">
+                {alert.affected_buckets.map((b) => (
+                  <li key={b.label}>
+                    {b.label}: {formatUsdMillions(b.before)} → {formatUsdMillions(b.after)} (
+                    {formatUsdMillionsDelta(b.before, b.after)})
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
 
           <section aria-labelledby="wall-heading" className="rounded-lg border border-slate-700/60 bg-ink-soft/50 p-5">
             <h3 id="wall-heading" className="text-sm font-semibold uppercase tracking-wide text-slate-400">

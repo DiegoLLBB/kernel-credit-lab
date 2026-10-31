@@ -307,6 +307,80 @@ class Alert(TimestampMixin, Base):
     issuer: Mapped[Issuer] = relationship()
 
 
+class CreditMetric(TimestampMixin, Base):
+    """One XBRL-derived credit metric for an issuer and period end.
+
+    Point-in-time: a row becomes visible on its ``filed`` date; queries filter
+    ``filed <= as_of`` so replay and the date slider never see the future.
+    ``value`` is NULL for metrics that cannot be built from tagged data; the
+    reason lives in ``detail["missing"]`` (shown as missing, never estimated).
+    ``detail`` also carries components (e.g. cash_only flag, wall cross-check).
+    Idempotency key: (issuer_id, metric, period_end).
+    """
+
+    __tablename__ = "credit_metric"
+    __table_args__ = (
+        UniqueConstraint(
+            "issuer_id", "metric", "period_end", name="uq_credit_metric_issuer_metric_end"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    issuer_id: Mapped[str] = mapped_column(
+        ForeignKey("issuer.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    metric: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    fiscal_label: Mapped[str] = mapped_column(String(32), nullable=False)
+    value: Mapped[Decimal | None] = mapped_column(Numeric(24, 4), nullable=True)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False, default="USD")
+    source_tag: Mapped[str | None] = mapped_column(String(512))
+    accession: Mapped[str | None] = mapped_column(String(32))
+    filed: Mapped[date | None] = mapped_column(Date, index=True)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+
+    issuer: Mapped[Issuer] = relationship()
+
+
+class CreditInsight(TimestampMixin, Base):
+    """Checked insight text with its inputs and verdicts ("how this was written").
+
+    One row per (issuer, as_of, scope, ref): scope "snapshot" (ref "") or
+    "impact" (ref = alert id). ``sentences`` holds only the kept sentences;
+    every dropped sentence and its reason lives in ``dropped``. ``facts`` is
+    the exact computed-facts JSON the text was written from; ``input_hash``
+    covers facts + prompt version so identical inputs never repeat model calls.
+    """
+
+    __tablename__ = "credit_insight"
+    __table_args__ = (
+        UniqueConstraint(
+            "issuer_id", "as_of", "scope", "ref", name="uq_credit_insight_issuer_scope"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    issuer_id: Mapped[str] = mapped_column(
+        ForeignKey("issuer.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    as_of: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    ref: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    headline: Mapped[str | None] = mapped_column(Text)
+    sentences: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    dropped: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    facts: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+    check: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="empty", index=True
+    )  # complete | partial | empty | error
+    provider: Mapped[str | None] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(128))
+
+    issuer: Mapped[Issuer] = relationship()
+
+
 class Watchlist(TimestampMixin, Base):
     """Issuers the analyst monitors. One row per watched issuer."""
 

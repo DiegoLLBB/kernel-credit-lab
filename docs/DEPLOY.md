@@ -48,9 +48,10 @@ is never copied into the cloud; the cloud database is built by running the jobs.
 
 | Job | Command | What it does | Cost |
 |---|---|---|---|
-| `kernel-seed` | `python -m scripts.seed_job` | Loads `seed/snapshot_2025-12-31.json` (idempotent upsert: re-running changes no row counts) then `load_rates` (Treasury + FX from FRED) | ~$0 (no model calls) |
+| `kernel-seed` | `python -m scripts.seed_job` | Loads `seed/snapshot_2025-12-31.json` (idempotent upsert: re-running changes no row counts), `load_rates` (Treasury + FX from FRED), then XBRL credit metrics from `seed/xbrl_metrics.yaml` fixtures | ~$0 (no model calls) |
 | `kernel-replay` | `python -m scripts.run_replay` | Runs the agent over the replay events day by day, then `--eval-latest`: writes `replay_evaluation`, the database row the dashboard reads. Defaults: full window, `--max-cost-usd 30`. Resumable: re-executing continues where it stopped | ~$0.25 per press-release event, ~$1 per 10-Q event; ~$15 for a full 29-event replay |
 | `kernel-decks` | `python -m scripts.decks_job` | `fetch_decks` (5 investor decks into `Filing` rows) then `process_decks` (SAM locates charts, Spark reads values, geometry verifies) | ~$0.40 per full pass |
+| `kernel-insight` | `python -m scripts.insight_job` | Checked credit-insight text: one snapshot per issuer (`--issuer` to narrow, `--as-of` for the date) plus any missing alert impact sentences; cached by input hash so re-runs only pay for new inputs | ~$0.05–0.15 per issuer snapshot |
 
 Resources (with the reason in `deploy.yml`): seed 1 CPU / 1 GiB / 30 min; replay 1 CPU /
 1 GiB / 6 h with `--max-retries=0`; decks 2 CPU / 2 GiB (PDF rendering) / 2 h with

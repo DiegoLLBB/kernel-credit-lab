@@ -31,7 +31,7 @@ from app.ingest.replay import (
     load_replay_events,
     step_to_next,
 )
-from app.models import Event, Instrument, Issuer, ReplayExpectation, StateChange
+from app.models import Event, Filing, Instrument, Issuer, ReplayExpectation, StateChange
 from app.models.trace import AgentRun, ModelCall, ToolCall
 
 ClientFactory = Callable[[Event], Any]
@@ -353,6 +353,59 @@ def _needs_input_detail(session: Session, run: AgentRun) -> str | None:
     return None
 
 
+PERIODIC_FORMS = {"10Q", "10K", "10QA", "10KA"}
+
+
+def _refresh_metrics_for_event(session: Session, event: Event) -> None:
+    """Refresh XBRL credit metrics after a 10-Q/10-K event (best-effort).
+
+    Live mode calls the same helper when it ingests a new 10-Q/10-K. Failures
+    (notably no network in tests/offline replay) are logged and swallowed so
+    the event outcome is never affected. The filed date is the point-in-time
+    cutoff: replay processing in order only sees what was knowable then.
+    """
+    from app.metrics.refresh import refresh_issuer_metrics
+
+    filings = []
+    if event.source_filing_id is not None:
+        filing = session.get(Filing, event.source_filing_id)
+        if filing is not None:
+            filings.append(filing)
+    for link in event.event_filings or []:
+        if link.filing is not None and all(f.id != link.filing.id for f in filings):
+            filings.append(link.filing)
+    periodic = [
+        f
+        for f in filings
+        if (f.form_type or "").upper().replace("-", "").replace("/", "") in PERIODIC_FORMS
+    ]
+    if not periodic:
+        return
+    issuer_keys: list[str] = []
+    for filing in periodic:
+        candidates = []
+        if filing.issuer is not None and filing.issuer.key:
+            candidates.append(filing.issuer.key)
+        if event.issuer is not None and event.issuer.key:
+            candidates.append(event.issuer.key)
+        candidates.extend(exp.issuer_key for exp in event.replay_expectations or [])
+        filed_on = filing.filed_at or event.event_date
+        for key in dict.fromkeys(candidates):
+            if key in issuer_keys:
+                continue
+            issuer_keys.append(key)
+            try:
+                stats = refresh_issuer_metrics(session, key, filed_on)
+                session.commit()
+                print(
+                    f"replay: metrics refreshed for {key} as of {filed_on} "
+                    f"(+{stats['rows_created']}/~{stats['rows_updated']})"
+                )
+            except Exception as exc:
+                session.rollback()
+                print(f"replay: metrics refresh skipped for {key}: {exc}")
+
+
 def _outcome_from_run(
     session: Session,
     event: Event,
@@ -564,7 +617,9 @@ async def process_one_event(
     else:
         run = await run_event(session, event.id, client, limits, model=model)
     session.commit()
-    return _outcome_from_run(session, event, run, duration_s=time.perf_counter() - started)
+    outcome = _outcome_from_run(session, event, run, duration_s=time.perf_counter() - started)
+    _refresh_metrics_for_event(session, event)
+    return outcome
 
 
 async def run_replay(

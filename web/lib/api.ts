@@ -32,6 +32,8 @@ export type AlertListItem = {
   status: AlertStatus;
   run_id: string | null;
   created_at: string | null;
+  impact_sentence: string | null;
+  impact_status: string | null;
 };
 
 export type AlertListOut = {
@@ -125,6 +127,8 @@ export type AlertDetailOut = {
   run_id: string | null;
   findings: FindingOut[];
   applied_changes: AppliedChangeOut[];
+  impact_sentence: string | null;
+  impact_status: string | null;
   affected_buckets: WallBucketDelta[];
   before_wall: MaturityWall | null;
   after_wall: MaturityWall | null;
@@ -315,6 +319,140 @@ export type ChartReadingOut = {
 export type ChartListOut = {
   items: ChartReadingOut[];
   total: number;
+};
+
+/* ---------- Analyst layer: XBRL credit metrics + checked insight text ---------- */
+
+export type SparkPoint = {
+  period_end: string;
+  label: string;
+  /** Decimal arrives as string */
+  value: string | null;
+};
+
+export type MetricTile = {
+  metric: string;
+  label: string;
+  /** Decimal arrives as string */
+  value: string | null;
+  unit: string;
+  fiscal_label: string | null;
+  period_end: string | null;
+  filed: string | null;
+  source_tag: string | null;
+  missing_reason: string | null;
+  change_pct: number | null;
+  flag: "green" | "amber" | "red" | "none" | null;
+  cash_only: boolean | null;
+  wall_disagrees: boolean;
+  /** Decimal arrives as string */
+  wall_value: string | null;
+  sparkline: SparkPoint[];
+};
+
+export type ThresholdBand = {
+  label: string;
+  unit: string;
+  bands: Record<string, unknown>;
+};
+
+export type OverviewHeader = {
+  companies: number;
+  filings_read: number;
+  material_changes: number;
+  last_check: string | null;
+};
+
+export type BeforeAfter = {
+  field: string | null;
+  before: unknown;
+  after: unknown;
+};
+
+export type FeedItem = {
+  alert_id: string;
+  issuer: IssuerRef;
+  event_date: string | null;
+  title: string;
+  impact_sentence: string | null;
+  impact_pending: boolean;
+  before_after: BeforeAfter | null;
+};
+
+export type WatchlistRow = {
+  issuer: IssuerRef;
+  ticker: string | null;
+  metrics: MetricTile[];
+};
+
+export type EvalSummary = {
+  text: string;
+  evaluated_at: string | null;
+  precision: number | null;
+  recall: number | null;
+  incomplete: boolean;
+};
+
+export type CreditOverview = {
+  header: OverviewHeader;
+  feed: FeedItem[];
+  watchlist: WatchlistRow[];
+  evaluation: EvalSummary | null;
+  thresholds: ThresholdBand[];
+};
+
+export type InsightHow = {
+  provider: string | null;
+  model: string | null;
+  check_prompt: string | null;
+  dropped: Record<string, unknown>[];
+};
+
+export type SnapshotInsight = {
+  headline: string | null;
+  sentences: string[];
+  status: string;
+  how: InsightHow;
+};
+
+export type SnapshotWallChange = {
+  label: string;
+  /** Decimal arrives as string */
+  before: string | null;
+  after: string | null;
+  alert_id: string | null;
+  alert_title: string | null;
+};
+
+export type SnapshotWallBucket = {
+  label: string;
+  /** Decimal arrives as string */
+  amount: string | null;
+  changed: boolean;
+};
+
+export type SnapshotWall = {
+  note: string;
+  buckets: SnapshotWallBucket[];
+  changes: SnapshotWallChange[];
+};
+
+export type TimelineItem = {
+  event_date: string;
+  title: string;
+  effect: string | null;
+  alert_id: string | null;
+};
+
+export type IssuerSnapshot = {
+  issuer: IssuerRef;
+  as_of: string;
+  insight: SnapshotInsight | null;
+  insight_pending: boolean;
+  metrics: MetricTile[];
+  wall: SnapshotWall | null;
+  timeline: TimelineItem[];
+  thresholds: ThresholdBand[];
 };
 
 export async function getJson<T>(path: string): Promise<T> {

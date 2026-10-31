@@ -33,6 +33,8 @@ class AlertListItem(BaseModel):
     status: Literal["new", "confirmed", "dismissed"]
     run_id: str | None = None
     created_at: datetime | None = None
+    impact_sentence: str | None = None
+    impact_status: str | None = None
 
 
 class AlertListOut(BaseModel):
@@ -99,6 +101,8 @@ class AlertDetailOut(BaseModel):
     run_id: str | None = None
     findings: list[FindingOut] = Field(default_factory=list)
     applied_changes: list[AppliedChangeOut] = Field(default_factory=list)
+    impact_sentence: str | None = None
+    impact_status: str | None = None
     affected_buckets: list[WallBucketDelta] = Field(default_factory=list)
     before_wall: dict[str, Any] | None = None
     after_wall: dict[str, Any] | None = None
@@ -271,3 +275,133 @@ class ChartReadingOut(BaseModel):
 class ChartListOut(BaseModel):
     items: list[ChartReadingOut]
     total: int
+
+
+# --- Analyst layer: credit snapshot + "What changed" overview ---
+
+
+class SparkPoint(BaseModel):
+    period_end: date
+    label: str
+    value: Decimal | None = None
+
+
+class MetricTileOut(BaseModel):
+    metric: str
+    label: str
+    value: Decimal | None = None
+    unit: str
+    fiscal_label: str | None = None
+    period_end: date | None = None
+    filed: date | None = None
+    source_tag: str | None = None
+    missing_reason: str | None = None
+    change_pct: float | None = None
+    flag: Literal["green", "amber", "red", "none"] | None = None
+    cash_only: bool | None = None
+    wall_disagrees: bool = False
+    wall_value: Decimal | None = None
+    sparkline: list[SparkPoint] = Field(default_factory=list)
+
+
+class InsightHowOut(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    check_prompt: str | None = None
+    dropped: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SnapshotInsightOut(BaseModel):
+    headline: str | None = None
+    sentences: list[str] = Field(default_factory=list)
+    status: str
+    how: InsightHowOut = Field(default_factory=InsightHowOut)
+
+
+class WallChangeOut(BaseModel):
+    label: str
+    before: Decimal | None = None
+    after: Decimal | None = None
+    alert_id: str | None = None
+    alert_title: str | None = None
+
+
+class WallBucketOut(BaseModel):
+    label: str
+    amount: Decimal | None = None
+    changed: bool = False
+
+
+class SnapshotWallOut(BaseModel):
+    note: str
+    buckets: list[WallBucketOut] = Field(default_factory=list)
+    changes: list[WallChangeOut] = Field(default_factory=list)
+
+
+class TimelineItemOut(BaseModel):
+    event_date: date
+    title: str
+    effect: str | None = None
+    alert_id: str | None = None
+
+
+class ThresholdBandOut(BaseModel):
+    label: str
+    unit: str
+    bands: dict[str, Any] = Field(default_factory=dict)
+
+
+class IssuerSnapshotOut(BaseModel):
+    issuer: IssuerRef
+    as_of: date
+    insight: SnapshotInsightOut | None = None
+    insight_pending: bool = False
+    metrics: list[MetricTileOut] = Field(default_factory=list)
+    wall: SnapshotWallOut | None = None
+    timeline: list[TimelineItemOut] = Field(default_factory=list)
+    thresholds: list[ThresholdBandOut] = Field(default_factory=list)
+
+
+class OverviewHeaderOut(BaseModel):
+    companies: int
+    filings_read: int
+    material_changes: int
+    last_check: date | None = None
+
+
+class BeforeAfterOut(BaseModel):
+    field: str | None = None
+    before: Any = None
+    after: Any = None
+
+
+class FeedItemOut(BaseModel):
+    alert_id: str
+    issuer: IssuerRef
+    event_date: date | None = None
+    title: str
+    impact_sentence: str | None = None
+    impact_pending: bool = False
+    before_after: BeforeAfterOut | None = None
+
+
+class WatchlistRowOut(BaseModel):
+    issuer: IssuerRef
+    ticker: str | None = None
+    metrics: list[MetricTileOut] = Field(default_factory=list)
+
+
+class EvalSummaryOut(BaseModel):
+    text: str
+    evaluated_at: str | None = None
+    precision: float | None = None
+    recall: float | None = None
+    incomplete: bool = False
+
+
+class CreditOverviewOut(BaseModel):
+    header: OverviewHeaderOut
+    feed: list[FeedItemOut] = Field(default_factory=list)
+    watchlist: list[WatchlistRowOut] = Field(default_factory=list)
+    evaluation: EvalSummaryOut | None = None
+    thresholds: list[ThresholdBandOut] = Field(default_factory=list)

@@ -1,0 +1,34 @@
+# Watchlist flag thresholds for credit metrics (shown in the UI legend).
+#
+# Each metric maps to green/amber/red bands. Direction: for leverage,
+# net_leverage and fcf_to_debt (when negative) lower is stronger; for
+# liquidity_coverage and interest_coverage higher is stronger. Bands are
+# deliberately simple and documented — they are screening flags, not ratings.
+# A null value or missing metric is shown as "no data", never flagged.
+
+metrics:
+  leverage:
+    label: "Debt ÷ EBITDA"
+    unit: "x"
+    green_max: 2.5 # at or below is comfortable for investment-grade issuers
+    amber_max: 4.0 # above needs a deleveraging story
+  net_leverage:
+    label: "Net debt ÷ EBITDA"
+    unit: "x"
+    green_max: 2.0
+    amber_max: 3.5
+  interest_coverage:
+    label: "EBITDA ÷ interest"
+    unit: "x"
+    green_min: 6.0 # at or above covers interest comfortably
+    amber_min: 3.0 # below struggles to cover interest from earnings
+  liquidity_coverage:
+    label: "Cash ÷ debt due in 24 months"
+    unit: "x"
+    green_min: 1.0 # cash alone covers the next two years of maturities
+    amber_min: 0.5 # below half needs refinancing or new funding
+  fcf_to_debt:
+    label: "Free cash flow ÷ debt"
+    unit: "x"
+    green_min: 0.1
+    amber_min: 0.0 # negative means borrowing to fund the business

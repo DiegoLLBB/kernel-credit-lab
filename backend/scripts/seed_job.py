@@ -1,8 +1,9 @@
-"""Cloud seed job: load the year-end snapshot, then Treasury/FX rates.
+"""Cloud seed job: load the year-end snapshot, rates, then XBRL credit metrics.
 
-Runs ``load_seed`` on ``seed/snapshot_2025-12-31.json`` followed by ``load_rates``,
-printing one line per step plus a final summary. Exits nonzero on failure so the
-Cloud Run execution shows as failed. Local usage is unchanged (``make seed``).
+Runs ``load_seed`` on ``seed/snapshot_2025-12-31.json`` followed by ``load_rates``
+and the metrics loader, printing one line per step plus a final summary. Exits
+nonzero on failure so the Cloud Run execution shows as failed. Local usage is
+unchanged (``make seed``).
 
 Usage (from backend/):
     python -m scripts.seed_job
@@ -18,7 +19,15 @@ from pathlib import Path
 from sqlalchemy import func, select
 
 from app.db import SessionLocal
-from app.models import Instrument, Issuer, MaturitySchedule, RateObservation, Watchlist
+from app.models import (
+    CreditMetric,
+    Instrument,
+    Issuer,
+    MaturitySchedule,
+    RateObservation,
+    Watchlist,
+)
+from scripts.load_metrics import load_metrics_live
 from scripts.load_rates import load_rates
 from scripts.load_seed import load_seed
 
@@ -35,6 +44,7 @@ def _row_counts() -> RowCounts:
             "watchlist": session.scalar(select(func.count()).select_from(Watchlist)) or 0,
             "maturity_schedules": session.scalar(select(func.count()).select_from(MaturitySchedule))
             or 0,
+            "credit_metrics": session.scalar(select(func.count()).select_from(CreditMetric)) or 0,
             "rate_observations": session.scalar(select(func.count()).select_from(RateObservation))
             or 0,
         }
@@ -64,12 +74,21 @@ def main(argv: list[str] | None = None) -> int:
         total = sum(counts.values())
         for series_id, n in counts.items():
             print(f"seed: load_rates {series_id}: {n} observations")
+        with SessionLocal() as session:
+            metric_stats = load_metrics_live(session=session)
+            session.commit()
+        print(
+            f"seed: load_metrics: issuers {metric_stats['issuers']}, "
+            f"rows +{metric_stats['rows_created']}/~{metric_stats['rows_updated']}, "
+            f"skipped {metric_stats['skipped']}"
+        )
         after = _row_counts()
         elapsed = (datetime.now() - started).total_seconds()
         print(
             f"seed: complete in {elapsed:.1f}s: "
             f"issuers {before['issuers']} -> {after['issuers']}, "
             f"instruments {before['instruments']} -> {after['instruments']}, "
+            f"credit_metrics {before['credit_metrics']} -> {after['credit_metrics']}, "
             f"rate_observations {before['rate_observations']} -> {after['rate_observations']} "
             f"(+{total} upserted), cost_usd 0.000000 (no model calls)"
         )

@@ -32,6 +32,7 @@ from app.api.schemas import (
 )
 from app.db import get_session
 from app.models import Alert, Event, Fact, Filing, Issuer, StateChange
+from app.models.credit import CreditInsight
 from app.models.trace import AgentRun
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -64,11 +65,23 @@ def _alert_visible(
     return (run.status or "") not in HIDDEN_RUN_STATUSES
 
 
+def impact_for_alert(session: Session, alert: Alert) -> tuple[str | None, bool, str | None]:
+    """(impact sentence, pending, status) for an alert from checked insight text."""
+    row = session.scalar(
+        select(CreditInsight).where(CreditInsight.scope == "impact", CreditInsight.ref == alert.id)
+    )
+    if row is None:
+        return None, True, None
+    sentences = row.sentences or []
+    return (sentences[0] if sentences else None, False, row.status)
+
+
 def _list_item(session: Session, alert: Alert) -> AlertListItem:
     issuer = session.get(Issuer, alert.issuer_id)
     if issuer is None:
         raise HTTPException(status_code=500, detail="alert issuer missing")
     event = session.get(Event, alert.event_id) if alert.event_id else None
+    sentence, _, impact_status = impact_for_alert(session, alert)
     return AlertListItem(
         id=alert.id,
         issuer=_issuer_ref(issuer),
@@ -81,6 +94,8 @@ def _list_item(session: Session, alert: Alert) -> AlertListItem:
         status=alert.status,  # type: ignore[arg-type]
         run_id=alert.run_id,
         created_at=alert.created_at,
+        impact_sentence=sentence,
+        impact_status=impact_status,
     )
 
 
@@ -233,6 +248,7 @@ def get_alert(
     wall_before = before_issuer if isinstance(before_issuer, dict) else before
     wall_after = after_issuer if isinstance(after_issuer, dict) else after
     deltas = [WallBucketDelta(**d) for d in bucket_deltas(wall_before, wall_after)]
+    sentence, _, impact_status = impact_for_alert(session, alert)
 
     return AlertDetailOut(
         id=alert.id,
@@ -247,6 +263,8 @@ def get_alert(
         run_id=alert.run_id,
         findings=_findings_out(session, alert.findings),
         applied_changes=_applied_changes(session, alert.run_id),
+        impact_sentence=sentence,
+        impact_status=impact_status,
         affected_buckets=deltas,
         before_wall=wall_before if isinstance(wall_before, dict) else None,
         after_wall=wall_after if isinstance(wall_after, dict) else None,

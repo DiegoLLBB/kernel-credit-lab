@@ -26,7 +26,7 @@ env:
   SITE_URL: https://kernel-credit-lab.web.app
   RUNTIME_SA: kcl-runtime@kernel-credit-lab.iam.gserviceaccount.com
   WEB_SA: kcl-web@kernel-credit-lab.iam.gserviceaccount.com
-  # Shared by kernel-api and every Cloud Run job (seed, replay, decks): same service
+  # Shared by kernel-api and every Cloud Run job (seed, replay, decks, insight): same service
   # account, Cloud SQL instance, secrets and env vars, so the jobs write to Cloud SQL
   # through the same code paths that run locally. Only --set-secrets references here;
   # no secret values anywhere in code, workflow files or logs.
@@ -114,6 +114,19 @@ jobs:
             --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
             --cpu=2 --memory=2Gi --task-timeout=7200 --max-retries=0 \
             --command=python --args="-m,scripts.decks_job"
+
+      - name: Deploy insight job
+        run: |
+          # 1 CPU / 1 GiB: checked credit-insight text (snapshot per issuer plus any
+          # missing alert impact sentences). Each text is one Spark write plus one
+          # Spark Open check per sentence; results are cached by input hash, so a
+          # re-execution only pays for new inputs. 30 minutes fits all 6 issuers.
+          # Arguments are supplied at execution time (Run job workflow) and override these.
+          gcloud run jobs deploy kernel-insight --region="$REGION" --image="$REGISTRY/api:$SHA" \
+            --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
+            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
+            --cpu=1 --memory=1Gi --task-timeout=1800 --max-retries=0 \
+            --command=python --args="-m,scripts.insight_job"
 
       - name: Deploy web
         run: |

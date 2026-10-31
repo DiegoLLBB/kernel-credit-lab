@@ -244,3 +244,27 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     two printed values; and the v1 prompt let Spark turn a printed range into its midpoint (1.75 for
     "1.5% – 2%"), a number that appears nowhere on the slide. First pass: 15 of 32 verified, three of
     them falsely; final: 26 of 34, none of them single-bar.
+
+### Analyst layer: XBRL credit metrics, checked insight text, redesigned pages
+25. **Credit metrics from SEC XBRL** (`app/sources/xbrl.py`, `app/metrics/`, table `credit_metric`,
+    migration 0020): same politeness rules as the EDGAR client; 9 byte-for-byte fixtures recorded
+    31 Oct 2026. Per-company tag choices in `seed/xbrl_metrics.yaml`, each FY value tested against
+    the printed 10-K (`tests/test_metrics_printed.py`). Traps found: Boeing's `LongTermDebt` already
+    includes the current portion; Intel's `LongTermDebt` is the total (use `DebtCurrent` +
+    `LongTermDebtNoncurrent`); Oracle Q1-FY2027 facts carry `fy=2026`, so TTM legs match on `fp` +
+    duration, never `fy`; Duke Progress (CIK 17797) restates parent comparatives, so all its metrics
+    are missing with the reason. Point-in-time: rows visible only from their filed date. Seed job
+    loads metrics; replay refreshes an issuer's metrics after each new 10-Q/10-K.
+26. **Checked insight text** (`app/insight/`, table `credit_insight`, migration 0021): Muse Spark
+    writes headline + snapshot + per-alert impact sentences from a computed-facts JSON only, then
+    the Spark Open claims check verifies each sentence and drops failures with stored refusals
+    (deterministic number-grounding gate first). Cached by input hash; `scripts/insight_job.py`
+    generates snapshots plus missing impacts (new `kernel-insight` Cloud Run job in deploy/run-job
+    workflows). Endpoints: `GET /api/credit/overview`, `GET /api/issuers/{key}/snapshot`, impact
+    fields on the alert list/detail.
+27. **Pages**: overview is now "What changed" (header counts, impact feed, sortable flagged
+    watchlist, plain-words evaluation, thresholds legend); issuer pages lead with the credit
+    snapshot (headline, sourced sentences, "how this was written", metric tiles with 3-year
+    sparklines, this-year timeline) and a "Debt due by year" wall with tracked/rest split, yearly
+    change markers, event-tick slider and play button; alert pages lead with the impact sentence
+    and before → after numbers. No new npm dependencies; no internal jargon on screen.

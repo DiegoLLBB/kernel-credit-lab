@@ -141,7 +141,11 @@ export function AlertsClient() {
                     <AlertStatusChip status={a.status} />
                   </div>
                   <p className="mt-1 text-sm text-slate-100">{a.title}</p>
-                  {a.summary ? (
+                  {a.impact_sentence ? (
+                    <p className="mt-1 line-clamp-2 text-xs text-slate-300">
+                      {a.impact_sentence}
+                    </p>
+                  ) : a.summary ? (
                     <p className="mt-1 line-clamp-2 text-xs text-slate-500">{a.summary}</p>
                   ) : null}
                 </Link>

@@ -1,0 +1,168 @@
+# XBRL tag choices per issuer for credit metrics (app/metrics).
+#
+# How each tag was chosen: for every issuer, the candidate us-gaap tags were read
+# from the recorded companyfacts fixtures (tests/fixtures/xbrl/, live SEC API
+# 2026-10-31) and the latest-filed FY datapoint was compared against the number
+# printed in the company's latest 10-K (or 10-Q). tests/test_metrics_printed.py
+# locks each of those comparisons in. A tag whose FY value does not match the
+# printed figure is NOT used (see the per-issuer comments); a metric with no
+# verified tag is stored as missing with the reason below — never estimated.
+#
+# Legend: `null` tag + `<field>_reason` = metric intentionally missing.
+# `debt_extra` tags are added to total debt (finance leases where the main debt
+# tag demonstrably excludes them). Revolvers are undrawn capacity, not debt, and
+# no issuer tags undrawn amounts: `revolver: null` everywhere by design.
+
+defaults:
+  # FY history rows per metric (plus the latest-quarter TTM row); feeds sparklines.
+  history_years: 3
+  # Tag-derived due_12m/due_24m vs the maturity-wall buckets agree within this
+  # relative tolerance; wider gaps store both numbers for the UI to show.
+  wall_tolerance_pct: 2.0
+
+issuers:
+  duke_corp:
+    cik: "1326160"
+    # Printed FY2025 (10-K filed 2026-02-26): current maturities 7,104;
+    # long-term debt 80,108; cash 245; opinc 8,626; D&A 7,704; interest 3,634;
+    # OCF 12,330; capex 14,024. All tags match exactly.
+    debt_current: LongTermDebtCurrent
+    debt_noncurrent: LongTermDebtNoncurrent
+    cash: CashAndCashEquivalentsAtCarryingValue # 245 = printed; restricted incl. 363 is not cash on hand
+    st_investments: null
+    st_investments_reason: "ShortTermInvestments last tagged for FY2014 (filed 2015); nothing recent. Liquidity is cash-only."
+    opinc: OperatingIncomeLoss
+    depreciation: DepreciationDepletionAndAmortization
+    interest: InterestExpense # 3,634 = printed; InterestExpenseNonoperating is a Q1-only stub
+    ocf: NetCashProvidedByUsedInOperatingActivities
+    capex: PaymentsToAcquirePropertyPlantAndEquipment
+    mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths # 7,123 vs printed current maturities 7,104 (VIE rounding); wall shows both
+    mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
+    revolver: null
+    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+
+  duke_progress:
+    cik: "17797"
+    # NO usable XBRL: CIK 17797's companyfacts restate the PARENT's comparatives
+    # (FY2025 noncurrent 80,108 = Duke Corp's printed number, filed with the Q2
+    # 10-Q as fp=Q2). Progress printed FY2025 long-term debt 13,461, opinc 1,871.
+    # Attributing parent-scale facts to the subsidiary would be fabrication.
+    xbrl: null
+    xbrl_reason: "Subsidiary companyfacts restate parent comparatives (FY2025 noncurrent debt 80,108 equals the parent's printed figure; Progress printed 13,461). All metrics missing."
+
+  duke_carolinas:
+    cik: "30371"
+    # Live companyfacts returns only ffd (fee exhibit) facts — no us-gaap section.
+    xbrl: null
+    xbrl_reason: "Duke Energy Carolinas files no us-gaap facts (fee exhibits only). All metrics missing."
+
+  duke_florida:
+    cik: "37637"
+    # Live companyfacts returns no fact sections at all.
+    xbrl: null
+    xbrl_reason: "Duke Energy Florida files no XBRL facts. All metrics missing."
+
+  oracle:
+    cik: "1341439"
+    # Printed FY2026 (10-K filed 2026-06-22, May year-end): notes payable current
+    # 7,199 + non-current 122,342 = 129,541 total; cash 31,289; marketable
+    # securities 605; opinc 20,606; depreciation 7,623; interest 4,599;
+    # OCF 31,977; capex 55,663. All tags match exactly.
+    debt_current: DebtCurrent
+    debt_noncurrent: LongTermNotesPayable # NOT the LongTermDebt tag (stale, 2022 zero stub)
+    cash: CashAndCashEquivalentsAtCarryingValue
+    st_investments: AvailableForSaleSecuritiesDebtSecuritiesCurrent # 605 = printed marketable securities; fresh Q1 FY2027 datapoint flows
+    opinc: OperatingIncomeLoss
+    depreciation: Depreciation # 7,623 = printed; no DDA tag in use
+    interest: InterestExpense
+    ocf: NetCashProvidedByUsedInOperatingActivities
+    capex: PaymentsToAcquirePropertyPlantAndEquipment # 55,663 = printed capital expenditures (gross)
+    mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths
+    mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
+    revolver: null
+    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+
+  verizon:
+    cik: "732712"
+    # Printed FY2025 (10-K filed 2026-02-17): debt maturing <1y 18,618; long-term
+    # debt 139,532; cash 19,048; opinc 29,259; D&A 18,349; interest 6,694;
+    # OCF 37,137; capex 17,011. All tags match exactly.
+    debt_current: DebtCurrent # 18,618 = printed debt maturing within one year
+    debt_noncurrent: LongTermDebtAndCapitalLeaseObligations # 139,532 = printed long-term debt; LongTermDebtNoncurrent/LongTermDebt tags abandoned (stale 2013)
+    cash: CashAndCashEquivalentsAtCarryingValue # 19,048 = printed; restricted incl. 19,499 is not cash on hand
+    st_investments: null
+    st_investments_reason: "ShortTermInvestments last tagged for FY2016 (filed 2017); nothing recent. Liquidity is cash-only."
+    opinc: OperatingIncomeLoss
+    depreciation: DepreciationAndAmortization # 18,349 = printed; the Depreciation tag (15,350) is a narrower concept
+    interest: InterestExpenseNonoperating # 6,694 = printed; InterestExpense tag abandoned (stale 2024)
+    ocf: NetCashProvidedByUsedInOperatingActivities
+    capex: PaymentsToAcquireOtherProductiveAssets # 17,011 = printed capex incl. capitalized software; ProductiveAssets tag abandoned (stale 2019)
+    mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths # 17,267 vs printed 18,177/18,618: wall shows both
+    mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
+    revolver: null
+    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+
+  boeing:
+    cik: "12927"
+    # Printed FY2025 (10-K filed 2026-01-30): short-term debt + current portion
+    # 8,461; long-term debt 45,637; total 54,098; cash 10,921; short-term
+    # investments 18,479; earnings from operations 4,289; D&A 1,953; interest and
+    # debt expense 2,771; OCF 1,065; PP&E additions 2,942.
+    # The LongTermDebt tag (53,848) already INCLUDES the current portion: it is
+    # total debt ex-finance-leases (53,848 + 250 = 54,098 printed). Adding
+    # DebtCurrent on top would double-count, so DebtCurrent is NOT configured.
+    debt_total: LongTermDebt
+    debt_extra: [FinanceLeaseLiability] # 250; printed lease liabilities current 335 + non-current 1,932 include operating leases, so only the finance tag is added
+    cash: CashAndCashEquivalentsAtCarryingValue # 10,921 = printed; restricted incl. 11,663 is not cash on hand
+    st_investments: ShortTermInvestments # 18,479 = printed short-term and other investments (time deposits)
+    opinc: OperatingIncomeLoss # 4,281 vs printed 4,289 (0.2%; test allows 0.5%)
+    depreciation: DepreciationDepletionAndAmortization
+    interest: InterestAndDebtExpense
+    ocf: NetCashProvidedByUsedInOperatingActivities
+    capex: PaymentsToAcquirePropertyPlantAndEquipment # 2,942 = printed PP&E additions (gross)
+    mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths
+    mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
+    revolver: null
+    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+
+  intel:
+    cik: "50863"
+    # Printed FY2025 (10-K filed 2026-01-23, Dec-27 year-end): short-term debt
+    # 2,499; long-term debt 44,086; cash 14,265; short-term investments 23,151;
+    # operating loss (2,214); depreciation 10,757; interest expense 1,091 (note:
+    # "Interest and other, net" on the face is 3,257 income); OCF 9,697;
+    # PP&E additions 14,646. All tags match exactly.
+    debt_current: DebtCurrent # 2,499 = printed (identical to LongTermDebtCurrent FY2025, but DebtCurrent continues into 2026 quarters)
+    debt_noncurrent: LongTermDebtNoncurrent # 44,086 = printed long-term debt; the LongTermDebt tag (46,585) is the total incl. current — do NOT add
+    cash: CashAndCashEquivalentsAtCarryingValue # 14,265 = printed
+    st_investments: AvailableForSaleSecuritiesDebtSecuritiesCurrent # 23,151 = printed short-term investments
+    opinc: OperatingIncomeLoss
+    depreciation: Depreciation
+    interest: InterestExpenseNonoperating # 1,091 = gross interest expense per the notes (face shows only net 3,257 income); InterestExpense tag stale (2024)
+    ocf: NetCashProvidedByUsedInOperatingActivities
+    capex: PaymentsToAcquirePropertyPlantAndEquipment # 14,646 = printed PP&E additions (gross), not net purchases 11,204
+    mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths
+    mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
+    revolver: null
+    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+
+  amazon:
+    cik: "1018724"
+    # Printed FY2025 (10-K filed 2026-02-06): current portion of long-term debt
+    # 2,748; long-term debt 65,648 (face 68,836); cash 86,810; marketable
+    # securities 36,219; opinc 79,975; D&A 65,756; interest 2,274; OCF 139,514;
+    # PP&E purchases 131,819. All tags match exactly. (Balance-sheet columns in
+    # the 10-K read prior|current ascending — FY2025 is the larger figure.)
+    debt_current: LongTermDebtCurrent
+    debt_noncurrent: LongTermDebtNoncurrent # 65,648 = printed; the LongTermDebt tag (180,887 in Q3) runs higher — do NOT use
+    cash: CashAndCashEquivalentsAtCarryingValue
+    st_investments: MarketableSecuritiesCurrent # 36,219 = printed marketable securities
+    opinc: OperatingIncomeLoss
+    depreciation: DepreciationDepletionAndAmortization # 65,756 = printed; the Depreciation tag (41,860) is a narrower concept
+    interest: InterestExpenseNonoperating # 2,274 = printed; InterestExpense tag stale (2024)
+    ocf: NetCashProvidedByUsedInOperatingActivities
+    capex: PaymentsToAcquireProductiveAssets # 131,819 = printed gross PP&E purchases, not net-of-proceeds 128,320
+    mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths
+    mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
+    revolver: null
+    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."

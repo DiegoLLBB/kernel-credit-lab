@@ -1,6 +1,6 @@
 name: Run job
 
-# One-click execution of the data jobs (seed, replay, decks) against Cloud SQL.
+# One-click execution of the data jobs (seed, replay, decks, insight) against Cloud SQL.
 # workflow_dispatch only: pick a job, optionally override its default arguments, and
 # the execution's logs link appears in the run summary. Same keyless auth as deploy.yml.
 on:
@@ -14,6 +14,7 @@ on:
           - seed
           - replay
           - decks
+          - insight
       args:
         description: >-
           Replace the job's default arguments entirely (the python module is added
@@ -60,6 +61,7 @@ jobs:
             seed) BASE="-m,scripts.seed_job" ;;
             replay) BASE="-m,scripts.run_replay" ;;
             decks) BASE="-m,scripts.decks_job" ;;
+            insight) BASE="-m,scripts.insight_job" ;;
           esac
           WAIT=""
           if [ "${{ inputs.wait }}" = "true" ]; then WAIT="--wait"; fi
