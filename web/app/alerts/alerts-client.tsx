@@ -75,7 +75,7 @@ export function AlertsClient() {
       <header className="mb-6">
         <h2 className="text-2xl font-semibold text-white">Alerts</h2>
         <p className="mt-1 text-sm text-slate-400">
-          Material maturity-wall changes from the Jan–Oct 2026 replay.
+          Material changes to what these companies owe, from filings and announcements in 2026.
         </p>
       </header>
 

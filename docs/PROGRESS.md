@@ -268,3 +268,8 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     sparklines, this-year timeline) and a "Debt due by year" wall with tracked/rest split, yearly
     change markers, event-tick slider and play button; alert pages lead with the impact sentence
     and before → after numbers. No new npm dependencies; no internal jargon on screen.
+28. **Cloud verification (Sun 1 Nov):** after CI/deploy, `kernel-seed` wrote 288 credit-metric
+    rows ($0); a one-event replay of `duk_q2_10q` cost **$1.33** and refreshed Duke parent/Progress
+    metrics from the live SEC API; `kernel-insight` wrote 9 complete snapshots (Verizon's first
+    attempt crashed on a non-numeric before/after, fixed and rerun: 0 errors). Live site shows
+    the What changed overview, issuer credit snapshot and alert impact-first layout.

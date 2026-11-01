@@ -11,6 +11,12 @@ const COLORS = {
   unattributed: "#64748b",
 } as const;
 
+const SEG_LABEL: Record<string, string> = {
+  named: "bonds we track",
+  newsince: "added since the last filing",
+  unattributed: "rest of the debt in the 10-K",
+};
+
 export function MaturityWallChart({
   wall,
   title,
@@ -94,7 +100,7 @@ export function MaturityWallChart({
                       className="transition-all duration-500 ease-out"
                     >
                       <title>
-                        {s.label} {seg.key}: {formatUsdMillions(seg.value)}
+                        {s.label} {SEG_LABEL[seg.key] ?? seg.key}: {formatUsdMillions(seg.value)}
                       </title>
                     </rect>
                   );
@@ -108,7 +114,7 @@ export function MaturityWallChart({
                     className="fill-rose-300"
                     fontFamily="ui-monospace, monospace"
                   >
-                    breach
+                    over
                   </text>
                 ) : null}
                 <text
@@ -136,21 +142,21 @@ export function MaturityWallChart({
           })}
         </svg>
       </div>
-      <ul className="mt-3 flex flex-wrap gap-4 font-mono text-[11px] text-slate-400">
+      <ul className="mt-3 flex flex-wrap gap-4 text-[11px] text-slate-400">
         <li className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5" style={{ background: COLORS.named }} aria-hidden />
-          named active
+          Bonds we track
         </li>
         <li className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5" style={{ background: COLORS.newsince }} aria-hidden />
-          new since schedule
+          Added since the last filing
         </li>
         <li className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5" style={{ background: COLORS.unattributed }} aria-hidden />
-          unattributed
+          Rest of the debt in the 10-K
         </li>
         <li className="inline-flex items-center gap-1.5 text-rose-300">
-          <span aria-hidden>⚑</span> breach when named schedule set exceeds schedule amount
+          <span aria-hidden>⚑</span> Tracked bonds exceed the amount in that year&apos;s filing
         </li>
       </ul>
     </div>

@@ -426,8 +426,8 @@ export function IssuerDetailClient() {
                 {issuer.events.map((ev) => (
                   <li key={ev.id} className="text-sm">
                     <p className="font-mono text-[11px] text-slate-500">
-                      {formatDate(ev.event_date)} · {ev.event_type} · {ev.status}
-                      {ev.run_status ? ` · run ${ev.run_status}` : ""}
+                      {formatDate(ev.event_date)}
+                      {ev.event_type ? ` · ${ev.event_type.replaceAll("_", " ")}` : ""}
                     </p>
                     <p className="text-slate-200">{ev.summary ?? ev.replay_key ?? ev.id}</p>
                     <div className="mt-1 flex flex-wrap gap-3 text-xs">
