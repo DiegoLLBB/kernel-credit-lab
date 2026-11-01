@@ -128,6 +128,7 @@ def _wall_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
 
 def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[str, Any]:
     from app.api.alerts import _applied_changes, _findings_out
+    from app.api.common import bucket_deltas
 
     event = session.get(Event, alert.event_id) if alert.event_id else None
     findings = []
@@ -147,12 +148,35 @@ def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[s
                 "after": after,
             }
         )
+    # Wall bucket moves (the numbers the overview feed shows) — without these
+    # the model has no grounded before→after to quote and the sentence is dropped.
+    before = alert.before_metrics if isinstance(alert.before_metrics, dict) else None
+    after = alert.after_metrics if isinstance(alert.after_metrics, dict) else None
+    before_issuer = (before or {}).get("issuer") if before else None
+    after_issuer = (after or {}).get("issuer") if after else None
+    wall_before = before_issuer if isinstance(before_issuer, dict) else before
+    wall_after = after_issuer if isinstance(after_issuer, dict) else after
+    wall_deltas = []
+    for delta in bucket_deltas(wall_before, wall_after):
+        b, a = _num(delta.get("before")), _num(delta.get("after"))
+        if b is None and a is None:
+            continue
+        entry = {
+            "bucket": delta.get("label"),
+            "field": "total_outstanding",
+            "before": b,
+            "after": a,
+        }
+        before_after.append(entry)
+        wall_deltas.append(entry)
     return {
         "alert_id": alert.id,
         "title": alert.title,
+        "summary": alert.summary,
         "event_date": event.event_date.isoformat() if event and event.event_date else None,
         "event_type": event.event_type if event else None,
         "before_after": before_after,
+        "wall_deltas": wall_deltas,
         "findings": findings,
     }
 

@@ -44,23 +44,26 @@ async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
                 stats["errors"] += 1
                 traceback.print_exc()
                 print(f"insight: snapshot {key} FAILED: {exc}", file=sys.stderr)
-        missing = session.scalars(select(Alert)).all()
-        for alert in missing:
+        for alert in session.scalars(select(Alert)).all():
+            if issuer_keys is not None:
+                issuer = session.get(Issuer, alert.issuer_id)
+                if issuer is None or issuer.key not in issuer_keys:
+                    continue
             exists = session.scalar(
                 select(CreditInsight).where(
                     CreditInsight.scope == "impact", CreditInsight.ref == alert.id
                 )
             )
-            if exists is not None:
+            # Retry empty/error rows: a prior attempt may have had incomplete
+            # facts (e.g. missing wall deltas) and cached a refusal.
+            if exists is not None and exists.status == "complete":
                 continue
-            if issuer_keys is not None:
-                issuer = session.get(Issuer, alert.issuer_id)
-                if issuer is None or issuer.key not in issuer_keys:
-                    continue
             try:
                 row = await generate_impact(session, alert.id)
                 print(f"insight: impact {alert.id[:8]} ({alert.title[:60]}): {row.status}")
                 stats["impacts"] += 1
+                if row.status == "empty":
+                    stats["errors"] += 1
             except Exception as exc:
                 stats["errors"] += 1
                 traceback.print_exc()

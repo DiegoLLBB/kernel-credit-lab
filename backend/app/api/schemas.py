@@ -297,7 +297,8 @@ class MetricTileOut(BaseModel):
     source_tag: str | None = None
     missing_reason: str | None = None
     change_pct: float | None = None
-    flag: Literal["green", "amber", "red", "none"] | None = None
+    prior_value: Decimal | None = None
+    flag: Literal["green", "amber", "red"] | None = None
     cash_only: bool | None = None
     wall_disagrees: bool = False
     wall_value: Decimal | None = None

@@ -44,7 +44,7 @@ METRIC_LABELS = {
     "st_investments": "Short-term investments",
     "due_12m": "Debt due in 12 months",
     "due_24m": "Debt due in 24 months",
-    "liquidity_coverage": "Cash ÷ debt due in 24 months",
+    "liquidity_coverage": "Cash only (excludes credit lines)",
     "ebitda": "EBITDA",
     "leverage": "Debt ÷ EBITDA",
     "net_leverage": "Net debt ÷ EBITDA",
@@ -66,37 +66,74 @@ def load_thresholds() -> dict[str, Any]:
     return _thresholds_cache
 
 
-def flag_for(metric: str, value: Decimal | None) -> str | None:
+_NEAR_ZERO = Decimal("0.05")
+
+
+def _bands_for(metric: str, sector: str | None) -> dict[str, Any] | None:
+    """Metric bands, with optional sector override for leverage-style ceilings."""
+    cfg = (load_thresholds().get("metrics") or {}).get(metric)
+    if not cfg:
+        return None
+    by_sector = cfg.get("by_sector") or {}
+    if sector and sector in by_sector:
+        merged = {k: v for k, v in cfg.items() if k not in {"by_sector", "label", "unit"}}
+        merged.update(by_sector[sector])
+        return merged
+    return {k: v for k, v in cfg.items() if k not in {"by_sector", "label", "unit"}}
+
+
+def flag_for(metric: str, value: Decimal | None, *, sector: str | None = None) -> str | None:
     """Green/amber/red screening flag, None where no band applies."""
     if value is None:
         return None
-    bands = (load_thresholds().get("metrics") or {}).get(metric)
+    bands = _bands_for(metric, sector)
     if not bands:
         return None
     if "green_max" in bands:
         if value <= Decimal(str(bands["green_max"])):
             return "green"
         return "amber" if value <= Decimal(str(bands["amber_max"])) else "red"
+    if "green_min" not in bands:
+        return None
     if value >= Decimal(str(bands["green_min"])):
         return "green"
     return "amber" if value >= Decimal(str(bands["amber_min"])) else "red"
 
 
 def threshold_legend() -> list[ThresholdBandOut]:
-    return [
-        ThresholdBandOut(
-            label=cfg.get("label", metric),
-            unit=cfg.get("unit", "x"),
-            bands={k: v for k, v in cfg.items() if k not in {"label", "unit"}},
+    out: list[ThresholdBandOut] = []
+    for metric, cfg in (load_thresholds().get("metrics") or {}).items():
+        bands = {k: v for k, v in cfg.items() if k not in {"label", "unit", "by_sector"}}
+        out.append(
+            ThresholdBandOut(
+                label=cfg.get("label", metric),
+                unit=cfg.get("unit", "x"),
+                bands=bands,
+            )
         )
-        for metric, cfg in (load_thresholds().get("metrics") or {}).items()
-    ]
+        for sector, override in (cfg.get("by_sector") or {}).items():
+            out.append(
+                ThresholdBandOut(
+                    label=f"{cfg.get('label', metric)} · {sector}",
+                    unit=cfg.get("unit", "x"),
+                    bands=dict(override),
+                )
+            )
+    return out
 
 
 def _change_pct(now: Decimal | None, then: Decimal | None) -> float | None:
-    if now is None or then is None or then == 0:
+    """Year-on-year % change; None when prior is missing, ≤0, or near zero."""
+    if now is None or then is None or then <= 0 or abs(then) <= _NEAR_ZERO:
         return None
     return round(float((now - then) / abs(then) * 100), 1)
+
+
+def _prior_for_display(then: Decimal | None) -> Decimal | None:
+    """Prior value for the UI; suppressed when ≤0 or near zero."""
+    if then is None or then <= 0 or abs(then) <= _NEAR_ZERO:
+        return None
+    return then
 
 
 def metric_tiles(
@@ -149,6 +186,14 @@ def metric_tiles(
             if row.period_end <= cutoff:
                 prior = row
                 break
+        prior_val = prior.value if prior else None
+        # Liquidity never includes undrawn credit lines (rarely tagged) and has
+        # no risk band — a cash ratio alone is not a full liquidity judgement.
+        flag = (
+            None
+            if metric == "liquidity_coverage"
+            else flag_for(metric, latest.value, sector=issuer.sector)
+        )
         tiles.append(
             MetricTileOut(
                 metric=metric,
@@ -160,8 +205,9 @@ def metric_tiles(
                 filed=latest.filed,
                 source_tag=latest.source_tag,
                 missing_reason=(detail.get("missing") if latest.value is None else None),
-                change_pct=_change_pct(latest.value, prior.value if prior else None),
-                flag=flag_for(metric, latest.value),
+                change_pct=_change_pct(latest.value, prior_val),
+                prior_value=_prior_for_display(prior_val),
+                flag=flag,
                 cash_only=detail.get("cash_only"),
                 wall_disagrees=detail.get("wall_agrees") is False,
                 wall_value=Decimal(str(detail["wall_due"])) if detail.get("wall_due") else None,

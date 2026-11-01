@@ -155,7 +155,10 @@ def test_overview_shape(client: TestClient, api_db: Session) -> None:
     vz = next(row for row in body["watchlist"] if row["issuer"]["key"] == "verizon")
     debt_tile = next(t for t in vz["metrics"] if t["metric"] == "total_debt")
     assert debt_tile["change_pct"] is not None
-    assert debt_tile["flag"] in ("green", "amber", "red", "none", None)
+    assert debt_tile["flag"] in ("green", "amber", "red", None)
+    liq = next(t for t in vz["metrics"] if t["metric"] == "liquidity_coverage")
+    assert liq["flag"] is None
+    assert "Cash only" in liq["label"]
     assert isinstance(body["thresholds"], list) and body["thresholds"]
     assert body["evaluation"] is None or "Tested on" in body["evaluation"]["text"]
 
@@ -197,3 +200,28 @@ def test_alert_impact_fields(client: TestClient, api_db: Session) -> None:
     detail = client.get(f"/api/alerts/{alert.id}")
     assert detail.status_code == 200, detail.text
     assert detail.json()["impact_sentence"] == "Redemption cut 2027 maturities by 12%."
+
+
+def test_flag_for_sector_aware_and_liquidity_unbanded() -> None:
+    from decimal import Decimal
+
+    from app.api import credit as credit_api
+
+    credit_api._thresholds_cache = None
+    assert credit_api.flag_for("leverage", Decimal("3.0"), sector="Technology") == "amber"
+    assert credit_api.flag_for("leverage", Decimal("3.0"), sector="Utilities") == "green"
+    assert credit_api.flag_for("leverage", Decimal("5.2"), sector="Utilities") == "amber"
+    assert credit_api.flag_for("liquidity_coverage", Decimal("0.2")) is None
+
+
+def test_change_pct_suppresses_nonpositive_prior() -> None:
+    from decimal import Decimal
+
+    from app.api.credit import _change_pct, _prior_for_display
+
+    assert _change_pct(Decimal("3"), Decimal("0")) is None
+    assert _change_pct(Decimal("3"), Decimal("-1")) is None
+    assert _change_pct(Decimal("3"), Decimal("0.01")) is None
+    assert _prior_for_display(Decimal("0")) is None
+    assert _prior_for_display(Decimal("3.09")) == Decimal("3.09")
+    assert _change_pct(Decimal("3.31"), Decimal("3.09")) == 7.1

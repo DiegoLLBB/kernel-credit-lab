@@ -342,7 +342,8 @@ export type MetricTile = {
   source_tag: string | null;
   missing_reason: string | null;
   change_pct: number | null;
-  flag: "green" | "amber" | "red" | "none" | null;
+  prior_value: string | null;
+  flag: "green" | "amber" | "red" | null;
   cash_only: boolean | null;
   wall_disagrees: boolean;
   /** Decimal arrives as string */

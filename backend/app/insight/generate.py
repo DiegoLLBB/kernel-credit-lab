@@ -35,7 +35,7 @@ from app.llm.recorder import db_recorder
 from app.models import Alert, Event, Issuer
 from app.models.credit import CreditInsight
 
-PROMPT_VERSION = "insight_v1"
+PROMPT_VERSION = "insight_v2"
 
 SNAPSHOT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_snapshot.md").read_text()
 IMPACT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_impact.md").read_text()
@@ -71,7 +71,9 @@ def _cached(
             CreditInsight.ref == ref,
         )
     )
-    if row is not None and row.input_hash == digest:
+    # Serve only successful cache hits. Empty/error rows are retried so a
+    # later facts fix (or a luckier model sample) can fill them in.
+    if row is not None and row.input_hash == digest and row.status in {"complete", "partial"}:
         return row
     return None
 

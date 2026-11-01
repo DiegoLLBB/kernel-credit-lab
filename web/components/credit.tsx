@@ -16,11 +16,20 @@ const FLAG_STYLES: Record<string, { dot: string; word: string }> = {
   green: { dot: "bg-emerald-400", word: "comfortable" },
   amber: { dot: "bg-amber-400", word: "worth watching" },
   red: { dot: "bg-rose-400", word: "stretched" },
-  none: { dot: "bg-slate-500", word: "no band" },
 };
 
+const RATIO_METRICS = new Set([
+  "leverage",
+  "net_leverage",
+  "interest_coverage",
+  "liquidity_coverage",
+  "fcf_to_debt",
+]);
+
 export function FlagDot({ flag }: { flag: MetricTile["flag"] }) {
-  const style = FLAG_STYLES[flag ?? "none"] ?? FLAG_STYLES.none;
+  if (!flag) return null;
+  const style = FLAG_STYLES[flag];
+  if (!style) return null;
   return (
     <span className="inline-flex items-center gap-1.5" title={`Risk band: ${style.word}`}>
       <span aria-hidden="true" className={`inline-block h-2 w-2 rounded-full ${style.dot}`} />
@@ -29,8 +38,29 @@ export function FlagDot({ flag }: { flag: MetricTile["flag"] }) {
   );
 }
 
-/** Direction of the year-on-year move (the dot, not the arrow, is the judgement). */
-export function ChangeArrow({ changePct }: { changePct: number | null }) {
+function formatChangeValue(tile: MetricTile, raw: string | null): string {
+  if (raw === null || raw === undefined) return "—";
+  return formatTileValue({ ...tile, value: raw });
+}
+
+/** Year-on-year move. Ratios show prior → current; dollar metrics show a % arrow.
+ *  Suppressed when the API omits prior_value / change_pct (prior ≤ 0 or near zero). */
+export function ChangeArrow({ tile }: { tile: MetricTile }) {
+  if (RATIO_METRICS.has(tile.metric)) {
+    if (tile.prior_value === null || tile.value === null) {
+      return <span className="font-mono text-xs text-slate-500">—</span>;
+    }
+    return (
+      <span
+        className="font-mono text-xs text-slate-300"
+        title="Versus one year earlier"
+        aria-label={`Versus one year earlier: ${formatChangeValue(tile, tile.prior_value)} to ${formatTileValue(tile)}`}
+      >
+        {formatChangeValue(tile, tile.prior_value)} → {formatTileValue(tile)}
+      </span>
+    );
+  }
+  const changePct = tile.change_pct;
   if (changePct === null || changePct === undefined || !Number.isFinite(changePct)) {
     return <span className="font-mono text-xs text-slate-500">—</span>;
   }
@@ -113,14 +143,14 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
               .join(" · ")}
           </p>
           <div className="mt-1">
-            <ChangeArrow changePct={tile.change_pct} />
+            <ChangeArrow tile={tile} />
           </div>
           <Sparkline tile={tile} />
         </>
       )}
-      {tile.cash_only ? (
+      {tile.metric === "liquidity_coverage" || tile.cash_only ? (
         <p className="mt-2 text-[11px] leading-snug text-slate-500">
-          Cash only — undrawn credit lines aren&apos;t in the tagged filing data.
+          Cash only (excludes credit lines) — undrawn revolvers aren&apos;t tagged in the filing.
         </p>
       ) : null}
       {tile.wall_disagrees && tile.wall_value !== null ? (

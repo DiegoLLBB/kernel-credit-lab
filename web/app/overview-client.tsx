@@ -212,7 +212,7 @@ export function OverviewClient() {
                                 )}
                               </span>
                               <div className="mt-0.5">
-                                <ChangeArrow changePct={tile.change_pct} />
+                                <ChangeArrow tile={tile} />
                               </div>
                             </td>
                           );
@@ -226,10 +226,12 @@ export function OverviewClient() {
             <details className="mt-3 max-w-3xl text-xs leading-relaxed text-slate-400">
               <summary className="cursor-pointer text-slate-300">How to read this table</summary>
               <p className="mt-2">
-                Arrows show the move versus one year earlier. Coloured dots are simple screening
-                bands, not ratings: green means comfortable, amber means worth watching, red means
-                stretched. “Missing” means the company&apos;s filing didn&apos;t tag that number, so
-                we show nothing rather than guess.
+                Ratio columns show last year → this year. Dollar columns show a percent move.
+                Changes are hidden when last year&apos;s figure was zero or near zero. Coloured
+                dots are simple screening bands, not ratings: green means comfortable, amber means
+                worth watching, red means stretched. Liquidity has no band — it is cash only and
+                excludes undrawn credit lines. “Missing” means the company&apos;s filing didn&apos;t
+                tag that number, so we show nothing rather than guess.
               </p>
               {overview.thresholds.length > 0 ? (
                 <ul className="mt-2 space-y-1 font-mono text-[11px] text-slate-500">
