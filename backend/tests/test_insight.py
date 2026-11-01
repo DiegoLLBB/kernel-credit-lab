@@ -368,3 +368,62 @@ def test_snapshot_facts_only_see_past(session):
     facts = build_snapshot_facts(session, "verizon", AS_OF)
     assert facts["alerts"] == []
     _ = json.dumps(facts, default=str)  # facts must be JSON-serializable
+
+
+def test_num_skips_non_numeric_values():
+    from app.insight.facts import _num
+
+    assert _num(None) is None
+    assert _num(True) is None
+    assert _num("—") is None
+    assert _num("fixed") is None
+    assert _num({"amount": 1}) is None
+    assert _num("1,000") == 1000.0
+    assert _num(Decimal("3.5")) == 3.5
+    assert _num(2000) == 2000.0
+
+
+def test_alert_facts_skips_text_changes(session):
+    """Regression: real applied changes carry text before/after (e.g. "—")."""
+    from app.insight.facts import _alert_facts
+    from app.models import StateChange
+
+    issuer = seed_issuer(session)
+    alert = Alert(issuer_id=issuer.id, title="VZ change", summary="s", status="new", run_id="run-1")
+    session.add(alert)
+    session.add(
+        StateChange(
+            run_id="run-1",
+            status="applied",
+            proposed_diff={
+                "action": "update_terms",
+                "instrument_key": "vz_x",
+                "field": "coupon",
+                "before": "—",
+                "after": "fixed",
+            },
+        )
+    )
+    session.add(
+        StateChange(
+            run_id="run-1",
+            status="applied",
+            proposed_diff={
+                "action": "update_amount",
+                "instrument_key": "vz_y",
+                "field": "amount_outstanding",
+                "before": "1000",
+                "after": "2000",
+            },
+        )
+    )
+    session.commit()
+    facts = _alert_facts(session, alert)
+    assert facts["before_after"] == [
+        {
+            "instrument": "vz_y",
+            "field": "amount_outstanding",
+            "before": 1000.0,
+            "after": 2000.0,
+        }
+    ]

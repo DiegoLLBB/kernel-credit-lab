@@ -11,8 +11,9 @@ model never does its own arithmetic.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
@@ -24,9 +25,16 @@ _YEAR_DAYS = 365
 
 
 def _num(value: Any) -> float | None:
-    if value is None:
+    """Best-effort numeric leaf for before/after JSON (names, "—", dicts → None)."""
+    if value is None or isinstance(value, bool):
         return None
-    return float(Decimal(str(value)))
+    if isinstance(value, (int, float, Decimal)):
+        return float(value)
+    if isinstance(value, str):
+        with contextlib.suppress(InvalidOperation, ValueError):
+            return float(Decimal(value.strip().replace(",", "")))
+        return None
+    return None
 
 
 def _change_pct(now: float | None, then: float | None) -> float | None:
