@@ -55,9 +55,11 @@ def upgrade() -> None:
     op.create_index("ix_credit_insight_issuer_id", "credit_insight", ["issuer_id"])
     op.create_index("ix_credit_insight_as_of", "credit_insight", ["as_of"])
     op.create_index("ix_credit_insight_scope", "credit_insight", ["scope"])
+    op.create_index("ix_credit_insight_status", "credit_insight", ["status"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_credit_insight_status", table_name="credit_insight")
     op.drop_index("ix_credit_insight_scope", table_name="credit_insight")
     op.drop_index("ix_credit_insight_as_of", table_name="credit_insight")
     op.drop_index("ix_credit_insight_issuer_id", table_name="credit_insight")
