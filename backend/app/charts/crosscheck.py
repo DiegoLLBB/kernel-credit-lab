@@ -597,11 +597,7 @@ def crosscheck_chart(
         wants_ttm = _chart_wants_ttm(chart.title, cat)
 
         # 1) Credit metric table (never for TTM charts — those need a 4-quarter sum)
-        if (
-            not wants_ttm
-            and fam.get("credit_metric")
-            and issuer is not None
-        ):
+        if not wants_ttm and fam.get("credit_metric") and issuer is not None:
             row = _credit_metric_for_period(session, issuer.id, fam["credit_metric"], period)
             if row is not None and row.value is not None:
                 xbrl_val = Decimal(str(row.value))
@@ -691,7 +687,6 @@ def crosscheck_chart(
             and xbrl_val > 0
             and chart_usd < (xbrl_val * Decimal("0.70"))
         ):
-
             results.append(
                 ValueCrosscheck(
                     category=str(cat),
