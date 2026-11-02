@@ -229,6 +229,9 @@ export function OverviewClient() {
               </ul>
               <p className="mt-4 font-mono text-[11px] text-slate-500">
                 {overview.brief.attribution}
+                {overview.brief.cost_label && !overview.brief.attribution.includes(overview.brief.cost_label)
+                  ? ` · ${overview.brief.cost_label}`
+                  : null}
               </p>
             </section>
           ) : (

@@ -173,6 +173,8 @@ export type TraceTurnOut = {
   output_tokens: number | null;
   /** Decimal arrives as string */
   cost_usd: string | null;
+  cost_label?: string | null;
+  model?: string | null;
   status: string | null;
 };
 
@@ -184,6 +186,7 @@ export type RunTraceOut = {
   turn_count: number;
   /** Decimal arrives as string */
   total_cost_usd: string;
+  total_cost_label?: string | null;
   total_latency_ms: number;
   total_tokens: number | null;
   turns: TraceTurnOut[];
@@ -564,6 +567,7 @@ export type DailyBrief = {
   model: string | null;
   check_model: string | null;
   cost_usd: number | null;
+  cost_label?: string | null;
   model_calls: number;
   attribution: string;
 };

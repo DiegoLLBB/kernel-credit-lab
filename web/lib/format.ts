@@ -55,11 +55,27 @@ export function formatPct(n: number | null | undefined, digits = 1): string {
   return `${(n * 100).toFixed(digits)}%`;
 }
 
-export function formatCost(n: string | number | null | undefined): string {
-  if (n === null || n === undefined || n === "") return "—";
+const UNPRICED_MODELS = /^(muse-wonder|sam-3)/i;
+
+/** Muse Wonder / SAM 3.1 have no published $/token — never show as $0. */
+export function formatCost(
+  n: string | number | null | undefined,
+  opts?: { model?: string | null; hasUnpriced?: boolean },
+): string {
+  const model = opts?.model ?? null;
+  if (model && UNPRICED_MODELS.test(model)) {
+    if (n === null || n === undefined || n === "" || Number(n) === 0) {
+      return "cost unknown (price not published)";
+    }
+  }
+  if (n === null || n === undefined || n === "") {
+    return opts?.hasUnpriced ? "cost unknown (price not published)" : "—";
+  }
   const v = typeof n === "number" ? n : Number(n);
   if (!Number.isFinite(v)) return String(n);
-  return `$${v.toFixed(v < 1 ? 4 : 2)}`;
+  if (v === 0 && opts?.hasUnpriced) return "cost unknown (price not published)";
+  const money = `$${v.toFixed(v < 1 ? 4 : 2)}`;
+  return opts?.hasUnpriced ? `${money} (excl. unpriced calls)` : money;
 }
 
 export function formatNumber(n: string | number | null | undefined): string {

@@ -32,6 +32,7 @@ class ModelCallOut(BaseModel):
     input_tokens: int | None
     output_tokens: int | None
     cost_usd: Decimal | None
+    cost_label: str | None = None
     latency_ms: int | None
 
 
@@ -45,6 +46,7 @@ class RunOut(BaseModel):
     status: str
     state: str
     total_cost_usd: Decimal
+    total_cost_label: str | None = None
     total_latency_ms: int
 
 
@@ -149,6 +151,8 @@ def get_run_trace(
                 result = primary.result if isinstance(primary.result, dict) else None
 
         mc = models_by_step.get(step.id)
+        from app.llm.pricing import cost_label_for_call
+
         turns.append(
             TraceTurnOut(
                 sequence=int(step.sequence),
@@ -169,6 +173,8 @@ def get_run_trace(
                 input_tokens=mc.input_tokens if mc else None,
                 output_tokens=mc.output_tokens if mc else None,
                 cost_usd=mc.cost_usd if mc else None,
+                cost_label=cost_label_for_call(mc.model, mc.cost_usd) if mc else None,
+                model=mc.model if mc else None,
                 status=step.status,
             )
         )
@@ -185,13 +191,19 @@ def get_run_trace(
             int(m.input_tokens or 0) + int(m.output_tokens or 0) for m in model_calls
         )
 
+    from app.llm.pricing import aggregate_call_costs
+
+    _priced, _unpriced, total_cost_label = aggregate_call_costs(list(model_calls))
+    priced_total = _priced if _priced is not None else Decimal(str(run.total_cost_usd or 0))
+
     return RunTraceOut(
         id=run.id,
         status=run.status,
         prompt_version=prompt_version_for_run(session, run),
         event_id=run.event_id,
         turn_count=int(run.turn_count or len(steps)),
-        total_cost_usd=Decimal(str(run.total_cost_usd or 0)),
+        total_cost_usd=priced_total,
+        total_cost_label=total_cost_label,
         total_latency_ms=int(run.total_latency_ms or 0),
         total_tokens=total_tokens,
         turns=turns,
@@ -199,6 +211,24 @@ def get_run_trace(
 
 
 @router.get("/model-calls", response_model=list[ModelCallOut])
-def recent_model_calls(session: DbSession, limit: int = 50) -> list[ModelCall]:
+def recent_model_calls(session: DbSession, limit: int = 50) -> list[ModelCallOut]:
+    from app.llm.pricing import cost_label_for_call
+
     stmt = select(ModelCall).order_by(ModelCall.created_at.desc()).limit(min(limit, 200))
-    return list(session.scalars(stmt))
+    rows = list(session.scalars(stmt))
+    return [
+        ModelCallOut(
+            id=r.id,
+            provider=r.provider,
+            model=r.model,
+            task=r.task,
+            status=r.status,
+            attempts=int(r.attempts or 1),
+            input_tokens=r.input_tokens,
+            output_tokens=r.output_tokens,
+            cost_usd=r.cost_usd,
+            cost_label=cost_label_for_call(r.model, r.cost_usd),
+            latency_ms=r.latency_ms,
+        )
+        for r in rows
+    ]

@@ -146,6 +146,8 @@ class TraceTurnOut(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: Decimal | None = None
+    cost_label: str | None = None
+    model: str | None = None
     status: str | None = None
 
 
@@ -156,6 +158,7 @@ class RunTraceOut(BaseModel):
     event_id: str | None = None
     turn_count: int = 0
     total_cost_usd: Decimal = Decimal("0")
+    total_cost_label: str | None = None
     total_latency_ms: int = 0
     total_tokens: int | None = None
     turns: list[TraceTurnOut] = Field(default_factory=list)
@@ -585,6 +588,7 @@ class DailyBriefOut(BaseModel):
     model: str | None = None
     check_model: str | None = None
     cost_usd: float | None = None
+    cost_label: str | None = None
     model_calls: int = 0
     attribution: str = "Written by Muse Wonder · checked by Muse Spark Open"
 

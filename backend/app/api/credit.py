@@ -367,6 +367,32 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
     verifier = check.get("verifier_models") or []
     check_model = verifier[0] if verifier else "Muse Spark Open"
     refused = len(row.dropped or [])
+    from app.llm.pricing import (
+        COST_UNKNOWN,
+        TOTAL_EXCL_UNPRICED,
+        cost_label_for_call,
+        is_unpriced_model,
+    )
+
+    raw_cost = float(row.cost_usd) if row.cost_usd is not None else None
+    # Stored 0.0 from before unpriced handling still means unknown for Wonder.
+    if is_unpriced_model(row.model) and (raw_cost is None or raw_cost == 0.0):
+        cost_usd = None
+        cost_label = COST_UNKNOWN
+    elif raw_cost is not None and check.get("unpriced_calls"):
+        cost_usd = raw_cost
+        cost_label = (
+            f"${raw_cost:.4f} ({TOTAL_EXCL_UNPRICED})"
+            if raw_cost < 1
+            else f"${raw_cost:.2f} ({TOTAL_EXCL_UNPRICED})"
+        )
+    elif raw_cost is not None:
+        cost_usd = raw_cost
+        cost_label = cost_label_for_call(row.model, raw_cost)
+    else:
+        cost_usd = None
+        cost_label = COST_UNKNOWN if is_unpriced_model(row.model) else None
+    cost_bit = f" · {cost_label}" if cost_label else ""
     return DailyBriefOut(
         as_of=row.as_of,
         status=row.status,
@@ -375,11 +401,12 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
         provider=row.provider,
         model=row.model,
         check_model=str(check_model),
-        cost_usd=float(row.cost_usd) if row.cost_usd is not None else None,
+        cost_usd=cost_usd,
+        cost_label=cost_label,
         model_calls=int(row.model_calls or 0),
         attribution=(
             f"Written by Muse Wonder · checked by Muse Spark Open · "
-            f"{refused} sentence{'s' if refused != 1 else ''} refused"
+            f"{refused} sentence{'s' if refused != 1 else ''} refused{cost_bit}"
         ),
     )
 

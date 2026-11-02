@@ -267,6 +267,42 @@ def test_segment_inferred_when_far_below_consolidated(db_session: Session) -> No
     assert result.values[0].reason == "segment"
 
 
+def test_amazon_ttm_net_sales_agrees_with_four_quarters(db_session: Session) -> None:
+    """Net Sales – TTM Q3 2026 bar must use four calendar quarters (incl. derived Q4)."""
+    from app.charts.crosscheck import _ttm_sum_from_companyfacts
+
+    iss, filing = _seed_issuer(db_session, key="amzn-ttm", cik="0001018724", name="Amazon")
+    facts = fixture_companyfacts(iss.cik)
+    assert facts is not None
+    tags = [
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "Revenues",
+        "SalesRevenueNet",
+    ]
+    ttm = _ttm_sum_from_companyfacts(facts, tags, end_year=2026, end_quarter=3)
+    assert ttm is not None
+    # Deck prints $797.5B for TTM ending Q3 2026.
+    assert float(ttm) == pytest.approx(797_500_000_000, rel=0.01)
+
+    chart = ChartReading(
+        issuer_id=iss.id,
+        filing_id=filing.id,
+        page=2,
+        title="Net Sales – TTM",
+        unit="Billions",
+        categories=["Q3 2025", "Q3 2026"],
+        values=[691.3, 797.5],
+        verified=True,
+        bbox={},
+    )
+    db_session.add(chart)
+    db_session.flush()
+    result = crosscheck_chart(db_session, chart, issuer=iss, companyfacts=facts)
+    q326 = next(v for v in result.values if v.category == "Q3 2026")
+    assert q326.status == "agree", q326
+    assert result.summary_status in {"agree", "not_comparable"}  # Q3 2025 may lack 4 qtrs
+
+
 def test_period_unclear_not_comparable(db_session: Session) -> None:
     iss, filing = _seed_issuer(db_session, key="amzn2", cik="0001018724", name="Amazon")
     chart = ChartReading(

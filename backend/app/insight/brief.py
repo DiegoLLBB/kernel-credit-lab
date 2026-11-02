@@ -277,18 +277,23 @@ async def _gate_sentences(
     return kept, dropped, {"verifier_models": sorted(set(models_used))}
 
 
-def _cost_since(session: Any, started_at: Any) -> tuple[int, Decimal]:
-    rows = session.scalars(
-        select(ModelCall).where(
-            ModelCall.task.in_(("insight_brief", "insight_check")),
-            ModelCall.created_at >= started_at,
-        )
-    ).all()
-    total = Decimal("0")
-    for row in rows:
-        if row.cost_usd is not None:
-            total += Decimal(str(row.cost_usd))
-    return len(rows), total
+def _cost_since(session: Any, started_at: Any) -> tuple[int, Decimal | None, bool]:
+    """Return (call_count, priced_total_or_none, has_unpriced_calls).
+
+    Muse Wonder has no published $/token — never report $0 for a Wonder-only brief.
+    """
+    from app.llm.pricing import aggregate_call_costs
+
+    rows = list(
+        session.scalars(
+            select(ModelCall).where(
+                ModelCall.task.in_(("insight_brief", "insight_check")),
+                ModelCall.created_at >= started_at,
+            )
+        ).all()
+    )
+    total, has_unpriced, _label = aggregate_call_costs(rows)
+    return len(rows), total, has_unpriced
 
 
 async def generate_daily_brief(
@@ -352,8 +357,8 @@ async def generate_daily_brief(
         if close and hasattr(local, "aclose"):
             await local.aclose()
 
-    calls, cost = _cost_since(session, started)
-    if cost > BRIEF_COST_CAP_USD:
+    calls, cost, has_unpriced = _cost_since(session, started)
+    if cost is not None and cost > BRIEF_COST_CAP_USD:
         # Soft stop: still store whatever we have, but mark the overage.
         pass
 
@@ -373,11 +378,13 @@ async def generate_daily_brief(
             summary["sentence_count_note"] = f"model wrote {len(raw)} sentences (want 4-6)"
         kept, dropped, gate_summary = await _gate_sentences(raw, facts, client)
         summary.update(gate_summary)
-        calls2, cost2 = _cost_since(session, started)
-        calls, cost = calls2, cost2
+        calls2, cost2, unpriced2 = _cost_since(session, started)
+        calls, cost, has_unpriced = calls2, cost2, unpriced2
 
-    if cost > BRIEF_COST_CAP_USD:
+    if cost is not None and cost > BRIEF_COST_CAP_USD:
         summary["cost_cap_exceeded"] = True
+    if has_unpriced:
+        summary["unpriced_calls"] = True
 
     links = _annotate_links(kept, facts)
     if kept and len(kept) >= 4:
@@ -400,6 +407,7 @@ async def generate_daily_brief(
         "provider": provider,
         "model": model,
         "model_calls": calls,
+        # Never persist $0 when Wonder ran unpriced — null means unknown.
         "cost_usd": cost,
     }
     if existing is None:

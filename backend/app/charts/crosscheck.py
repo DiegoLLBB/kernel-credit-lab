@@ -208,6 +208,35 @@ def _chart_wants_ttm(title: str | None, category: Any) -> bool:
     return "ttm" in blob or "ltm" in blob or "trailing twelve" in blob
 
 
+def _quarter_flow_value(
+    facts: dict[str, Any],
+    tags: list[str],
+    *,
+    year: int,
+    quarter: int,
+) -> Decimal | None:
+    """One ~90-day flow; for Q4, fall back to FY − Q1–Q3 when no Q4 tag exists."""
+    period = {"kind": "quarter", "year": year, "quarter": quarter, "fp": f"Q{quarter}"}
+    picked = _pick_xbrl_point(facts, tags, period, instant=False)
+    if picked and picked.get("val") is not None and not picked.get("ambiguous"):
+        return Decimal(str(picked["val"]))
+    if quarter != 4:
+        return None
+    # Many issuers only tag Q4 inside the FY total — derive it.
+    fy = _pick_xbrl_point(
+        facts, tags, {"kind": "fy", "year": year, "fiscal_label": f"FY{year}"}, instant=False
+    )
+    if not fy or fy.get("val") is None or fy.get("ambiguous"):
+        return None
+    parts: list[Decimal] = []
+    for q in (1, 2, 3):
+        v = _quarter_flow_value(facts, tags, year=year, quarter=q)
+        if v is None:
+            return None
+        parts.append(v)
+    return Decimal(str(fy["val"])) - sum(parts, Decimal(0))
+
+
 def _ttm_sum_from_companyfacts(
     facts: dict[str, Any],
     tags: list[str],
@@ -225,14 +254,12 @@ def _ttm_sum_from_companyfacts(
             q = 4
             y -= 1
     total = Decimal(0)
-    found = 0
     for y, q in quarter_ends:
-        period = {"kind": "quarter", "year": y, "quarter": q, "fp": f"Q{q}"}
-        picked = _pick_xbrl_point(facts, tags, period, instant=False)
-        if picked and picked.get("val") is not None and not picked.get("ambiguous"):
-            total += Decimal(str(picked["val"]))
-            found += 1
-    return total if found == 4 else None
+        val = _quarter_flow_value(facts, tags, year=y, quarter=q)
+        if val is None:
+            return None
+        total += val
+    return total
 
 
 def match_metric_family(title: str | None, unit: str | None) -> dict[str, Any] | None:
@@ -351,6 +378,18 @@ def _duration_days(pt: dict[str, Any]) -> int | None:
     return (e - s).days
 
 
+_QUARTER_END_MONTHS = {1: (1, 2, 3), 2: (4, 5, 6), 3: (7, 8, 9), 4: (10, 11, 12)}
+
+
+def _end_in_calendar_quarter(end: str, year: int, quarter: int) -> bool:
+    """True when ``end`` falls in the calendar quarter (rejects fy/fp mismatch traps)."""
+    try:
+        e = date.fromisoformat(str(end)[:10])
+    except ValueError:
+        return False
+    return e.year == year and e.month in _QUARTER_END_MONTHS.get(quarter, ())
+
+
 def _pick_xbrl_point(
     facts: dict[str, Any],
     tags: list[str],
@@ -388,6 +427,23 @@ def _pick_xbrl_point(
     year = period.get("year")
     fp = period.get("fp")
     kind = period.get("kind")
+    quarter = period.get("quarter")
+    if kind == "quarter" and year is not None and quarter is not None:
+        # Hard filter: end date must sit in that calendar quarter. Without this,
+        # a Q2 point ending 2025-06-30 can outscore a missing Q4 2025 (Amazon TTM).
+        filtered = [
+            pt
+            for pt in candidates
+            if _end_in_calendar_quarter(str(pt.get("end") or ""), int(year), int(quarter))
+        ]
+        if filtered:
+            candidates = filtered
+    elif kind == "fy" and year is not None:
+        # Hard filter: period end year must match (10-K comparatives re-tag prior
+        # FY with the filing's fy attribute, e.g. end 2024-12-31 with fy=2025).
+        filtered = [pt for pt in candidates if str(pt.get("end") or "").startswith(str(year))]
+        if filtered:
+            candidates = filtered
 
     def score(pt: dict[str, Any]) -> tuple:
         end = str(pt.get("end") or "")
@@ -400,10 +456,10 @@ def _pick_xbrl_point(
         if kind == "fy":
             if pt_fp in {"FY", ""} or (dur and dur >= 300):
                 match += 5
-            if fy == year or (
-                end.startswith(str(year)) and (not pt.get("start") or (dur and dur >= 300))
-            ):
+            if end.startswith(str(year)) and (not pt.get("start") or (dur and dur >= 300)):
                 match += 5
+            elif fy == year:
+                match += 1  # weak: fy attribute alone is often the filing year
             if instant and not pt.get("start"):
                 match += 2
             if dur is not None:

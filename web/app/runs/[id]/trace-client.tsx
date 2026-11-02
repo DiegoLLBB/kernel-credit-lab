@@ -74,7 +74,8 @@ export function TraceClient() {
               <div>
                 <dt className="text-xs text-slate-500">Cost</dt>
                 <dd className="font-mono text-sm text-slate-200">
-                  {formatCost(trace.total_cost_usd)}
+                  {trace.total_cost_label ??
+                    formatCost(trace.total_cost_usd, { hasUnpriced: true })}
                 </dd>
               </div>
               <div>
@@ -129,9 +130,9 @@ export function TraceClient() {
                         {t.status ? (
                           <span className="font-mono text-[11px] text-slate-500">{t.status}</span>
                         ) : null}
-                        {t.cost_usd ? (
+                        {t.cost_label || t.cost_usd != null || t.model ? (
                           <span className="font-mono text-[11px] text-slate-500">
-                            {formatCost(t.cost_usd)}
+                            {t.cost_label ?? formatCost(t.cost_usd, { model: t.model })}
                           </span>
                         ) : null}
                       </div>
