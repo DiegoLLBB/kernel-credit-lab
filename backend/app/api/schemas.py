@@ -315,6 +315,32 @@ class ReplayStatusOut(BaseModel):
     latest_eval: ReplayEvalSummary | None = None
 
 
+class ChartFilingCrosscheckValueOut(BaseModel):
+    category: str
+    chart_value: float | None = None
+    chart_unit: str | None = None
+    status: str
+    reason: str | None = None
+    xbrl_value: float | None = None
+    xbrl_unit: str | None = None
+    fiscal_label: str | None = None
+    period_end: str | None = None
+    accession: str | None = None
+    filing_url: str | None = None
+    metric_id: str | None = None
+    metric_label: str | None = None
+
+
+class ChartFilingCrosscheckOut(BaseModel):
+    chart_id: str
+    title: str | None = None
+    unit: str | None = None
+    metric_id: str | None = None
+    metric_label: str | None = None
+    summary_status: str
+    values: list[ChartFilingCrosscheckValueOut] = Field(default_factory=list)
+
+
 class ChartReadingOut(BaseModel):
     id: str
     issuer_key: str | None = None
@@ -330,11 +356,19 @@ class ChartReadingOut(BaseModel):
     bbox: dict[str, Any] = Field(default_factory=dict)
     has_crop: bool = False
     has_overlay: bool = False
+    filing_crosscheck: ChartFilingCrosscheckOut | None = None
 
 
 class ChartListOut(BaseModel):
     items: list[ChartReadingOut]
     total: int
+
+
+class ChartCrosscheckSummaryOut(BaseModel):
+    agree: int = 0
+    differ: int = 0
+    not_comparable: int = 0
+    line: str | None = None
 
 
 # --- Analyst layer: credit snapshot + "What changed" overview ---
@@ -492,6 +526,7 @@ class EvalComparisonRowOut(BaseModel):
 class EvalComparisonOut(BaseModel):
     rows: list[EvalComparisonRowOut] = Field(default_factory=list)
     note: str | None = None
+    chart_crosscheck: ChartCrosscheckSummaryOut | None = None
 
 
 class BriefSentenceOut(BaseModel):

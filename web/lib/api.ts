@@ -341,6 +341,32 @@ export type ChartVerificationCheck = {
   series?: string | null;
 };
 
+export type ChartFilingCrosscheckValue = {
+  category: string;
+  chart_value: number | null;
+  chart_unit: string | null;
+  status: string;
+  reason: string | null;
+  xbrl_value: number | null;
+  xbrl_unit: string | null;
+  fiscal_label: string | null;
+  period_end: string | null;
+  accession: string | null;
+  filing_url: string | null;
+  metric_id: string | null;
+  metric_label: string | null;
+};
+
+export type ChartFilingCrosscheck = {
+  chart_id: string;
+  title: string | null;
+  unit: string | null;
+  metric_id: string | null;
+  metric_label: string | null;
+  summary_status: string;
+  values: ChartFilingCrosscheckValue[];
+};
+
 export type ChartReadingOut = {
   id: string;
   issuer_key: string | null;
@@ -362,6 +388,7 @@ export type ChartReadingOut = {
   bbox: Record<string, unknown>;
   has_crop: boolean;
   has_overlay: boolean;
+  filing_crosscheck?: ChartFilingCrosscheck | null;
 };
 
 export type ChartListOut = {
@@ -476,9 +503,17 @@ export type EvalComparisonRow = {
   cost_usd?: number | null;
 };
 
+export type ChartCrosscheckSummary = {
+  agree: number;
+  differ: number;
+  not_comparable: number;
+  line?: string | null;
+};
+
 export type EvalComparison = {
   rows: EvalComparisonRow[];
   note?: string | null;
+  chart_crosscheck?: ChartCrosscheckSummary | null;
 };
 
 export type BriefSentence = {

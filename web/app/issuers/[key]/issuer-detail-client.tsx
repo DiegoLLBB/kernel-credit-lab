@@ -774,6 +774,55 @@ export function IssuerDetailClient() {
                             </tbody>
                           </table>
                         ) : null}
+                        {c.verified && c.filing_crosscheck ? (
+                          <div className="mt-3 border-t border-slate-800 pt-3 text-xs text-slate-300">
+                            <p>
+                              Checked against SEC filings:{" "}
+                              <span className="font-medium text-slate-100">
+                                {c.filing_crosscheck.summary_status === "agree"
+                                  ? "agrees"
+                                  : c.filing_crosscheck.summary_status === "differ"
+                                    ? "differs"
+                                    : c.filing_crosscheck.summary_status === "not_applicable"
+                                      ? "not comparable (metric not configured for this title)"
+                                      : "not comparable"}
+                              </span>
+                              {c.filing_crosscheck.metric_label
+                                ? ` · ${c.filing_crosscheck.metric_label}`
+                                : ""}
+                            </p>
+                            <ul className="mt-2 space-y-1 font-mono text-[11px] text-slate-400">
+                              {c.filing_crosscheck.values
+                                .filter((v) => v.status !== "skipped")
+                                .map((v) => (
+                                  <li key={`${c.id}-${v.category}`}>
+                                    {v.category}: chart{" "}
+                                    {v.chart_value != null ? v.chart_value : "—"}
+                                    {v.xbrl_value != null
+                                      ? ` · filing ${v.xbrl_value}${
+                                          v.xbrl_unit ? ` ${v.xbrl_unit}` : ""
+                                        }`
+                                      : ""}{" "}
+                                    · {v.status}
+                                    {v.reason ? ` (${v.reason})` : ""}
+                                    {v.filing_url ? (
+                                      <>
+                                        {" · "}
+                                        <a
+                                          href={v.filing_url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-accent hover:underline"
+                                        >
+                                          XBRL filing
+                                        </a>
+                                      </>
+                                    ) : null}
+                                  </li>
+                                ))}
+                            </ul>
+                          </div>
+                        ) : null}
                       </div>
                     </li>
                   );

@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.api.schemas import ChartListOut, ChartReadingOut
+from app.api.schemas import (
+    ChartFilingCrosscheckOut,
+    ChartFilingCrosscheckValueOut,
+    ChartListOut,
+    ChartReadingOut,
+)
+from app.charts.crosscheck import crosscheck_chart
+from app.charts.facts_cache import load_companyfacts
 from app.db import get_session
 from app.models import ChartReading, Filing, Issuer
 
@@ -16,12 +23,43 @@ router = APIRouter(tags=["charts"])
 DbSession = Annotated[Session, Depends(get_session)]
 
 
+def _crosscheck_out(
+    session: Session,
+    row: ChartReading,
+    issuer: Issuer | None,
+    facts_cache: dict[str, Any],
+) -> ChartFilingCrosscheckOut | None:
+    if not row.verified:
+        return None
+    facts = None
+    if issuer and issuer.cik:
+        key = issuer.cik
+        if key not in facts_cache:
+            facts_cache[key] = load_companyfacts(issuer.cik)
+        facts = facts_cache[key]
+    result = crosscheck_chart(session, row, issuer=issuer, companyfacts=facts)
+    return ChartFilingCrosscheckOut(
+        chart_id=result.chart_id,
+        title=result.title,
+        unit=result.unit,
+        metric_id=result.metric_id,
+        metric_label=result.metric_label,
+        summary_status=result.summary_status,
+        values=[ChartFilingCrosscheckValueOut(**v.to_dict()) for v in result.values],
+    )
+
+
 def _to_out(
-    row: ChartReading, *, issuer_key: str | None, filing_title: str | None
+    session: Session,
+    row: ChartReading,
+    *,
+    issuer: Issuer | None,
+    filing_title: str | None,
+    facts_cache: dict[str, Any],
 ) -> ChartReadingOut:
     return ChartReadingOut(
         id=row.id,
-        issuer_key=issuer_key,
+        issuer_key=issuer.key if issuer else None,
         filing_id=row.filing_id,
         filing_title=filing_title,
         page=row.page,
@@ -34,6 +72,7 @@ def _to_out(
         bbox=dict(row.bbox or {}),
         has_crop=bool(row.crop_png),
         has_overlay=bool(row.overlay_png),
+        filing_crosscheck=_crosscheck_out(session, row, issuer, facts_cache),
     )
 
 
@@ -61,12 +100,21 @@ def list_issuer_charts(
     total = session.scalar(select(func.count()).select_from(q.subquery())) or 0
     rows = session.scalars(q.offset(offset).limit(limit)).all()
     filing_titles: dict[str, str | None] = {}
+    facts_cache: dict[str, Any] = {}
     items: list[ChartReadingOut] = []
     for row in rows:
         if row.filing_id not in filing_titles:
             filing = session.get(Filing, row.filing_id)
             filing_titles[row.filing_id] = filing.title if filing else None
-        items.append(_to_out(row, issuer_key=issuer.key, filing_title=filing_titles[row.filing_id]))
+        items.append(
+            _to_out(
+                session,
+                row,
+                issuer=issuer,
+                filing_title=filing_titles[row.filing_id],
+                facts_cache=facts_cache,
+            )
+        )
     return ChartListOut(items=items, total=int(total))
 
 

@@ -22,6 +22,7 @@ from app.api.common import clamp_limit
 from app.api.schemas import (
     BeforeAfterOut,
     BriefSentenceOut,
+    ChartCrosscheckSummaryOut,
     CreditOverviewOut,
     DailyBriefOut,
     EvalComparisonOut,
@@ -37,6 +38,8 @@ from app.api.schemas import (
     ThresholdBandOut,
     WatchlistRowOut,
 )
+from app.charts.crosscheck import crosscheck_verified_charts, summarize_crosschecks
+from app.charts.facts_cache import load_companyfacts
 from app.db import get_session
 from app.eval.rescore import build_comparison
 from app.eval.summary import build_eval_summary
@@ -285,6 +288,34 @@ def _eval_summary_out(session: Session, *, kind: str = "agent") -> EvalSummaryOu
     )
 
 
+def _chart_crosscheck_summary(session: Session) -> ChartCrosscheckSummaryOut | None:
+    """Aggregate verified-chart vs filing checks for the overview line."""
+    try:
+        issuers = session.scalars(select(Issuer).where(Issuer.cik.is_not(None))).all()
+        facts_by_cik: dict[str, Any] = {}
+        for iss in issuers:
+            if not iss.cik:
+                continue
+            doc = load_companyfacts(iss.cik)
+            if doc is not None:
+                facts_by_cik[iss.cik] = doc
+                facts_by_cik[iss.cik.lstrip("0") or "0"] = doc
+        results = crosscheck_verified_charts(session, companyfacts_by_cik=facts_by_cik)
+        counts = summarize_crosschecks(results)
+        line = (
+            f"Chart values checked against filings: {counts['agree']} agree, "
+            f"{counts['differ']} differ, {counts['not_comparable']} not comparable"
+        )
+        return ChartCrosscheckSummaryOut(
+            agree=counts["agree"],
+            differ=counts["differ"],
+            not_comparable=counts["not_comparable"],
+            line=line,
+        )
+    except Exception:
+        return None
+
+
 def _comparison_out(session: Session) -> EvalComparisonOut | None:
     try:
         data = build_comparison(session)
@@ -295,6 +326,7 @@ def _comparison_out(session: Session) -> EvalComparisonOut | None:
     return EvalComparisonOut(
         rows=[EvalComparisonRowOut(**r) for r in data["rows"]],
         note=data.get("note"),
+        chart_crosscheck=_chart_crosscheck_summary(session),
     )
 
 

@@ -538,6 +538,11 @@ export function OverviewClient() {
                   correct maturity year and size (±1%). Ungrounded numbers = claims the checker
                   could not find in the filing. Keeps a wall = stores before/after maturity records.
                 </p>
+                {overview.comparison.chart_crosscheck?.line ? (
+                  <p className="mt-3 text-sm leading-relaxed text-slate-300">
+                    {overview.comparison.chart_crosscheck.line}
+                  </p>
+                ) : null}
                 {overview.comparison.note ? (
                   <p className="mt-4 text-sm leading-relaxed text-slate-400">
                     {overview.comparison.note}
