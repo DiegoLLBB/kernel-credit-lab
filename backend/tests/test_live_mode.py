@@ -107,7 +107,9 @@ def test_eval_summary_uses_alert_counts():
             "true_positive": 9,
             "false_positive": 1,
             "true_negative": 0,
-            "false_negative": 2,
+            "false_negative": 5,  # 2 logged misses + 3 paused/failed expected alerts
+            "incomplete_expected_alert": 2,
+            "failed_expected_alert": 1,
         },
     )
     db.add(row)
@@ -115,13 +117,60 @@ def test_eval_summary_uses_alert_counts():
     summary = build_eval_summary(db, row)
     assert summary is not None
     assert summary["caught"] == 9
-    assert summary["expected_material"] == 11
+    assert summary["expected_material"] == 14
     assert summary["false_alerts"] == 1
-    assert summary["text"] == "Caught 9 of 11 material changes, 1 false alert"
+    assert summary["text"] == "Caught 9 of 14 material changes, 1 false alert"
     assert abs(summary["precision"] - 0.9) < 1e-9
-    assert abs(summary["recall"] - (9 / 11)) < 1e-9
+    assert abs(summary["recall"] - (9 / 14)) < 1e-9
     assert any(e["name"] == "miss_one" for e in summary["missed_events"])
     assert any(e["name"] == "false_one" for e in summary["false_events"])
+    db.close()
+    engine.dispose()
+
+
+def test_eval_summary_folds_legacy_parked_misses(monkeypatch):
+    """Legacy rows with incomplete outside FN recompute so Y includes them."""
+    from app.eval import summary as summary_mod
+    from app.eval.replay_eval import AlertConfusion, EvalReport
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    row = ReplayEvaluation(
+        precision=Decimal("0.90000"),
+        recall=Decimal("0.81818"),
+        incomplete=False,
+        per_event=[],
+        alert_counts={
+            "true_positive": 9,
+            "false_positive": 1,
+            "true_negative": 0,
+            "false_negative": 2,
+            "incomplete_expected_alert": 3,
+            "failed_expected_alert": 1,
+        },
+    )
+    db.add(row)
+    db.commit()
+
+    recomputed = EvalReport()
+    recomputed.alert = AlertConfusion(
+        true_positive=9,
+        false_positive=1,
+        true_negative=0,
+        false_negative=6,
+        incomplete_expected_alert=3,
+        failed_expected_alert=1,
+    )
+    monkeypatch.setattr(summary_mod, "evaluate_latest", lambda session: recomputed)
+    summary = build_eval_summary(db, row)
+    assert summary is not None
+    assert summary["expected_material"] == 15
+    assert summary["text"] == "Caught 9 of 15 material changes, 1 false alert"
     db.close()
     engine.dispose()
 

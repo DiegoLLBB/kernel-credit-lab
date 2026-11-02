@@ -25,6 +25,7 @@ from app.api.schemas import (
     EvalDetailEventOut,
     EvalSummaryOut,
     FeedItemOut,
+    LiveDocumentOut,
     LiveSectionOut,
     MetricTileOut,
     OverviewHeaderOut,
@@ -352,7 +353,9 @@ def credit_overview(
             alerted=int(stats.get("alerted") or 0),
             logged=int(stats.get("logged") or 0),
             refused=int(stats.get("refused") or 0),
+            paused=int(stats.get("paused") or 0),
             failed=int(stats.get("failed") or 0),
+            documents=[LiveDocumentOut(**d) for d in (stats.get("documents") or [])],
             feed=live_feed,
         )
 

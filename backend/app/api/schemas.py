@@ -420,6 +420,19 @@ class EvalSummaryOut(BaseModel):
     false_events: list[EvalDetailEventOut] = Field(default_factory=list)
 
 
+class LiveDocumentOut(BaseModel):
+    event_id: str
+    alert_id: str | None = None
+    issuer_key: str | None = None
+    issuer_name: str | None = None
+    form: str | None = None
+    event_date: str | None = None
+    title: str | None = None
+    outcome: str
+    reason: str | None = None
+    cost_usd: float | None = None
+
+
 class LiveSectionOut(BaseModel):
     since: str
     git_sha: str | None = None
@@ -428,7 +441,9 @@ class LiveSectionOut(BaseModel):
     alerted: int = 0
     logged: int = 0
     refused: int = 0
+    paused: int = 0
     failed: int = 0
+    documents: list[LiveDocumentOut] = Field(default_factory=list)
     feed: list[FeedItemOut] = Field(default_factory=list)
 
 

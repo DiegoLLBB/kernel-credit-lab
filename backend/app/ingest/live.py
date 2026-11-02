@@ -296,13 +296,27 @@ def poll_all(
 
 
 def pending_live_events(session: Session) -> list[Event]:
-    return list(
+    """Pending/failed live events plus any whose latest run is paused (resumable)."""
+    from app.models.trace import AgentRun
+
+    events = list(
         session.scalars(
             select(Event)
-            .where(Event.source == "live", Event.status.in_(("pending", "failed")))
+            .where(Event.source == "live")
             .order_by(Event.event_date.asc(), Event.detected_at.asc())
         ).all()
     )
+    out: list[Event] = []
+    for event in events:
+        if event.status in {"pending", "failed"}:
+            out.append(event)
+            continue
+        if not event.run_id:
+            continue
+        run = session.get(AgentRun, event.run_id)
+        if run is not None and run.status == "paused":
+            out.append(event)
+    return out
 
 
 def live_since_date(session: Session) -> date | None:
@@ -312,41 +326,90 @@ def live_since_date(session: Session) -> date | None:
     return row.go_live_at.date()
 
 
-def live_stats(session: Session) -> dict[str, Any]:
-    """Counts for the overview Live section (never mixed into replay score)."""
-    from app.models import Alert
+def _outcome_reason(run: Any | None, status: str) -> str | None:
+    if run is None:
+        return None
+    detail = (getattr(run, "error", None) or "").strip()
+    if detail:
+        return detail
+    if status == "paused":
+        return "paused (cost or token limit)"
+    if status in {"needs_input", "refused"}:
+        return "needs input / refused"
+    return None
+
+
+def live_document_rows(session: Session) -> list[dict[str, Any]]:
+    """One row per live event for the overview document list."""
+    from app.models import Alert, Issuer
     from app.models.trace import AgentRun
 
-    events = list(session.scalars(select(Event).where(Event.source == "live")).all())
-    docs = len(events)
-    alerted = logged = refused = failed = 0
+    rows: list[dict[str, Any]] = []
+    events = list(
+        session.scalars(
+            select(Event)
+            .where(Event.source == "live")
+            .order_by(Event.event_date.desc(), Event.detected_at.desc())
+        ).all()
+    )
     for event in events:
         run = session.get(AgentRun, event.run_id) if event.run_id else None
-        status = (run.status if run else event.status) or ""
-        if status == "alerted":
-            alerted += 1
-        elif status == "logged":
-            logged += 1
-        elif status in {"needs_input", "refused"}:
-            refused += 1
-        elif status == "paused":
-            # Hit the per-run cost/token wall mid-flight; counts as refused for the overview.
-            refused += 1
-        elif status in {"failed", "pending", "processing"}:
-            if status == "failed":
-                failed += 1
+        status = (run.status if run else event.status) or "pending"
+        if status == "needs_input":
+            outcome = "refused"
+        elif status in {"alerted", "logged", "paused", "failed", "pending", "processing"}:
+            outcome = status
         elif session.scalars(select(Alert).where(Alert.event_id == event.id)).first():
-            alerted += 1
+            outcome = "alerted"
         elif event.status == "processed":
+            outcome = "logged"
+        else:
+            outcome = status
+        issuer = session.get(Issuer, event.issuer_id) if event.issuer_id else None
+        alert = session.scalars(select(Alert).where(Alert.event_id == event.id)).first()
+        rows.append(
+            {
+                "event_id": event.id,
+                "alert_id": alert.id if alert else None,
+                "issuer_key": issuer.key if issuer else None,
+                "issuer_name": issuer.name if issuer else None,
+                "form": event.event_type,
+                "event_date": event.event_date.isoformat() if event.event_date else None,
+                "title": event.summary or (alert.title if alert else event.event_type),
+                "outcome": outcome,
+                "reason": _outcome_reason(run, status),
+                "cost_usd": float(run.total_cost_usd or 0) if run else None,
+            }
+        )
+    return rows
+
+
+def live_stats(session: Session) -> dict[str, Any]:
+    """Counts for the overview Live section (never mixed into replay score)."""
+    documents = live_document_rows(session)
+    alerted = logged = refused = paused = failed = 0
+    for row in documents:
+        outcome = row["outcome"]
+        if outcome == "alerted":
+            alerted += 1
+        elif outcome == "logged":
             logged += 1
+        elif outcome in {"refused", "needs_input"}:
+            refused += 1
+        elif outcome == "paused":
+            paused += 1
+        elif outcome == "failed":
+            failed += 1
     cfg = session.scalars(select(LiveConfig).limit(1)).first()
     return {
         "go_live_at": cfg.go_live_at.isoformat() if cfg else None,
         "git_sha": cfg.git_sha if cfg else None,
         "prompt_version": cfg.prompt_version if cfg else None,
-        "documents_read": docs,
+        "documents_read": len(documents),
         "alerted": alerted,
         "logged": logged,
         "refused": refused,
+        "paused": paused,
         "failed": failed,
+        "documents": documents,
     }

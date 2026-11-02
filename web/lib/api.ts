@@ -408,6 +408,19 @@ export type EvalSummary = {
   false_events?: EvalDetailEvent[];
 };
 
+export type LiveDocument = {
+  event_id: string;
+  alert_id: string | null;
+  issuer_key: string | null;
+  issuer_name: string | null;
+  form: string | null;
+  event_date: string | null;
+  title: string | null;
+  outcome: string;
+  reason: string | null;
+  cost_usd: number | null;
+};
+
 export type LiveSection = {
   since: string;
   git_sha: string | null;
@@ -416,7 +429,9 @@ export type LiveSection = {
   alerted: number;
   logged: number;
   refused: number;
+  paused: number;
   failed: number;
+  documents: LiveDocument[];
   feed: FeedItem[];
 };
 

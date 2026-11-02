@@ -522,14 +522,21 @@ def _score_alert_outcome(
     alerted: bool | None,
     failed: bool,
 ) -> None:
+    """Score one alert outcome.
+
+    Paused / needs_input / failed / missing expected-alert events count as
+    false negatives (misses) — never dropped from the recall denominator.
+    """
     if failed:
         if expected_alert:
             report.alert.failed_expected_alert += 1
+            report.alert.false_negative += 1
         else:
             report.alert.failed_expected_no_alert += 1
     elif alerted is None:
         if expected_alert:
             report.alert.incomplete_expected_alert += 1
+            report.alert.false_negative += 1
         else:
             report.alert.incomplete_expected_no_alert += 1
     elif expected_alert and alerted:
@@ -614,8 +621,6 @@ def evaluate_replay(
     for exp in expectations:
         if only_keys is not None and exp.key not in only_keys:
             continue
-        if exp.key in skipped_keys:
-            continue
 
         event = None
         if exp.event_id:
@@ -624,14 +629,17 @@ def evaluate_replay(
             event = session.scalars(select(Event).where(Event.replay_key == exp.key)).first()
 
         log_row = log_by_key.get(exp.key)
+        skipped = exp.key in skipped_keys
         run: AgentRun | None = None
-        if event is not None:
+        if event is not None and not skipped:
             if prefer_latest_run or not log_row:
                 run = _latest_run_for_event(session, event)
             elif event.run_id:
                 run = session.get(AgentRun, event.run_id)
 
-        alerted = _event_alerted_material(session, event, run) if event else None
+        alerted = (
+            None if skipped else (_event_alerted_material(session, event, run) if event else None)
+        )
         own_expected_alert = bool(exp.expected_alert)
         if exp.event_id and exp.event_id in siblings_by_event:
             group_expected_alert = any(
@@ -642,28 +650,45 @@ def evaluate_replay(
             group_expected_alert = own_expected_alert
             score_key = f"key:{exp.key}"
 
-        failed = _event_failed(event, run, log_row)
+        failed = (not skipped) and _event_failed(event, run, log_row)
         status = (
-            (run.status if run else None)
-            or (str(log_row["status"]) if log_row and log_row.get("status") else None)
-            or (event.status if event else None)
-            or "missing"
+            "skipped"
+            if skipped
+            else (
+                (run.status if run else None)
+                or (str(log_row["status"]) if log_row and log_row.get("status") else None)
+                or (event.status if event else None)
+                or "missing"
+            )
         )
-        got = _got_label(alerted, status)
+        got = "skipped" if skipped else _got_label(alerted, status)
         # Sibling log of an expected-alert merge is not a miss when the event alerted.
-        if alerted is not None and (not own_expected_alert and group_expected_alert and alerted):
+        if skipped:
+            miss = bool(own_expected_alert)
+        elif alerted is not None and (not own_expected_alert and group_expected_alert and alerted):
             miss = False
+        elif alerted is None and own_expected_alert:
+            # Paused / failed / missing expected alerts are misses.
+            miss = True
         else:
             miss = alerted is not None and (alerted != own_expected_alert)
 
         if score_key not in scored_alert_groups:
             scored_alert_groups.add(score_key)
-            _score_alert_outcome(
-                report,
-                expected_alert=group_expected_alert,
-                alerted=alerted,
-                failed=failed,
-            )
+            if skipped:
+                # Skipped expected-alert events count as misses, never dropped.
+                if group_expected_alert:
+                    report.alert.false_negative += 1
+                    report.alert.failed_expected_alert += 1
+                else:
+                    report.alert.true_negative += 1
+            else:
+                _score_alert_outcome(
+                    report,
+                    expected_alert=group_expected_alert,
+                    alerted=alerted,
+                    failed=failed,
+                )
 
         if event is not None:
             scored_event_ids.add(event.id)
@@ -835,7 +860,7 @@ def render_eval_markdown(report: EvalReport) -> str:
             "",
             f"- Precision: **{prec}** (TP / (TP+FP))",
             f"- Recall: **{rec}** (TP / (TP+FN))",
-            f"- Incomplete (needs_input / paused): {a.incomplete_total} (not counted as misses)",
+            f"- Incomplete (needs_input / paused): {a.incomplete_total} (counted as misses)",
             f"- Failed (runner error): {a.failed_total} (not counted as misses)",
             "",
             "### Confusion table",

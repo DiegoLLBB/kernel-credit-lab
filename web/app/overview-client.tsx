@@ -260,44 +260,60 @@ export function OverviewClient() {
               <p className="mb-3 font-mono text-xs text-slate-400">
                 {overview.live.documents_read} documents read · {overview.live.alerted} alerts ·{" "}
                 {overview.live.logged} logged · {overview.live.refused} refused
+                {overview.live.paused ? ` · ${overview.live.paused} paused` : ""}
                 {overview.live.failed ? ` · ${overview.live.failed} failed` : ""}
               </p>
-              {overview.live.feed.length === 0 ? (
-                <EmptyLine>No live alerts yet.</EmptyLine>
-              ) : (
-                <ul className="divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
-                  {overview.live.feed.map((item) => {
-                    const change = item.before_after
-                      ? beforeAfterText(item.before_after.before, item.before_after.after)
-                      : null;
+              {(overview.live.documents?.length ?? 0) > 0 ? (
+                <ul className="mb-4 divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
+                  {overview.live.documents.map((doc) => {
+                    const body = (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-slate-400">
+                          <span>{doc.issuer_name ?? doc.issuer_key ?? "—"}</span>
+                          <span className="text-slate-500">{formatDate(doc.event_date)}</span>
+                          <span className="text-slate-500">{doc.form}</span>
+                          <span className="rounded border border-accent/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
+                            live
+                          </span>
+                          <span
+                            className={
+                              doc.outcome === "alerted"
+                                ? "text-emerald-400"
+                                : doc.outcome === "paused" || doc.outcome === "refused"
+                                  ? "text-amber-400"
+                                  : doc.outcome === "failed"
+                                    ? "text-rose-400"
+                                    : "text-slate-400"
+                            }
+                          >
+                            {doc.outcome}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-sm text-slate-200">{doc.title}</p>
+                        {doc.reason ? (
+                          <p className="mt-1 font-mono text-xs text-amber-200/80">{doc.reason}</p>
+                        ) : null}
+                      </>
+                    );
                     return (
-                      <li key={item.alert_id}>
-                        <Link
-                          href={`/alerts/${item.alert_id}`}
-                          className="block px-4 py-3 hover:bg-ink-soft/70 focus-visible:bg-ink-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
-                        >
-                          <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-slate-400">
-                            <span>{item.issuer.name}</span>
-                            <span className="text-slate-500">{formatDate(item.event_date)}</span>
-                            <span className="rounded border border-accent/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
-                              live
-                            </span>
-                          </div>
-                          <p className="mt-1 text-sm text-slate-200">
-                            {item.impact_sentence ?? item.title}
-                          </p>
-                          {change ? (
-                            <p className="mt-1 font-mono text-xs text-slate-400">
-                              {item.before_after?.field ? `${item.before_after.field}: ` : null}
-                              {change}
-                            </p>
-                          ) : null}
-                        </Link>
+                      <li key={doc.event_id}>
+                        {doc.alert_id ? (
+                          <Link
+                            href={`/alerts/${doc.alert_id}`}
+                            className="block px-4 py-3 hover:bg-ink-soft/70 focus-visible:bg-ink-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+                          >
+                            {body}
+                          </Link>
+                        ) : (
+                          <div className="px-4 py-3">{body}</div>
+                        )}
                       </li>
                     );
                   })}
                 </ul>
-              )}
+              ) : overview.live.feed.length === 0 ? (
+                <EmptyLine>No live documents yet.</EmptyLine>
+              ) : null}
             </section>
           ) : null}
 

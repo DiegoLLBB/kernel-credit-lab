@@ -43,6 +43,8 @@ def _outcome_label(status: str, material: bool | None) -> str:
         return "logged"
     if status in {"needs_input", "refused"}:
         return "refused"
+    if status == "paused":
+        return "paused"
     if status == "failed":
         return "failed"
     return status or "failed"
@@ -64,7 +66,14 @@ async def _insights_for_event(session, event: Event) -> None:
             print(f"live: impact {alert.id[:8]} failed: {exc}", file=sys.stderr)
 
 
-async def _run(*, since: date, until: date, max_cost_usd: float) -> int:
+async def _run(
+    *,
+    since: date,
+    until: date,
+    max_cost_usd: float,
+    resume_only: bool = False,
+    issuer_keys: list[str] | None = None,
+) -> int:
     settings = get_settings()
     edgar = EdgarClient(settings=settings)
     newsroom = NewsroomClient(settings=settings)
@@ -87,17 +96,30 @@ async def _run(*, since: date, until: date, max_cost_usd: float) -> int:
             f"git_sha={cfg.git_sha} prompt={cfg.prompt_version}"
         )
 
-        docs = poll_all(session, edgar, newsroom, since=since, until=until)
-        session.commit()
-        new_docs = [d for d in docs if d.created]
-        print(
-            f"live: polled {len(docs)} documents since {since.isoformat()} "
-            f"({len(new_docs)} new events)"
-        )
-        for d in new_docs:
-            print(f"live: new {d.issuer_key}\t{d.form}\t{d.filed_at.isoformat()}\t{d.identity}")
+        if not resume_only:
+            docs = poll_all(session, edgar, newsroom, since=since, until=until)
+            session.commit()
+            new_docs = [d for d in docs if d.created]
+            print(
+                f"live: polled {len(docs)} documents since {since.isoformat()} "
+                f"({len(new_docs)} new events)"
+            )
+            for d in new_docs:
+                print(f"live: new {d.issuer_key}\t{d.form}\t{d.filed_at.isoformat()}\t{d.identity}")
+        else:
+            print("live: resume-only — skipping EDGAR/newsroom poll")
 
         pending = pending_live_events(session)
+        if issuer_keys:
+            want = {k.lower() for k in issuer_keys}
+            filtered = []
+            for event in pending:
+                issuer = session.get(Issuer, event.issuer_id) if event.issuer_id else None
+                if issuer and (issuer.key or "").lower() in want:
+                    filtered.append(event)
+            pending = filtered
+            print(f"live: filtered to issuers {sorted(want)} → {len(pending)} events")
+
         spent = 0.0
         for event in pending:
             if spent >= max_cost_usd:
@@ -112,9 +134,10 @@ async def _run(*, since: date, until: date, max_cost_usd: float) -> int:
                 session.commit()
                 spent += float(outcome.cost_usd or 0)
                 label = _outcome_label(outcome.status, outcome.material)
+                reason = (outcome.detail or "").replace("\t", " ").strip()
                 print(
                     f"live: {issuer.key if issuer else '?'}\t{form}\t{label}\t"
-                    f"{outcome.cost_usd:.4f}"
+                    f"{outcome.cost_usd:.4f}" + (f"\t{reason}" if reason else "")
                 )
                 await _insights_for_event(session, event)
                 session.commit()
@@ -146,6 +169,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--until", type=date.fromisoformat, default=None)
     parser.add_argument("--max-cost-usd", type=float, default=5.0)
+    parser.add_argument(
+        "--resume-only",
+        action="store_true",
+        help="Skip polling; only resume paused/pending/failed live events.",
+    )
+    parser.add_argument(
+        "--issuer",
+        action="append",
+        default=None,
+        dest="issuers",
+        help="Limit to issuer key(s), e.g. --issuer boeing --issuer intel",
+    )
     args = parser.parse_args(argv)
 
     # Default backfills from the post-replay cutoff so the first run picks up
@@ -153,7 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     since = args.since or DEFAULT_LIVE_SINCE
 
     return asyncio.run(
-        _run(since=since, until=args.until or date.today(), max_cost_usd=args.max_cost_usd)
+        _run(
+            since=since,
+            until=args.until or date.today(),
+            max_cost_usd=args.max_cost_usd,
+            resume_only=args.resume_only,
+            issuer_keys=args.issuers,
+        )
     )
 
 
