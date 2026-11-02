@@ -17,13 +17,23 @@ import {
   type AlertReviewOut,
   type AlertStatus,
 } from "@/lib/api";
-import { formatDate, formatUsdMillions, formatUsdMillionsDelta } from "@/lib/format";
+import {
+  formatBeforeAfter,
+  formatDate,
+  formatUsdMillions,
+  formatUsdMillionsDelta,
+} from "@/lib/format";
 
-function changeCell(value: unknown): string {
+function changeCell(value: unknown, field?: string | null): string {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "string" || typeof value === "number") {
+    const pair = formatBeforeAfter(value, value, field);
+    if (pair && !pair.includes("→")) return pair;
     const n = Number(value);
     if (Number.isFinite(n) && Math.abs(n) >= 1000) return formatUsdMillions(n);
+    if (Number.isFinite(n) && Math.abs(n) < 100 && (field || "").toLowerCase().includes("coverage")) {
+      return `${n.toFixed(2)}×`;
+    }
     return String(value);
   }
   return JSON.stringify(value);
@@ -135,12 +145,16 @@ export function AlertDetailClient() {
         <article className="space-y-10">
           <header className="max-w-3xl">
             <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href={`/issuers/${encodeURIComponent(alert.issuer.key ?? "")}`}
-                className="font-mono text-xs text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                {alert.issuer.name}
-              </Link>
+              {alert.issuer.key ? (
+                <Link
+                  href={`/issuers/${encodeURIComponent(alert.issuer.key)}`}
+                  className="font-mono text-xs text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  {alert.issuer.name}
+                </Link>
+              ) : (
+                <span className="font-mono text-xs text-slate-300">{alert.issuer.name}</span>
+              )}
               <span className="font-mono text-xs text-slate-500">
                 {formatDate(alert.event_date)}
               </span>
@@ -204,6 +218,10 @@ export function AlertDetailClient() {
             <h3 id="wall-heading" className="text-sm font-semibold uppercase tracking-wide text-slate-400">
               Before / after wall
             </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Year buckets are calendar / fiscal maturity years on the debt schedule. Highlighted
+              bars are the buckets this alert moved.
+            </p>
             <div className="mt-4">
               <WallCompare
                 beforeWall={alert.before_wall}
@@ -218,7 +236,12 @@ export function AlertDetailClient() {
               Evidence
             </h3>
             {alert.findings.length === 0 ? (
-              <p className="text-sm text-slate-400">No findings on this alert.</p>
+              <p className="text-sm text-slate-400">
+                No extracted findings on this alert
+                {alert.run_id
+                  ? " — open the agent trace for the steps that ran."
+                  : " — the run may still be incomplete."}
+              </p>
             ) : (
               <ul className="space-y-6">
                 {alert.findings.map((f, idx) => (
@@ -226,11 +249,6 @@ export function AlertDetailClient() {
                     key={`${f.item_key ?? "finding"}-${idx}`}
                     className="rounded-lg border border-slate-700/60 p-4"
                   >
-                    {f.item_key ? (
-                      <p className="mb-1 font-mono text-[11px] uppercase tracking-wide text-slate-500">
-                        {f.item_key}
-                      </p>
-                    ) : null}
                     <p className="text-sm text-slate-200">{f.statement}</p>
                     {f.citations.length > 0 ? (
                       <ul className="mt-3 space-y-3">
@@ -277,7 +295,12 @@ export function AlertDetailClient() {
               Data changes
             </h3>
             {alert.applied_changes.length === 0 ? (
-              <p className="text-sm text-slate-400">No applied changes.</p>
+              <p className="text-sm text-slate-400">
+                No ledger updates were applied for this alert
+                {alert.live
+                  ? " — live runs may still be waiting on review."
+                  : " — the agent may have logged the event without changing instruments."}
+              </p>
             ) : (
               <div className="overflow-x-auto rounded-lg border border-slate-700/60">
                 <table className="min-w-full text-left text-sm">
@@ -314,10 +337,10 @@ export function AlertDetailClient() {
                           </td>
                           <td className="px-3 py-2 font-mono text-xs text-slate-400">{field}</td>
                           <td className="px-3 py-2 font-mono text-xs text-slate-400">
-                            {changeCell(before)}
+                            {changeCell(before, String(field))}
                           </td>
                           <td className="px-3 py-2 font-mono text-xs text-slate-200">
-                            {changeCell(after)}
+                            {changeCell(after, String(field))}
                           </td>
                           <td className="px-3 py-2 font-mono text-xs text-slate-400">
                             {formatDate(c.effective_date)}
@@ -336,7 +359,10 @@ export function AlertDetailClient() {
               Independent check
             </h3>
             {!alert.claims_check ? (
-              <p className="mt-3 text-sm text-slate-400">No claims check recorded.</p>
+              <p className="mt-3 text-sm text-slate-400">
+                No independent number check was stored for this alert (older runs, or the check was
+                skipped).
+              </p>
             ) : (
               <div className="mt-3 space-y-2 text-sm">
                 <div className="flex flex-wrap items-center gap-2">

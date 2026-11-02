@@ -313,3 +313,15 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     one-shot Spark over truncated source docs, scored like the agent plus unsupported
     substring claims (`replay_evaluation.kind=baseline`). `scripts/smoke_live.py` after
     deploy. API min-instances=1 (warm, <$1/week idle). Agent tree unchanged.
+34. **Scorer correction after first comparison (Mon 2 Nov):** first Kernel-vs-baseline
+    accuracy pass under-counted right year/amount because (A) multi-tranche expected lines
+    always bound to `candidates[0]` instead of best-match by name/coupon/year/amount, and
+    (B) baseline `fiscal_year` null failed even when the quote already named the year.
+    Also convert EUR/GBP/CAD expected face amounts to USD at the event-date FRED FX rate
+    for both Kernel and baseline (tolerance unchanged). Rescored from stored outputs only;
+    overview comparison now **Kernel 9/14 caught, 7/14 accurate, wall 16/23**; **baseline
+    8/14 caught, 3/14 accurate** (was 4/14 and 0/14 accurate). The three groups that moved
+    wrong→accurate are `amzn_usd_mar`, `amzn_eur_mar`, `amzn_usd_jul` (best-match; all scored
+    near-wall tranches were already in stored diffs). Still inaccurate: `duk_parent_tl_repaid`
+    (no `mark_repaid`) and `dep_term_loan` (wrote the 2029 convertible instead). Agent tree
+    still frozen at `f997487c2fbf` / `event_v10`.

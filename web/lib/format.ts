@@ -69,6 +69,75 @@ export function formatNumber(n: string | number | null | undefined): string {
   return v.toLocaleString("en-US");
 }
 
+/** Format a before→after pair for feed/alert change lines (always $M for large USD). */
+export function formatBeforeAfter(
+  before: unknown,
+  after: unknown,
+  field?: string | null,
+): string | null {
+  if (before === null || before === undefined || after === null || after === undefined) {
+    return null;
+  }
+  const f = (field || "").toLowerCase();
+  if (
+    f.includes("status") ||
+    f.includes("action") ||
+    f.includes("rate_type") ||
+    f.includes("currency")
+  ) {
+    return `${String(before)} → ${String(after)}`;
+  }
+  const bn = Number(before);
+  const an = Number(after);
+  if (!Number.isFinite(bn) || !Number.isFinite(an)) {
+    return `${String(before)} → ${String(after)}`;
+  }
+  const ratioField =
+    f.includes("coverage") ||
+    f.includes("leverage") ||
+    f.includes("ratio") ||
+    f.includes("coupon");
+  if (ratioField || (Math.abs(bn) < 100 && Math.abs(an) < 100 && !f.includes("amount"))) {
+    const unit = f.includes("coupon") ? "%" : "×";
+    return `${bn.toFixed(2)}${unit} → ${an.toFixed(2)}${unit}`;
+  }
+  if (
+    Math.abs(bn) >= 1000 ||
+    Math.abs(an) >= 1000 ||
+    f.includes("amount") ||
+    f.includes("outstanding") ||
+    f.includes("debt")
+  ) {
+    return `${formatUsdMillions(bn)} → ${formatUsdMillions(an)}`;
+  }
+  return `${String(before)} → ${String(after)}`;
+}
+
+/** Live document outcome → short analyst label. */
+export function liveOutcomeLabel(outcome: string | null | undefined): string {
+  switch ((outcome || "").toLowerCase()) {
+    case "alerted":
+      return "raised alert";
+    case "logged":
+      return "reviewed, no alert";
+    case "paused":
+      return "paused";
+    case "refused":
+      return "needs input";
+    case "failed":
+      return "failed";
+    default:
+      return outcome || "—";
+  }
+}
+
+/** Basis points for display: "+150 bp (1.50%)". */
+export function formatBps(bps: number): string {
+  if (!Number.isFinite(bps)) return "—";
+  const pct = (bps / 100).toFixed(2);
+  return `+${bps} bp (${pct}%)`;
+}
+
 export function wallAmount(v: string | number | null | undefined): number {
   if (v === null || v === undefined || v === "") return 0;
   const n = typeof v === "number" ? v : Number(v);

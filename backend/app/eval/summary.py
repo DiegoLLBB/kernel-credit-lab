@@ -136,6 +136,16 @@ def build_eval_summary(
     missed, false_list = _detail_events(list(row.per_event or []))
     unsupported = int(getattr(row, "unsupported_claims", 0) or 0)
     label = "Kernel agent" if kind == "agent" else "one-shot model"
+    counts_extra = row.alert_counts if isinstance(row.alert_counts, dict) else {}
+    accurate_caught = counts_extra.get("accurate_caught")
+    accurate_total = counts_extra.get("accurate_total")
+    keeps = counts_extra.get("keeps_records")
+    if keeps is True:
+        keeps_records = "yes"
+    elif keeps is False:
+        keeps_records = "—"
+    else:
+        keeps_records = "yes" if kind == "agent" else ("—" if kind == "baseline" else None)
     return {
         "text": text,
         "label": label,
@@ -152,6 +162,12 @@ def build_eval_summary(
         "expected_material": y,
         "false_alerts": z,
         "unsupported_claims": unsupported,
+        "accurate_caught": int(accurate_caught) if accurate_caught is not None else None,
+        "accurate_total": int(accurate_total) if accurate_total is not None else y,
+        "keeps_records": keeps_records,
+        "wall_passed": counts_extra.get("wall_passed"),
+        "wall_total": counts_extra.get("wall_total"),
+        "cost_usd": float(row.cost_usd) if row.cost_usd is not None else None,
         "missed_events": missed,
         "false_events": false_list,
     }

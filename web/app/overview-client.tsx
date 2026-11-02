@@ -12,7 +12,7 @@ import {
   type MetricTile,
   type WatchlistRow,
 } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { formatBeforeAfter, formatDate, liveOutcomeLabel } from "@/lib/format";
 
 const WATCH_METRICS = [
   "total_debt",
@@ -76,15 +76,16 @@ function EvalBlock({
       </p>
       {summary && (summary.precision != null || summary.recall != null) ? (
         <p className="mt-1 font-mono text-xs text-slate-500">
-          precision {summary.precision != null ? summary.precision.toFixed(3) : "n/a"} · recall{" "}
-          {summary.recall != null ? summary.recall.toFixed(3) : "n/a"}
+          share of alerts that were real{" "}
+          {summary.precision != null ? summary.precision.toFixed(3) : "n/a"} · share of real
+          events caught {summary.recall != null ? summary.recall.toFixed(3) : "n/a"}
           {summary.unsupported_claims != null
-            ? ` · unsupported claims ${summary.unsupported_claims}`
+            ? ` · numbers not backed by the filing ${summary.unsupported_claims}`
             : ""}
         </p>
       ) : summary && summary.unsupported_claims != null ? (
         <p className="mt-1 font-mono text-xs text-slate-500">
-          unsupported claims {summary.unsupported_claims}
+          numbers not backed by the filing {summary.unsupported_claims}
         </p>
       ) : null}
       {summary &&
@@ -126,13 +127,6 @@ function tileValue(row: WatchlistRow, metric: string): number | null {
   if (!tile || tile.value === null) return null;
   const n = Number(tile.value);
   return Number.isFinite(n) ? n : null;
-}
-
-function beforeAfterText(before: unknown, after: unknown): string | null {
-  if (before === null || before === undefined || after === null || after === undefined) {
-    return null;
-  }
-  return `${String(before)} → ${String(after)}`;
 }
 
 export function OverviewClient() {
@@ -199,7 +193,8 @@ export function OverviewClient() {
         </h1>
         <p className="mt-4 text-base leading-relaxed text-slate-400">
           Debt, cash and earnings straight from company filings — with a plain-English summary of
-          what moved and what to watch. Every number links back to its source.
+          what moved and what to watch. Brief lines and alert citations link to their sources;
+          watchlist figures open the issuer page.
         </p>
         {headerLine ? (
           <p className="mt-3 font-mono text-xs text-slate-300" aria-live="polite">
@@ -259,7 +254,11 @@ export function OverviewClient() {
               <ul className="divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
                 {overview.feed.map((item) => {
                   const change = item.before_after
-                    ? beforeAfterText(item.before_after.before, item.before_after.after)
+                    ? formatBeforeAfter(
+                        item.before_after.before,
+                        item.before_after.after,
+                        item.before_after.field,
+                      )
                     : null;
                   return (
                     <li key={item.alert_id}>
@@ -393,11 +392,35 @@ export function OverviewClient() {
                 Live since {formatDate(overview.live.since.slice(0, 10))}
               </h2>
               <p className="mb-3 font-mono text-xs text-slate-400">
-                {overview.live.documents_read} documents read · {overview.live.alerted} alerts ·{" "}
-                {overview.live.logged} logged · {overview.live.refused} refused
+                {overview.live.documents_read} documents read · {overview.live.alerted} raised
+                alert
+                {overview.live.alerted === 1 ? "" : "s"} · {overview.live.logged} reviewed, no
+                alert · {overview.live.refused} need
+                {overview.live.refused === 1 ? "s" : ""} input
                 {overview.live.paused ? ` · ${overview.live.paused} paused` : ""}
                 {overview.live.failed ? ` · ${overview.live.failed} failed` : ""}
               </p>
+              <details className="mb-3 text-xs text-slate-500">
+                <summary className="cursor-pointer text-slate-400">What these outcomes mean</summary>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  <li>
+                    <span className="text-slate-300">raised alert</span> — material debt change
+                    found
+                  </li>
+                  <li>
+                    <span className="text-slate-300">reviewed, no alert</span> — filing read; no
+                    material change
+                  </li>
+                  <li>
+                    <span className="text-slate-300">needs input</span> — agent stopped for a
+                    missing fact or policy refuse
+                  </li>
+                  <li>
+                    <span className="text-slate-300">paused</span> — hit a turn or cost limit;
+                    can resume
+                  </li>
+                </ul>
+              </details>
               {(overview.live.documents?.length ?? 0) > 0 ? (
                 <ul className="mb-4 divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
                   {overview.live.documents.map((doc) => {
@@ -421,7 +444,7 @@ export function OverviewClient() {
                                     : "text-slate-400"
                             }
                           >
-                            {doc.outcome}
+                            {liveOutcomeLabel(doc.outcome)}
                           </span>
                         </div>
                         <p className="mt-1 text-sm text-slate-200">{doc.title}</p>
@@ -456,18 +479,85 @@ export function OverviewClient() {
             <h2 id="eval-heading" className="text-sm font-semibold uppercase tracking-wide text-slate-400">
               How well does it work?
             </h2>
-            <div className="mt-3 grid gap-4 sm:grid-cols-2">
-              <EvalBlock
-                title="Kernel agent"
-                summary={overview.evaluation}
-                empty="Not tested yet."
-              />
-              <EvalBlock
-                title="One-shot model"
-                summary={overview.baseline}
-                empty="Baseline not run yet."
-              />
-            </div>
+            {overview.comparison && overview.comparison.rows.length > 0 ? (
+              <>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full min-w-[32rem] border-collapse text-left text-sm text-slate-300">
+                    <thead>
+                      <tr className="border-b border-slate-700 font-mono text-[11px] uppercase tracking-wide text-slate-500">
+                        <th className="py-2 pr-3 font-medium"> </th>
+                        <th className="py-2 pr-3 font-medium">Caught</th>
+                        <th className="py-2 pr-3 font-medium">Right year and amount</th>
+                        <th className="py-2 pr-3 font-medium">False alerts</th>
+                        <th className="py-2 pr-3 font-medium" title="Numeric claims not grounded in the filing">
+                          Ungrounded numbers
+                        </th>
+                        <th className="py-2 pr-3 font-medium" title="Stores a maturity wall and audit trail">
+                          Keeps a wall
+                        </th>
+                        <th className="py-2 font-medium">Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {overview.comparison.rows.map((row) => (
+                        <tr key={row.kind ?? row.label} className="border-b border-slate-800/80">
+                          <td className="py-2.5 pr-3 font-medium text-slate-200">{row.label}</td>
+                          <td className="py-2.5 pr-3 font-mono text-xs">
+                            {row.caught != null && row.expected_material != null
+                              ? `${row.caught} of ${row.expected_material}`
+                              : "—"}
+                          </td>
+                          <td className="py-2.5 pr-3 font-mono text-xs">
+                            {row.accurate_caught != null && row.accurate_total != null
+                              ? `${row.accurate_caught} of ${row.accurate_total}`
+                              : "—"}
+                          </td>
+                          <td className="py-2.5 pr-3 font-mono text-xs">
+                            {row.false_alert_count != null ? row.false_alert_count : "—"}
+                          </td>
+                          <td className="py-2.5 pr-3 font-mono text-xs">
+                            {row.unsupported_claims != null ? row.unsupported_claims : "—"}
+                          </td>
+                          <td className="py-2.5 pr-3 font-mono text-xs">
+                            {row.keeps_records === "yes"
+                              ? "yes"
+                              : row.keeps_records === "no"
+                                ? "no"
+                                : (row.keeps_records ?? "—")}
+                          </td>
+                          <td className="py-2.5 font-mono text-xs">
+                            {row.cost_usd != null ? `$${row.cost_usd.toFixed(2)}` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-3 font-mono text-[11px] text-slate-500">
+                  Caught = material events flagged. Right year and amount = those flags with the
+                  correct maturity year and size (±1%). Ungrounded numbers = claims the checker
+                  could not find in the filing. Keeps a wall = stores before/after maturity records.
+                </p>
+                {overview.comparison.note ? (
+                  <p className="mt-4 text-sm leading-relaxed text-slate-400">
+                    {overview.comparison.note}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <EvalBlock
+                  title="Kernel agent"
+                  summary={overview.evaluation}
+                  empty="Not tested yet."
+                />
+                <EvalBlock
+                  title="One-shot model"
+                  summary={overview.baseline}
+                  empty="Baseline not run yet."
+                />
+              </div>
+            )}
           </section>
         </>
       ) : null}

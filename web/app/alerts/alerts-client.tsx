@@ -75,7 +75,8 @@ export function AlertsClient() {
       <header className="mb-6">
         <h2 className="text-2xl font-semibold text-white">Alerts</h2>
         <p className="mt-1 text-sm text-slate-400">
-          Material changes to what these companies owe, from filings and announcements in 2026.
+          Material changes to what these companies owe, from filings and announcements in the demo
+          window (Jan–Oct 2026) plus live documents since go-live.
         </p>
       </header>
 

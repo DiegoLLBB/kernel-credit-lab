@@ -264,11 +264,149 @@ def _applied_changes_for_event(session: Session, event: Event) -> list[StateChan
     )
 
 
+def _maturity_year_from_expected(expected: dict[str, Any]) -> int | None:
+    if expected.get("maturity_year") is not None:
+        try:
+            return int(expected["maturity_year"])
+        except (TypeError, ValueError):
+            return None
+    mat = expected.get("maturity")
+    if mat is None:
+        return None
+    text = str(mat).strip()
+    if len(text) >= 4 and text[:4].isdigit():
+        return int(text[:4])
+    return None
+
+
+def _face_amount_usd(
+    session: Session,
+    amount: Decimal,
+    currency: str | None,
+    as_of: date | None,
+) -> Decimal:
+    """Convert face amount to USD at ``as_of`` (EUR/GBP/CAD via FRED); USD unchanged."""
+    cur = (currency or "USD").strip().upper() or "USD"
+    if cur == "USD" or as_of is None:
+        return amount
+    from app.tools.fx import FxRateMissingError, amount_to_usd
+
+    try:
+        return amount_to_usd(session, amount, cur, as_of)
+    except (FxRateMissingError, ValueError):
+        # No rate on/before as_of: compare face amounts without conversion.
+        return amount
+
+
+def _actual_face_amount(
+    action: str | None, expected: dict[str, Any], diff: dict[str, Any]
+) -> Decimal | None:
+    if action == "reduce_outstanding":
+        if diff.get("after") is not None and "new_amount" in expected:
+            return _parse_money(diff.get("after"))
+        if expected.get("by") is not None:
+            before = _parse_money(diff.get("before"))
+            after = _parse_money(diff.get("after"))
+            if before is not None and after is not None:
+                return before - after
+            return _parse_money(diff.get("reduce_by") or diff.get("after"))
+        return _parse_money(diff.get("after"))
+    if action == "add_instrument":
+        return _parse_money(diff.get("amount_outstanding"))
+    return _parse_money(diff.get("after") or diff.get("amount_outstanding"))
+
+
+def _norm_name(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _coupon_close(expected_coupon: Any, actual_coupon: Any) -> bool:
+    exp = _parse_money(expected_coupon)
+    act = _parse_money(actual_coupon)
+    if exp is None or act is None:
+        return False
+    return abs(exp - act) <= Decimal("0.011")  # 1 bp slack on coupon text
+
+
+def _score_candidate(
+    session: Session,
+    expected: dict[str, Any],
+    change: StateChange,
+    *,
+    as_of: date | None,
+) -> tuple[list[str], float, dict[str, Any]]:
+    """Return (problems, soft_score, diff) for one applied change vs one expected line."""
+    action = expected.get("action")
+    diff = change.proposed_diff or {}
+    problems: list[str] = []
+    score = 0.0
+
+    exp_name = _norm_name(expected.get("name"))
+    act_name = _norm_name(diff.get("name"))
+    if exp_name and act_name:
+        if exp_name == act_name or exp_name in act_name or act_name in exp_name:
+            score += 40.0
+        else:
+            # Soft penalty only — amount/year still decide the match.
+            score -= 5.0
+
+    if expected.get("coupon") is not None:
+        if _coupon_close(expected.get("coupon"), diff.get("coupon")):
+            score += 25.0
+        else:
+            score -= 5.0
+
+    exp_year = _maturity_year_from_expected(expected)
+    mat = diff.get("maturity")
+    if action == "add_instrument" and exp_year is not None:
+        if mat and str(mat).startswith(str(exp_year)):
+            score += 25.0
+        else:
+            problems.append(f"maturity year {exp_year} not in actual {mat!r}")
+
+    expected_amount: Decimal | None = None
+    for key in ("new_amount", "amount", "by", "amount_outstanding"):
+        if key in expected and expected[key] is not None:
+            expected_amount = _parse_money(expected[key])
+            break
+    if expected_amount is not None:
+        actual_amount = _actual_face_amount(action, expected, diff)
+        # When comparing reduce-by, align expected with the by field.
+        if (
+            action == "reduce_outstanding"
+            and expected.get("by") is not None
+            and not (diff.get("after") is not None and "new_amount" in expected)
+        ):
+            expected_amount = _parse_money(expected.get("by"))
+        exp_ccy = expected.get("currency") or "USD"
+        act_ccy = diff.get("currency") or exp_ccy
+        if actual_amount is None:
+            problems.append("actual amount missing")
+        else:
+            exp_usd = _face_amount_usd(session, expected_amount, str(exp_ccy), as_of)
+            act_usd = _face_amount_usd(session, actual_amount, str(act_ccy), as_of)
+            if _amount_within_tol(act_usd, exp_usd):
+                score += 30.0
+            else:
+                problems.append(f"amount {act_usd} outside 1% of expected {exp_usd}")
+
+    date_raw = expected.get("effective") or expected.get("effective_date")
+    if date_raw is not None:
+        ok, detail = _date_matches(change.effective_date, date_raw)
+        if not ok:
+            problems.append(f"date mismatch ({detail})")
+
+    return problems, score, diff
+
+
 def _match_change(
     session: Session,
     expectation_key: str,
     expected: dict[str, Any],
     applied: list[StateChange],
+    *,
+    as_of: date | None = None,
+    claimed: set[int] | None = None,
 ) -> ChangeMatch:
     action = expected.get("action")
     if action == "log_only":
@@ -280,8 +418,11 @@ def _match_change(
         )
 
     instrument_key = expected.get("instrument_key")
-    candidates = []
+    claimed_ids = claimed if claimed is not None else set()
+    candidates: list[StateChange] = []
     for change in applied:
+        if change.id in claimed_ids:
+            continue
         diff = change.proposed_diff or {}
         if diff.get("action") != action:
             continue
@@ -303,53 +444,15 @@ def _match_change(
             detail=f"no applied change with action={action!r} instrument={instrument_key!r}",
         )
 
-    change = candidates[0]
-    diff = change.proposed_diff or {}
-    problems: list[str] = []
-
-    # Amount checks
-    expected_amount = None
-    for key in ("new_amount", "amount", "by", "amount_outstanding"):
-        if key in expected and expected[key] is not None:
-            expected_amount = _parse_money(expected[key])
-            break
-    if expected_amount is not None:
-        actual_amount = None
-        if action == "reduce_outstanding":
-            # Prefer after / new outstanding; fall back to reduce_by.
-            if diff.get("after") is not None and "new_amount" in expected:
-                actual_amount = _parse_money(diff.get("after"))
-            elif expected.get("by") is not None:
-                before = _parse_money(diff.get("before"))
-                after = _parse_money(diff.get("after"))
-                if before is not None and after is not None:
-                    actual_amount = before - after
-                    expected_amount = _parse_money(expected.get("by"))
-                else:
-                    actual_amount = _parse_money(diff.get("reduce_by") or diff.get("after"))
-            else:
-                actual_amount = _parse_money(diff.get("after"))
-        elif action == "add_instrument":
-            actual_amount = _parse_money(diff.get("amount_outstanding"))
-        else:
-            actual_amount = _parse_money(diff.get("after") or diff.get("amount_outstanding"))
-        if actual_amount is None:
-            problems.append("actual amount missing")
-        elif expected_amount is not None and not _amount_within_tol(actual_amount, expected_amount):
-            problems.append(f"amount {actual_amount} outside 1% of expected {expected_amount}")
-
-    # Date checks
-    date_raw = expected.get("effective") or expected.get("effective_date")
-    if date_raw is not None:
-        ok, detail = _date_matches(change.effective_date, date_raw)
-        if not ok:
-            problems.append(f"date mismatch ({detail})")
-
-    # Maturity year for add_instrument
-    if action == "add_instrument" and expected.get("maturity_year") is not None:
-        mat = diff.get("maturity")
-        if not mat or not str(mat).startswith(str(expected["maturity_year"])):
-            problems.append(f"maturity year {expected['maturity_year']} not in actual {mat!r}")
+    # Best match by name / coupon / year / amount (not candidates[0]).
+    ranked: list[tuple[int, float, StateChange, list[str], dict[str, Any]]] = []
+    for cand in candidates:
+        problems, score, diff = _score_candidate(session, expected, cand, as_of=as_of)
+        ranked.append((len(problems), -score, cand, problems, diff))
+    ranked.sort(key=lambda row: (row[0], row[1]))
+    _n_prob, _neg_score, change, problems, diff = ranked[0]
+    if claimed is not None:
+        claimed.add(change.id)
 
     matched = not problems
     return ChangeMatch(
@@ -693,10 +796,20 @@ def evaluate_replay(
         if event is not None:
             scored_event_ids.add(event.id)
             applied = _applied_changes_for_event(session, event)
+            claimed: set[int] = set()
             for change in exp.expected_changes or []:
                 if not isinstance(change, dict):
                     continue
-                report.changes.append(_match_change(session, exp.key, change, applied))
+                report.changes.append(
+                    _match_change(
+                        session,
+                        exp.key,
+                        change,
+                        applied,
+                        as_of=event.event_date,
+                        claimed=claimed,
+                    )
+                )
 
             if event.id not in variance_events:
                 variance_events.add(event.id)

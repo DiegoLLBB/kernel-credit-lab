@@ -466,8 +466,32 @@ class EvalSummaryOut(BaseModel):
     expected_material: int | None = None
     false_alert_count: int | None = None
     unsupported_claims: int | None = None
+    accurate_caught: int | None = None
+    accurate_total: int | None = None
+    keeps_records: str | None = None
+    wall_passed: int | None = None
+    wall_total: int | None = None
+    cost_usd: float | None = None
     missed_events: list[EvalDetailEventOut] = Field(default_factory=list)
     false_events: list[EvalDetailEventOut] = Field(default_factory=list)
+
+
+class EvalComparisonRowOut(BaseModel):
+    label: str
+    kind: str | None = None
+    caught: int | None = None
+    expected_material: int | None = None
+    accurate_caught: int | None = None
+    accurate_total: int | None = None
+    false_alert_count: int | None = None
+    unsupported_claims: int | None = None
+    keeps_records: str | None = None
+    cost_usd: float | None = None
+
+
+class EvalComparisonOut(BaseModel):
+    rows: list[EvalComparisonRowOut] = Field(default_factory=list)
+    note: str | None = None
 
 
 class BriefSentenceOut(BaseModel):
@@ -524,5 +548,6 @@ class CreditOverviewOut(BaseModel):
     watchlist: list[WatchlistRowOut] = Field(default_factory=list)
     evaluation: EvalSummaryOut | None = None
     baseline: EvalSummaryOut | None = None
+    comparison: EvalComparisonOut | None = None
     live: LiveSectionOut | None = None
     thresholds: list[ThresholdBandOut] = Field(default_factory=list)

@@ -18,9 +18,12 @@ export function DocumentClient() {
   const [error, setError] = useState<string | null>(null);
   const highlightRef = useRef<HTMLElement | null>(null);
 
+  const [pageLoading, setPageLoading] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setPageLoading(true);
     const qs = new URLSearchParams();
     qs.set("page", String(page));
     if (factId) qs.set("fact_id", factId);
@@ -29,7 +32,13 @@ export function DocumentClient() {
         if (!cancelled) setDoc(d);
       })
       .catch((e: Error) => {
-        if (!cancelled) setError(e.message);
+        if (!cancelled) {
+          setError(e.message);
+          setDoc(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPageLoading(false);
       });
     return () => {
       cancelled = true;
@@ -100,7 +109,7 @@ export function DocumentClient() {
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              disabled={page <= 0}
+              disabled={page <= 0 || pageLoading}
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               className="rounded border border-slate-700 px-3 py-1.5 text-xs enabled:hover:bg-ink-soft disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
@@ -108,10 +117,11 @@ export function DocumentClient() {
             </button>
             <span className="font-mono text-xs text-slate-400">
               Page {doc.page + 1} / {doc.pages}
+              {pageLoading ? " · updating…" : ""}
             </span>
             <button
               type="button"
-              disabled={page + 1 >= doc.pages}
+              disabled={page + 1 >= doc.pages || pageLoading}
               onClick={() => setPage((p) => p + 1)}
               className="rounded border border-slate-700 px-3 py-1.5 text-xs enabled:hover:bg-ink-soft disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
@@ -119,11 +129,14 @@ export function DocumentClient() {
             </button>
             {factId ? (
               <span className="font-mono text-[11px] text-slate-500">
-                Highlighting fact {factId.slice(0, 8)}…
+                Highlighting cited passage
               </span>
             ) : null}
           </div>
-          <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-700/60 bg-ink-soft/50 p-4 font-mono text-xs leading-relaxed text-slate-300">
+          <pre
+            aria-busy={pageLoading}
+            className={`max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-700/60 bg-ink-soft/50 p-4 font-mono text-xs leading-relaxed text-slate-300 ${pageLoading ? "opacity-60" : ""}`}
+          >
             {renderText(doc)}
           </pre>
         </>

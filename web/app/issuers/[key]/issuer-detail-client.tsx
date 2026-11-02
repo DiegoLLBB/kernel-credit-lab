@@ -15,7 +15,7 @@ import {
   type IssuerSnapshot,
   type RefinancingPanel,
 } from "@/lib/api";
-import { formatDate, formatUsdMillions } from "@/lib/format";
+import { formatBps, formatDate, formatUsdMillions } from "@/lib/format";
 import { CreditSnapshot } from "./credit-snapshot";
 
 const WINDOW_START = Date.UTC(2026, 0, 1);
@@ -46,6 +46,7 @@ export function IssuerDetailClient() {
   const [issuer, setIssuer] = useState<IssuerDetailOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "repaid">("all");
   const [sortKey, setSortKey] = useState<SortKey>("maturity");
   const [sortAsc, setSortAsc] = useState(true);
@@ -76,6 +77,8 @@ export function IssuerDetailClient() {
       if (immediate) {
         setLoading(true);
         setSnapshot(null);
+      } else {
+        setUpdating(true);
       }
       getJson<IssuerDetailOut>(`/api/issuers/${encodeURIComponent(key)}?as_of=${asOf}`)
         .then((d) => {
@@ -89,7 +92,10 @@ export function IssuerDetailClient() {
           if (!cancelled) setError(e.message);
         })
         .finally(() => {
-          if (!cancelled) setLoading(false);
+          if (!cancelled) {
+            setLoading(false);
+            setUpdating(false);
+          }
         });
       getJson<IssuerSnapshot>(`/api/issuers/${encodeURIComponent(key)}/snapshot?as_of=${asOf}`)
         .then((d) => {
@@ -250,7 +256,18 @@ export function IssuerDetailClient() {
             </div>
           </header>
 
-          <CreditSnapshot snapshot={snapshot} loading={loading} />
+          <div className={updating ? "opacity-70 transition-opacity" : undefined}>
+            <CreditSnapshot
+              snapshot={snapshot}
+              loading={loading || (updating && !snapshot)}
+              asOf={asOf}
+            />
+            {updating && snapshot ? (
+              <p className="mt-2 font-mono text-[11px] text-slate-500" aria-live="polite">
+                Updating figures for {formatDate(asOf)}…
+              </p>
+            ) : null}
+          </div>
 
           <section aria-labelledby="wall-heading" className="rounded-lg border border-slate-700/60 bg-ink-soft/40 p-5">
             <h3 id="wall-heading" className="text-sm font-semibold uppercase tracking-wide text-slate-400">
@@ -302,9 +319,14 @@ export function IssuerDetailClient() {
               <span>31 Oct 2026</span>
             </div>
             {eventDates.length > 0 ? (
-              <p className="mt-2 font-mono text-[11px] text-slate-500">
-                Event dates: {eventDates.map((d) => formatDate(d)).join(" · ")}
-              </p>
+              <details className="mt-2 text-[11px] text-slate-500">
+                <summary className="cursor-pointer font-mono text-slate-400">
+                  {eventDates.length} event date{eventDates.length === 1 ? "" : "s"} on this slider
+                </summary>
+                <p className="mt-1 font-mono leading-relaxed">
+                  {eventDates.map((d) => formatDate(d)).join(" · ")}
+                </p>
+              </details>
             ) : null}
 
             {error ? <div className="mt-3"><ErrorLine message={error} /></div> : null}
@@ -396,9 +418,13 @@ export function IssuerDetailClient() {
                     aria-valuenow={shockBps}
                     aria-label="Treasury shock in basis points"
                   />
-                  <span className="font-mono text-slate-200">+{shockBps} bps</span>
+                  <span className="font-mono text-slate-200">{formatBps(shockBps)}</span>
                 </label>
               </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Illustrative annual interest if near-term maturities reprice off the selected
+                Treasury (plus the company&apos;s spread). Coverage is EBIT ÷ interest (×).
+              </p>
               {refiError ? (
                 <p className="mt-3 text-xs text-amber-400">{refiError}</p>
               ) : null}
@@ -410,7 +436,7 @@ export function IssuerDetailClient() {
                   <dl className="mt-3 grid gap-3 sm:grid-cols-3 font-mono text-sm">
                     <div>
                       <dt className="text-[11px] uppercase tracking-wide text-slate-500">
-                        Base (+0 bps)
+                        Base (+0 bp)
                       </dt>
                       <dd className="text-slate-100">
                         {refinancing.base_total != null
@@ -446,25 +472,25 @@ export function IssuerDetailClient() {
                     </div>
                     <div>
                       <dt className="text-[11px] uppercase tracking-wide text-slate-500">
-                        Coverage
+                        Interest coverage (×)
                       </dt>
                       <dd className="text-slate-100">
                         {refinancing.coverage_before != null
-                          ? Number(refinancing.coverage_before).toFixed(1)
+                          ? `${Number(refinancing.coverage_before).toFixed(1)}×`
                           : "—"}
                         {" → "}
                         {refinancing.coverage_after_base != null
-                          ? Number(refinancing.coverage_after_base).toFixed(1)
+                          ? `${Number(refinancing.coverage_after_base).toFixed(1)}×`
                           : "—"}
                         {refinancing.coverage_after_shock != null && shockBps > 0
-                          ? ` (shock ${Number(refinancing.coverage_after_shock).toFixed(1)})`
+                          ? ` (shock ${Number(refinancing.coverage_after_shock).toFixed(1)}×)`
                           : ""}
                       </dd>
                       <dd className="mt-1 text-[11px] text-slate-500">
                         {refinancing.coverage_missing
                           ? refinancing.coverage_missing
                           : refinancing.pressure_rank != null
-                            ? `pressure rank #${refinancing.pressure_rank}`
+                            ? `refinance-pressure rank #${refinancing.pressure_rank} among watchlist names`
                             : "—"}
                       </dd>
                     </div>
@@ -487,12 +513,16 @@ export function IssuerDetailClient() {
                     </ul>
                   ) : null}
                   {Object.keys(refinancing.weights).length > 0 ? (
-                    <p className="mt-3 font-mono text-[11px] text-slate-500">
-                      Rank weights:{" "}
-                      {Object.entries(refinancing.weights)
-                        .map(([k, v]) => `${k} ${v}`)
-                        .join(" · ")}
-                    </p>
+                    <details className="mt-3 text-[11px] text-slate-500">
+                      <summary className="cursor-pointer text-slate-400">
+                        How pressure rank is weighted
+                      </summary>
+                      <p className="mt-1 font-mono">
+                        {Object.entries(refinancing.weights)
+                          .map(([k, v]) => `${k.replaceAll("_", " ")} ${v}`)
+                          .join(" · ")}
+                      </p>
+                    </details>
                   ) : null}
                   <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
                     {refinancing.footnote}
@@ -611,7 +641,12 @@ export function IssuerDetailClient() {
                       {formatDate(ev.event_date)}
                       {ev.event_type ? ` · ${ev.event_type.replaceAll("_", " ")}` : ""}
                     </p>
-                    <p className="text-slate-200">{ev.summary ?? ev.replay_key ?? ev.id}</p>
+                    <p className="text-slate-200">
+                      {ev.summary ??
+                        (ev.event_type
+                          ? ev.event_type.replaceAll("_", " ")
+                          : "Processing event")}
+                    </p>
                     <div className="mt-1 flex flex-wrap gap-3 text-xs">
                       {ev.alert_ids.map((aid) => (
                         <Link
@@ -656,8 +691,8 @@ export function IssuerDetailClient() {
               </label>
             </div>
             <p className="mb-4 text-sm text-slate-500">
-              Located in the slide image, read by Muse Spark, accepted only if bar heights match the
-              printed values.
+              Located in the slide image, read by an automated chart reader, accepted only if bar
+              heights match the printed values.
             </p>
             {!charts ? (
               <LoadingLine label="Loading charts…" />
@@ -723,7 +758,11 @@ export function IssuerDetailClient() {
                                 return (
                                   <tr key={`${String(cat)}-${i}`} className="text-slate-300">
                                     <td className="py-0.5 pr-2">{String(cat)}</td>
-                                    <td className="py-0.5 pr-2">{String(c.values[i] ?? "—")}</td>
+                                    <td className="py-0.5 pr-2">
+                                      {c.values[i] != null
+                                        ? `${String(c.values[i])}${c.unit ? ` ${c.unit}` : ""}`
+                                        : "—"}
+                                    </td>
                                     <td className="py-0.5">
                                       {check?.deviation != null
                                         ? `${(check.deviation * 100).toFixed(2)}%`

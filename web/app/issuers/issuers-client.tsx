@@ -28,13 +28,17 @@ export function IssuersClient() {
       <header className="mb-6">
         <h2 className="text-2xl font-semibold text-white">Issuers</h2>
         <p className="mt-1 text-sm text-slate-400">
-          Nine USD investment-grade names on the Kernel watchlist.
+          {data
+            ? `${data.items.length} ${data.items.length === 1 ? "name" : "names"} on the Kernel watchlist.`
+            : "Companies on the Kernel watchlist."}
         </p>
       </header>
 
       {error ? <ErrorLine message={error} /> : null}
       {!error && !data ? <LoadingLine /> : null}
-      {data && data.items.length === 0 ? <EmptyLine>No issuers loaded.</EmptyLine> : null}
+      {data && data.items.length === 0 ? (
+        <EmptyLine>No issuers loaded yet — seed the watchlist to populate this page.</EmptyLine>
+      ) : null}
 
       {data && data.items.length > 0 ? (
         <ul className="divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">

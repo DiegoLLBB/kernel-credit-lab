@@ -24,6 +24,8 @@ from app.api.schemas import (
     BriefSentenceOut,
     CreditOverviewOut,
     DailyBriefOut,
+    EvalComparisonOut,
+    EvalComparisonRowOut,
     EvalDetailEventOut,
     EvalSummaryOut,
     FeedItemOut,
@@ -36,6 +38,7 @@ from app.api.schemas import (
     WatchlistRowOut,
 )
 from app.db import get_session
+from app.eval.rescore import build_comparison
 from app.eval.summary import build_eval_summary
 from app.ingest.live import live_stats
 from app.insight.brief import latest_brief
@@ -271,8 +274,27 @@ def _eval_summary_out(session: Session, *, kind: str = "agent") -> EvalSummaryOu
         expected_material=data["expected_material"],
         false_alert_count=data["false_alerts"],
         unsupported_claims=data.get("unsupported_claims"),
+        accurate_caught=data.get("accurate_caught"),
+        accurate_total=data.get("accurate_total"),
+        keeps_records=data.get("keeps_records"),
+        wall_passed=data.get("wall_passed"),
+        wall_total=data.get("wall_total"),
+        cost_usd=data.get("cost_usd"),
         missed_events=[EvalDetailEventOut(**e) for e in data["missed_events"]],
         false_events=[EvalDetailEventOut(**e) for e in data["false_events"]],
+    )
+
+
+def _comparison_out(session: Session) -> EvalComparisonOut | None:
+    try:
+        data = build_comparison(session)
+    except Exception:
+        return None
+    if not data.get("rows"):
+        return None
+    return EvalComparisonOut(
+        rows=[EvalComparisonRowOut(**r) for r in data["rows"]],
+        note=data.get("note"),
     )
 
 
@@ -433,6 +455,7 @@ def credit_overview(
         watchlist=watchlist,
         evaluation=_eval_summary_out(session, kind="agent"),
         baseline=_eval_summary_out(session, kind="baseline"),
+        comparison=_comparison_out(session),
         live=live_section,
         thresholds=threshold_legend(),
     )

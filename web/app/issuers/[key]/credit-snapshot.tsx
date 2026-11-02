@@ -2,19 +2,39 @@
 
 import Link from "next/link";
 import { MetricTileCard } from "@/components/credit";
-import { LoadingLine } from "@/components/loading-error";
+import { EmptyLine, LoadingLine } from "@/components/loading-error";
 import type { IssuerSnapshot } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
 export function CreditSnapshot({
   snapshot,
   loading,
+  asOf,
 }: {
   snapshot: IssuerSnapshot | null;
   loading: boolean;
+  asOf?: string;
 }) {
-  if (loading && !snapshot) return <LoadingLine label="Loading credit snapshot…" />;
-  if (!snapshot) return null;
+  if (loading && !snapshot) {
+    return (
+      <LoadingLine
+        label={
+          asOf
+            ? `Updating credit snapshot for ${formatDate(asOf)}…`
+            : "Loading credit snapshot…"
+        }
+      />
+    );
+  }
+  if (!snapshot) {
+    return (
+      <EmptyLine>
+        Credit snapshot unavailable
+        {asOf ? ` for ${formatDate(asOf)}` : ""} — metrics may still appear below from the issuer
+        filing schedule.
+      </EmptyLine>
+    );
+  }
 
   const insight = snapshot.insight;
   const valued = snapshot.metrics.filter((t) => t.value !== null);

@@ -51,6 +51,11 @@ export function TraceClient() {
           <header>
             <p className="font-mono text-xs text-slate-500">Run {trace.id}</p>
             <h2 className="mt-1 text-2xl font-semibold text-white">Agent trace</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">
+              Step-by-step record of what the agent read and proposed for this filing. Use it to
+              audit an alert — tool names are technical; refusals and checks are the analyst
+              signals.
+            </p>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <dt className="text-xs text-slate-500">Status</dt>

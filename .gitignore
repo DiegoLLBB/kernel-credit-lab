@@ -36,3 +36,4 @@ replay_errors.log
 
 # Captured API responses used while building the dashboard
 web/lib/__fixtures__/
+.firebase/

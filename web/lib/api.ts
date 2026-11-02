@@ -453,8 +453,32 @@ export type EvalSummary = {
   expected_material?: number | null;
   false_alert_count?: number | null;
   unsupported_claims?: number | null;
+  accurate_caught?: number | null;
+  accurate_total?: number | null;
+  keeps_records?: string | null;
+  wall_passed?: number | null;
+  wall_total?: number | null;
+  cost_usd?: number | null;
   missed_events?: EvalDetailEvent[];
   false_events?: EvalDetailEvent[];
+};
+
+export type EvalComparisonRow = {
+  label: string;
+  kind?: string | null;
+  caught?: number | null;
+  expected_material?: number | null;
+  accurate_caught?: number | null;
+  accurate_total?: number | null;
+  false_alert_count?: number | null;
+  unsupported_claims?: number | null;
+  keeps_records?: string | null;
+  cost_usd?: number | null;
+};
+
+export type EvalComparison = {
+  rows: EvalComparisonRow[];
+  note?: string | null;
 };
 
 export type BriefSentence = {
@@ -509,6 +533,7 @@ export type CreditOverview = {
   watchlist: WatchlistRow[];
   evaluation: EvalSummary | null;
   baseline: EvalSummary | null;
+  comparison: EvalComparison | null;
   live: LiveSection | null;
   thresholds: ThresholdBand[];
 };
