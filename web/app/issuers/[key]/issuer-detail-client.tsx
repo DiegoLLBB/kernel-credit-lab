@@ -796,7 +796,11 @@ export function IssuerDetailClient() {
                                     ? "differs"
                                     : c.filing_crosscheck.summary_status === "not_applicable"
                                       ? "not comparable (metric not configured for this title)"
-                                      : "not comparable"}
+                                      : c.filing_crosscheck.values?.some(
+                                            (v) => v.reason === "segment",
+                                          )
+                                        ? "not comparable (segment)"
+                                        : "not comparable"}
                               </span>
                               {c.filing_crosscheck.metric_label
                                 ? ` · ${c.filing_crosscheck.metric_label}`

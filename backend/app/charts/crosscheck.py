@@ -594,8 +594,14 @@ def crosscheck_chart(
         xbrl_unit = "USD/shares" if fam.get("per_share") else "USD"
         filing_url: str | None = None
 
-        # 1) Credit metric table
-        if fam.get("credit_metric") and issuer is not None:
+        wants_ttm = _chart_wants_ttm(chart.title, cat)
+
+        # 1) Credit metric table (never for TTM charts — those need a 4-quarter sum)
+        if (
+            not wants_ttm
+            and fam.get("credit_metric")
+            and issuer is not None
+        ):
             row = _credit_metric_for_period(session, issuer.id, fam["credit_metric"], period)
             if row is not None and row.value is not None:
                 xbrl_val = Decimal(str(row.value))
@@ -604,9 +610,9 @@ def crosscheck_chart(
                 period_end = row.period_end.isoformat() if row.period_end else None
                 filing_url = accession_url(issuer.cik, accession)
 
-        # 2) Companyfacts fallback (TTM/LTM charts → sum four quarters)
+        # 2) Companyfacts: TTM/LTM → sum four quarters only (never a single quarter)
         if xbrl_val is None and companyfacts is not None:
-            if _chart_wants_ttm(chart.title, cat) and period.get("kind") == "quarter":
+            if wants_ttm and period.get("kind") == "quarter":
                 ttm = _ttm_sum_from_companyfacts(
                     companyfacts,
                     list(fam.get("xbrl_tags") or []),
@@ -615,37 +621,49 @@ def crosscheck_chart(
                 )
                 if ttm is not None:
                     xbrl_val = ttm
-            picked = (
-                None
-                if xbrl_val is not None
-                else _pick_xbrl_point(
+                    fiscal_label = f"TTM {period.get('fiscal_label') or cat}"
+                else:
+                    results.append(
+                        ValueCrosscheck(
+                            category=str(cat),
+                            chart_value=float(chart_usd),
+                            chart_unit=chart.unit,
+                            status="not_comparable",
+                            reason="TTM not available (need four quarterly XBRL values)",
+                            fiscal_label=fiscal_label,
+                            metric_id=fam["id"],
+                            metric_label=fam["label"],
+                        )
+                    )
+                    continue
+            elif not wants_ttm:
+                picked = _pick_xbrl_point(
                     companyfacts,
                     list(fam.get("xbrl_tags") or []),
                     period,
                     instant=bool(fam.get("instant")),
                     per_share=bool(fam.get("per_share")),
                 )
-            )
-            if picked and picked.get("ambiguous"):
-                results.append(
-                    ValueCrosscheck(
-                        category=str(cat),
-                        chart_value=float(chart_usd),
-                        chart_unit=chart.unit,
-                        status="not_comparable",
-                        reason="ambiguous metric: multiple XBRL values for this period",
-                        fiscal_label=fiscal_label,
-                        metric_id=fam["id"],
-                        metric_label=fam["label"],
+                if picked and picked.get("ambiguous"):
+                    results.append(
+                        ValueCrosscheck(
+                            category=str(cat),
+                            chart_value=float(chart_usd),
+                            chart_unit=chart.unit,
+                            status="not_comparable",
+                            reason="ambiguous metric: multiple XBRL values for this period",
+                            fiscal_label=fiscal_label,
+                            metric_id=fam["id"],
+                            metric_label=fam["label"],
+                        )
                     )
-                )
-                continue
-            if picked:
-                xbrl_val = Decimal(str(picked["val"]))
-                accession = picked.get("accn")
-                period_end = str(picked.get("end") or "")[:10] or None
-                xbrl_unit = picked.get("_unit") or xbrl_unit
-                filing_url = accession_url(issuer.cik if issuer else None, accession)
+                    continue
+                if picked:
+                    xbrl_val = Decimal(str(picked["val"]))
+                    accession = picked.get("accn")
+                    period_end = str(picked.get("end") or "")[:10] or None
+                    xbrl_unit = picked.get("_unit") or xbrl_unit
+                    filing_url = accession_url(issuer.cik if issuer else None, accession)
 
         if xbrl_val is None:
             results.append(
@@ -664,6 +682,34 @@ def crosscheck_chart(
             continue
 
         agree = _within_tol(chart_usd, xbrl_val)
+        # Same title as consolidated (e.g. Amazon "Net Sales" pages for AWS /
+        # International) but a much smaller bar → segment, not a filing disagreement.
+        if (
+            not agree
+            and not wants_ttm
+            and not fam.get("instant")
+            and xbrl_val > 0
+            and chart_usd < (xbrl_val * Decimal("0.70"))
+        ):
+
+            results.append(
+                ValueCrosscheck(
+                    category=str(cat),
+                    chart_value=float(chart_usd),
+                    chart_unit=chart.unit,
+                    status="not_comparable",
+                    reason="segment",
+                    xbrl_value=float(xbrl_val),
+                    xbrl_unit=xbrl_unit,
+                    fiscal_label=fiscal_label,
+                    period_end=period_end,
+                    accession=accession,
+                    filing_url=filing_url,
+                    metric_id=fam["id"],
+                    metric_label=fam["label"],
+                )
+            )
+            continue
         results.append(
             ValueCrosscheck(
                 category=str(cat),

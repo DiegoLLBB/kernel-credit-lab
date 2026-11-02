@@ -241,6 +241,32 @@ def test_segment_chart_not_comparable(db_session: Session) -> None:
     assert result.values[0].reason == "segment"
 
 
+def test_segment_inferred_when_far_below_consolidated(db_session: Session) -> None:
+    """Untitled segment pages (title still 'Net Sales') must not count as filing differs."""
+    iss, filing = _seed_issuer(db_session, key="amzn-seg2", cik="0001018724", name="Amazon")
+    chart = ChartReading(
+        issuer_id=iss.id,
+        filing_id=filing.id,
+        page=8,
+        title="Net Sales",
+        unit="$B",
+        categories=["Q3 2026"],
+        values=[112.9],  # ~half of consolidated ~$202B
+        verified=True,
+        bbox={},
+    )
+    db_session.add(chart)
+    db_session.flush()
+    result = crosscheck_chart(
+        db_session,
+        chart,
+        issuer=iss,
+        companyfacts=fixture_companyfacts(iss.cik),
+    )
+    assert result.summary_status == "not_comparable"
+    assert result.values[0].reason == "segment"
+
+
 def test_period_unclear_not_comparable(db_session: Session) -> None:
     iss, filing = _seed_issuer(db_session, key="amzn2", cik="0001018724", name="Amazon")
     chart = ChartReading(
