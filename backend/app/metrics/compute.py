@@ -218,11 +218,15 @@ def _compute_quarter(
         period_end=period_end,
         label=label,
         wall=wall,
-        debt=_total_debt_latest(doc, cfg, as_of=as_of),
-        cash_dp=select_instant(doc, cfg.tag("cash") or "", as_of=as_of),
-        stinv_dp=select_instant(doc, cfg.tag("st_investments") or "", as_of=as_of),
-        mat12_dp=select_instant(doc, cfg.tag("mat_next12") or "", as_of=as_of),
-        mat2_dp=select_instant(doc, cfg.tag("mat_year2") or "", as_of=as_of),
+        debt=_total_debt_latest(doc, cfg, as_of=as_of, period_end=period_end),
+        cash_dp=select_instant(doc, cfg.tag("cash") or "", as_of=as_of, period_end=period_end),
+        stinv_dp=select_instant(
+            doc, cfg.tag("st_investments") or "", as_of=as_of, period_end=period_end
+        ),
+        mat12_dp=select_instant(
+            doc, cfg.tag("mat_next12") or "", as_of=as_of, period_end=period_end
+        ),
+        mat2_dp=select_instant(doc, cfg.tag("mat_year2") or "", as_of=as_of, period_end=period_end),
         opinc=flows["opinc"],
         dep=flows["dep"],
         interest=flows["interest"],
@@ -296,19 +300,59 @@ def _total_debt_fy(
     return cur.value + non.value, [cur, non]
 
 
+def _instant_at_or_before(
+    doc: dict[str, Any], tag: str, *, as_of: date, period_end: date
+) -> Datapoint | None:
+    """Balance-sheet fact on ``period_end``, else the latest earlier end (annual extras)."""
+    exact = select_instant(doc, tag, as_of=as_of, period_end=period_end)
+    if exact is not None:
+        return exact
+    latest = select_instant(doc, tag, as_of=as_of)
+    if latest is not None and latest.end <= period_end:
+        return latest
+    return None
+
+
 def _total_debt_latest(
-    doc: dict[str, Any], cfg: IssuerMetricConfig, *, as_of: date
+    doc: dict[str, Any], cfg: IssuerMetricConfig, *, as_of: date, period_end: date | None = None
 ) -> tuple[Decimal | None, list[Datapoint]]:
+    """Latest total debt; current + noncurrent must share the same period end."""
     if cfg.tag("debt_total"):
-        tags = [cfg.tag("debt_total"), *cfg.debt_extra]
-        dps = [select_instant(doc, t, as_of=as_of) for t in tags if t]
-        if any(d is None for d in dps):
+        primary = cfg.tag("debt_total") or ""
+        main = (
+            select_instant(doc, primary, as_of=as_of, period_end=period_end)
+            if period_end is not None
+            else select_instant(doc, primary, as_of=as_of)
+        )
+        if main is None:
             return None, []
-        clean = [d for d in dps if d is not None]
-        return sum((d.value for d in clean), Decimal(0)), clean
-    cur = select_instant(doc, cfg.tag("debt_current") or "", as_of=as_of)
-    non = select_instant(doc, cfg.tag("debt_noncurrent") or "", as_of=as_of)
+        dps: list[Datapoint] = [main]
+        for extra in cfg.debt_extra:
+            if not extra:
+                continue
+            # Finance-lease tags are often annual-only; allow the latest filing
+            # at or before the primary period end rather than dropping the quarter.
+            dp = (
+                _instant_at_or_before(doc, extra, as_of=as_of, period_end=period_end)
+                if period_end is not None
+                else select_instant(doc, extra, as_of=as_of)
+            )
+            if dp is None:
+                return None, []
+            dps.append(dp)
+        return sum((d.value for d in dps), Decimal(0)), dps
+    cur_tag = cfg.tag("debt_current") or ""
+    non_tag = cfg.tag("debt_noncurrent") or ""
+    if period_end is not None:
+        cur = select_instant(doc, cur_tag, as_of=as_of, period_end=period_end)
+        non = select_instant(doc, non_tag, as_of=as_of, period_end=period_end)
+    else:
+        cur = select_instant(doc, cur_tag, as_of=as_of)
+        non = select_instant(doc, non_tag, as_of=as_of)
     if cur is None or non is None:
+        return None, []
+    # Refuse mixed-period sums (e.g. FY current + Q3 noncurrent).
+    if cur.end != non.end:
         return None, []
     return cur.value + non.value, [cur, non]
 
