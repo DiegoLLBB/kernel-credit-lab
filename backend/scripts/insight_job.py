@@ -20,14 +20,15 @@ from datetime import date
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.insight.generate import generate_impact, generate_snapshot
+from app.insight.brief import generate_daily_brief, replay_last_day
+from app.insight.generate import generate_impact, generate_refinancing, generate_snapshot
 from app.metrics.config import load_metric_config
 from app.models import Alert, Issuer
 from app.models.credit import CreditInsight
 
 
 async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
-    stats = {"snapshots": 0, "impacts": 0, "errors": 0}
+    stats = {"snapshots": 0, "refinancing": 0, "impacts": 0, "briefs": 0, "errors": 0}
     with SessionLocal() as session:
         cfg = load_metric_config()
         keys = issuer_keys or list(cfg.issuers)
@@ -44,6 +45,16 @@ async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
                 stats["errors"] += 1
                 traceback.print_exc()
                 print(f"insight: snapshot {key} FAILED: {exc}", file=sys.stderr)
+            try:
+                row = await generate_refinancing(session, key, as_of)
+                print(f"insight: refinancing {key} @ {as_of}: {row.status}")
+                stats["refinancing"] += 1
+                if row.status == "empty":
+                    stats["errors"] += 1
+            except Exception as exc:
+                stats["errors"] += 1
+                traceback.print_exc()
+                print(f"insight: refinancing {key} FAILED: {exc}", file=sys.stderr)
         for alert in session.scalars(select(Alert)).all():
             if issuer_keys is not None:
                 issuer = session.get(Issuer, alert.issuer_id)
@@ -68,6 +79,23 @@ async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
                 stats["errors"] += 1
                 traceback.print_exc()
                 print(f"insight: impact {alert.id[:8]} FAILED: {exc}", file=sys.stderr)
+        # One brief for the replay's last calendar day (and for --as-of when distinct).
+        brief_days = {as_of}
+        last = replay_last_day(session)
+        if last is not None:
+            brief_days.add(last)
+        for day in sorted(brief_days):
+            try:
+                row = await generate_daily_brief(session, day)
+                print(
+                    f"insight: brief @ {day}: {row.status} "
+                    f"kept={len(row.sentences or [])} refused={len(row.dropped or [])}"
+                )
+                stats["briefs"] += 1
+            except Exception as exc:
+                stats["errors"] += 1
+                traceback.print_exc()
+                print(f"insight: brief @ {day} FAILED: {exc}", file=sys.stderr)
     return stats
 
 
@@ -78,10 +106,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     stats = asyncio.run(_run(args.as_of, args.issuers))
     print(
-        f"insight: snapshots {stats['snapshots']}, impacts {stats['impacts']}, "
-        f"errors {stats['errors']}"
+        f"insight: snapshots {stats['snapshots']}, refinancing {stats['refinancing']}, "
+        f"impacts {stats['impacts']}, briefs {stats['briefs']}, errors {stats['errors']}"
     )
-    return 1 if stats["errors"] and not (stats["snapshots"] or stats["impacts"]) else 0
+    return (
+        1
+        if stats["errors"]
+        and not (
+            stats["snapshots"] or stats["impacts"] or stats["refinancing"] or stats["briefs"]
+        )
+        else 0
+    )
 
 
 if __name__ == "__main__":

@@ -219,6 +219,53 @@ class IssuerDetailOut(BaseModel):
     events: list[IssuerEventOut] = Field(default_factory=list)
 
 
+class RefinancingBucketOut(BaseModel):
+    label: str
+    total_outstanding: Decimal | None = None
+    named_amount: Decimal | None = None
+    unattributed_amount: Decimal | None = None
+    maturing_coupon_pct: Decimal | None = None
+    maturing_coupon_source: str | None = None
+    remainder_coupon_pct: Decimal | None = None
+    remainder_coupon_source: str | None = None
+    incremental_annual_interest: Decimal | None = None
+
+
+class RefinancingPanelOut(BaseModel):
+    """Display-only rate-reset / shock panel (not used by the agent or alerts)."""
+
+    as_of: date
+    tenor_years: int = 5
+    tenor_choices: list[int] = Field(default_factory=lambda: [2, 5, 7, 10])
+    shock_bps: int = 0
+    shock_bps_min: int = 0
+    shock_bps_max: int = 300
+    derivation_line: str | None = None
+    spread_pct: Decimal | None = None
+    spread_bps: int | None = None
+    treasury_pct: Decimal | None = None
+    treasury_obs_date: date | None = None
+    cost_of_debt_pct: Decimal | None = None
+    cost_of_debt_label: str | None = None
+    base_total: Decimal | None = None
+    named_base: Decimal | None = None
+    estimated_base: Decimal | None = None
+    shocked_total: Decimal | None = None
+    delta: Decimal | None = None
+    coverage_before: Decimal | None = None
+    coverage_after_base: Decimal | None = None
+    coverage_after_shock: Decimal | None = None
+    coverage_missing: str | None = None
+    missing: str | None = None
+    buckets: list[RefinancingBucketOut] = Field(default_factory=list)
+    pressure_rank: int | None = None
+    pressure_score: Decimal | None = None
+    weights: dict[str, str] = Field(default_factory=dict)
+    footnote: str
+    insight_sentence: str | None = None
+    insight_status: str | None = None
+
+
 class QuoteHighlight(BaseModel):
     fact_id: str
     quote: str
@@ -409,6 +456,8 @@ class WatchlistRowOut(BaseModel):
 
 class EvalSummaryOut(BaseModel):
     text: str
+    label: str | None = None
+    kind: str | None = None
     evaluated_at: str | None = None
     precision: float | None = None
     recall: float | None = None
@@ -416,8 +465,29 @@ class EvalSummaryOut(BaseModel):
     caught: int | None = None
     expected_material: int | None = None
     false_alert_count: int | None = None
+    unsupported_claims: int | None = None
     missed_events: list[EvalDetailEventOut] = Field(default_factory=list)
     false_events: list[EvalDetailEventOut] = Field(default_factory=list)
+
+
+class BriefSentenceOut(BaseModel):
+    sentence: str
+    refs: list[dict[str, str]] = Field(default_factory=list)
+
+
+class DailyBriefOut(BaseModel):
+    as_of: date
+    status: str
+    sentences: list[BriefSentenceOut] = Field(default_factory=list)
+    refused_count: int = 0
+    provider: str | None = None
+    model: str | None = None
+    check_model: str | None = None
+    cost_usd: float | None = None
+    model_calls: int = 0
+    attribution: str = (
+        "Written by Muse Wonder · checked by Muse Spark Open"
+    )
 
 
 class LiveDocumentOut(BaseModel):
@@ -449,8 +519,10 @@ class LiveSectionOut(BaseModel):
 
 class CreditOverviewOut(BaseModel):
     header: OverviewHeaderOut
+    brief: DailyBriefOut | None = None
     feed: list[FeedItemOut] = Field(default_factory=list)
     watchlist: list[WatchlistRowOut] = Field(default_factory=list)
     evaluation: EvalSummaryOut | None = None
+    baseline: EvalSummaryOut | None = None
     live: LiveSectionOut | None = None
     thresholds: list[ThresholdBandOut] = Field(default_factory=list)

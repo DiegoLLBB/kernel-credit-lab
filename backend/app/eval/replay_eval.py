@@ -1080,6 +1080,7 @@ def store_latest_evaluation(session: Session, report: EvalReport) -> ReplayEvalu
     what the dashboard reads in production. The files are still written locally.
     """
     row = ReplayEvaluation(
+        kind="agent",
         precision=_decimal_or_none(report.alert.precision),
         recall=_decimal_or_none(report.alert.recall),
         incomplete=bool(report.incomplete),
@@ -1088,6 +1089,7 @@ def store_latest_evaluation(session: Session, report: EvalReport) -> ReplayEvalu
         expectation_count=report.totals.get("expectations"),
         per_event=[r.to_dict() for r in report.per_event],
         alert_counts=report.alert.to_dict(),
+        unsupported_claims=0,
         git_sha=_git_sha(),
         prompt_version=PROMPT_VERSION,
         error=report.error,

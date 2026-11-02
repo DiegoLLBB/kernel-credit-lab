@@ -29,7 +29,11 @@ from app.insight.check import (
     check_text,
     verify_sentences,
 )
-from app.insight.facts import build_impact_facts, build_snapshot_facts
+from app.insight.facts import (
+    build_impact_facts,
+    build_refinancing_facts,
+    build_snapshot_facts,
+)
 from app.llm.client import LLMClient, LLMError, StructuredOutputError
 from app.llm.recorder import db_recorder
 from app.models import Alert, Event, Issuer
@@ -39,6 +43,9 @@ PROMPT_VERSION = "insight_v3"
 
 SNAPSHOT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_snapshot.md").read_text()
 IMPACT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_impact.md").read_text()
+REFINANCING_SYSTEM = (
+    Path(__file__).resolve().parent / "prompts" / "insight_refinancing.md"
+).read_text()
 
 
 class SnapshotTextModel(BaseModel):
@@ -48,6 +55,10 @@ class SnapshotTextModel(BaseModel):
 
 class ImpactTextModel(BaseModel):
     impact: str = Field(description="One sentence")
+
+
+class RefinancingTextModel(BaseModel):
+    sentence: str = Field(description="One sentence")
 
 
 def input_hash(scope: str, ref: str, facts: dict[str, Any]) -> str:
@@ -388,6 +399,111 @@ async def generate_impact(
         as_of,
         "impact",
         alert_id,
+        digest,
+        None,
+        kept,
+        dropped,
+        facts,
+        summary,
+        provider,
+        model,
+        status,
+    )
+
+
+def _template_refinancing(facts: dict[str, Any]) -> str | None:
+    """Deterministic +0bp sentence from panel numbers."""
+    total = facts.get("base_incremental_annual_interest")
+    tenor = facts.get("tenor_years")
+    spread = facts.get("spread_pct")
+    if total is None or tenor is None or spread is None:
+        return None
+    return (
+        f"Refinancing 2026–2029 debt at the {tenor}-year Treasury plus the issuer's "
+        f"{spread:.2f}% spread would raise annual interest by about "
+        f"{_format_usd_millions(float(total))} (illustrative)."
+    )
+
+
+async def generate_refinancing(
+    session: Any,
+    issuer_key: str,
+    as_of: date,
+    *,
+    tenor_years: int = 5,
+    client: Any | None = None,
+) -> CreditInsight:
+    """One checked +0bp refinancing sentence (cached). Display-only."""
+    issuer = session.scalars(select(Issuer).where(Issuer.key == issuer_key)).first()
+    if issuer is None:
+        raise ValueError(f"unknown issuer: {issuer_key}")
+    facts = build_refinancing_facts(session, issuer_key, as_of, tenor_years=tenor_years)
+    digest = input_hash("refinancing", "0bp", facts)
+    hit = _cached(session, issuer.id, as_of, "refinancing", "0bp", digest)
+    if hit is not None:
+        return hit
+
+    summary: dict[str, Any] = {"status": "checked", "check_prompt": CHECK_PROMPT_VERSION}
+    if facts.get("missing") or facts.get("base_incremental_annual_interest") is None:
+        return _store(
+            session,
+            issuer.id,
+            as_of,
+            "refinancing",
+            "0bp",
+            digest,
+            None,
+            [],
+            [
+                {
+                    "sentence": None,
+                    "reason": facts.get("missing") or "rate-reset cost unavailable",
+                }
+            ],
+            facts,
+            {**summary, "status": "empty"},
+            None,
+            None,
+            "empty",
+        )
+
+    text, provider, model, error = await _spark_text(
+        REFINANCING_SYSTEM, facts, RefinancingTextModel, "insight_refinancing", client
+    )
+    kept: list[str] = []
+    dropped: list[dict[str, Any]] = []
+    if text is None or not isinstance(text, RefinancingTextModel):
+        dropped.append({"sentence": None, "reason": "generation failed", "problem": error})
+        summary["status"] = "error"
+    else:
+        kept, dropped, gate_summary = await _gate_sentences([text.sentence.strip()], facts, client)
+        summary.update(gate_summary)
+
+    if not kept:
+        template = _template_refinancing(facts)
+        if template is not None:
+            t_kept, t_dropped, t_summary = await _gate_sentences([template], facts, client)
+            if t_kept:
+                kept = t_kept
+                dropped = (
+                    dropped
+                    + [{"sentence": None, "reason": "fell back to template after model refusal"}]
+                    + t_dropped
+                )
+                summary["fallback"] = "template"
+                summary.update(t_summary)
+                provider = provider or "template"
+                model = model or "refinancing_panel"
+            else:
+                dropped.extend(t_dropped)
+
+    status = "complete" if kept else ("error" if summary.get("status") == "error" else "empty")
+    return _store(
+        session,
+        issuer.id,
+        as_of,
+        "refinancing",
+        "0bp",
         digest,
         None,
         kept,

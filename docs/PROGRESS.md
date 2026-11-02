@@ -283,3 +283,33 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     score sentence is one consistent count (caught X of Y, Z false → precision/recall).
     Watchlist YoY uses the same point one year earlier. Public demo sets
     `REVIEW_WRITES_ENABLED=false` (403 on review POST; browser-local reviews).
+30. **Live resume + eval denominator (Mon 2 Nov):** one frozen-agent resume of the
+    paused Boeing/Intel 10-Qs (same SHA `f997487c2fbf`, `event_v10`, same limits).
+    Intel 10-Q → logged; Boeing 10-Q still paused at turn limit (40). Live section
+    lists every document with outcome and reason (incl. refused / paused). Replay
+    score now counts paused/failed/skipped expected alerts as misses: **Caught 9 of
+    14 material changes, 1 false alert** (false alert: `vz_redemption_settled`,
+    2026-09-21). Y=14 (not 15) because two expected-alert rows share a source and
+    score as one group; the earlier Y=11 dropped incomplete runs from FN.
+31. **Refinancing display-only (Mon 2 Nov, corrected):** an earlier draft briefly wired
+    rate-reset into `compute_metrics` / materiality locally; **reverted** so
+    `git diff f997487c2fbf -- backend/app/agent` is empty. That wiring was **never
+    committed or deployed** — no live Cloud Run execution ran on it. Live resume
+    runs (Boeing/Intel) used the frozen image (`event_v10`, SHA `f997487c2fbf`).
+    Refinancing is now display-only: `GET /api/issuers/{key}/refinancing` + issuer
+    panel. Benchmark = selectable DGS2/5/7/10 (default 5y); spread = cost of debt −
+    that Treasury, floored 0.5% / capped 3.0%, with a plain derivation line; per-bucket
+    maturing coupon from named bonds or cost of debt; missing EBITDA/interest → null
+    with reason; 0–300 bps shock slider; optional checked +0bp insight sentence;
+    illustrative footnote. Ranking kept (filing inputs; weights shown). Not read by
+    alerts or the agent.
+32. **FRED rates through today (Mon 2 Nov):** `load_rates` inclusive end is `date.today()`
+    (was fixed `2026-10-31`). `kernel-seed` re-run refreshes Treasury/FX through today;
+    `kernel-live` (07:00 / 19:00 Europe/Madrid) calls the same refresh before poll/agent
+    so the refinancing panel stays current. Agent tree unchanged.
+33. **Wonder brief + plain-RAG baseline + smoke (Mon 2 Nov):** Muse Wonder daily brief
+    (`app/insight/brief.py`, claims-checked like snapshots, ≤$0.50) on each live run and
+    once for the replay's last day; overview "Today's brief" card. `kernel-baseline`
+    one-shot Spark over truncated source docs, scored like the agent plus unsupported
+    substring claims (`replay_evaluation.kind=baseline`). `scripts/smoke_live.py` after
+    deploy. API min-instances=1 (warm, <$1/week idle). Agent tree unchanged.

@@ -219,3 +219,55 @@ def build_impact_facts(session: Any, alert_id: str) -> dict[str, Any]:
     facts["issuer"] = issuer.name if issuer else None
     facts["issuer_key"] = issuer.key if issuer else None
     return facts
+
+
+def build_refinancing_facts(
+    session: Any,
+    issuer_key: str,
+    as_of: date,
+    *,
+    tenor_years: int = 5,
+) -> dict[str, Any]:
+    """Facts JSON for the optional +0bp refinancing insight sentence."""
+    from app.tools.refinancing import DEFAULT_TENOR_YEARS, refinancing_panel
+
+    issuer = session.scalars(select(Issuer).where(Issuer.key == issuer_key)).first()
+    if issuer is None:
+        raise ValueError(f"unknown issuer: {issuer_key}")
+    tenor = tenor_years or DEFAULT_TENOR_YEARS
+    panel = refinancing_panel(session, issuer.id, as_of, shock_bps=0, tenor_years=tenor)
+    base = panel["base"]
+    cov = panel["coverage_base"]
+    spread = base.get("spread") or {}
+    buckets = []
+    for b in base.get("buckets") or []:
+        buckets.append(
+            {
+                "label": b.get("label"),
+                "incremental_annual_interest": _num(b.get("incremental_annual_interest")),
+                "maturing_coupon_pct": _num(b.get("maturing_coupon_pct")),
+                "maturing_coupon_source": b.get("maturing_coupon_source"),
+            }
+        )
+    return {
+        "issuer": issuer.name,
+        "issuer_key": issuer.key,
+        "as_of": as_of.isoformat(),
+        "tenor_years": tenor,
+        "shock_bps": 0,
+        "derivation_line": base.get("derivation_line"),
+        "spread_pct": _num(spread.get("spread_pct")),
+        "treasury_pct": _num((base.get("benchmark") or {}).get("value")),
+        "cost_of_debt_pct": _num((spread.get("cost_of_debt") or {}).get("rate_pct")),
+        "base_incremental_annual_interest": _num(base.get("total_incremental_annual_interest")),
+        "named_incremental_annual_interest": _num(base.get("named_incremental_annual_interest")),
+        "estimated_incremental_annual_interest": _num(
+            base.get("estimated_incremental_annual_interest")
+        ),
+        "coverage_before": _num(cov.get("coverage_before")),
+        "coverage_after": _num(cov.get("coverage_after")),
+        "coverage_missing": cov.get("missing"),
+        "missing": base.get("missing"),
+        "buckets": buckets,
+        "footnote": panel.get("footnote"),
+    }

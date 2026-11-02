@@ -13,6 +13,7 @@ import {
   type InstrumentOut,
   type IssuerDetailOut,
   type IssuerSnapshot,
+  type RefinancingPanel,
 } from "@/lib/api";
 import { formatDate, formatUsdMillions } from "@/lib/format";
 import { CreditSnapshot } from "./credit-snapshot";
@@ -56,6 +57,10 @@ export function IssuerDetailClient() {
   const [eventDates, setEventDates] = useState<string[]>([]);
   const hasLoadedRef = useRef(false);
   const keyRef = useRef(key);
+  const [shockBps, setShockBps] = useState(0);
+  const [tenorYears, setTenorYears] = useState(5);
+  const [refinancing, setRefinancing] = useState<RefinancingPanel | null>(null);
+  const [refiError, setRefiError] = useState<string | null>(null);
 
   if (keyRef.current !== key) {
     keyRef.current = key;
@@ -103,6 +108,29 @@ export function IssuerDetailClient() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [key, asOf]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      getJson<RefinancingPanel>(
+        `/api/issuers/${encodeURIComponent(key)}/refinancing?as_of=${asOf}&shock_bps=${shockBps}&tenor_years=${tenorYears}`,
+      )
+        .then((d) => {
+          if (cancelled) return;
+          setRefinancing(d);
+          setRefiError(null);
+        })
+        .catch((e: Error) => {
+          if (cancelled) return;
+          setRefinancing(null);
+          setRefiError(e.message);
+        });
+    }, shockBps === 0 ? 0 : 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [key, asOf, shockBps, tenorYears]);
 
   useEffect(() => {
     let cancelled = false;
@@ -320,6 +348,160 @@ export function IssuerDetailClient() {
                 />
               ) : null}
             </div>
+
+            <div className="mt-6 rounded border border-slate-700/60 p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Refinancing shock
+              </p>
+              <p className="mt-2 text-sm text-slate-300">
+                Incremental annual interest if 2026–2029 debt is refinanced at one selectable
+                Treasury tenor plus the issuer’s filing-derived spread. Display only; not used
+                by alerts.
+              </p>
+              {refinancing?.derivation_line ? (
+                <p className="mt-2 text-sm text-slate-200">{refinancing.derivation_line}</p>
+              ) : refinancing?.missing ? (
+                <p className="mt-2 text-sm text-amber-400">{refinancing.missing}</p>
+              ) : null}
+              <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400">
+                <label className="flex items-center gap-2">
+                  <span className="font-mono uppercase tracking-wide text-slate-500">Tenor</span>
+                  <select
+                    className="rounded border border-slate-700 bg-ink-soft px-2 py-1 text-sm text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    value={tenorYears}
+                    onChange={(e) => setTenorYears(Number(e.target.value))}
+                    aria-label="Refinancing Treasury tenor"
+                  >
+                    {(refinancing?.tenor_choices ?? [2, 5, 7, 10]).map((y) => (
+                      <option key={y} value={y}>
+                        {y}-year
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-wrap items-center gap-3">
+                  <span className="font-mono uppercase tracking-wide text-slate-500">
+                    Treasury shock
+                  </span>
+                  <input
+                    type="range"
+                    min={refinancing?.shock_bps_min ?? 0}
+                    max={refinancing?.shock_bps_max ?? 300}
+                    step={10}
+                    value={shockBps}
+                    onChange={(e) => setShockBps(Number(e.target.value))}
+                    className="h-2 w-48 accent-accent"
+                    aria-valuemin={0}
+                    aria-valuemax={300}
+                    aria-valuenow={shockBps}
+                    aria-label="Treasury shock in basis points"
+                  />
+                  <span className="font-mono text-slate-200">+{shockBps} bps</span>
+                </label>
+              </div>
+              {refiError ? (
+                <p className="mt-3 text-xs text-amber-400">{refiError}</p>
+              ) : null}
+              {refinancing ? (
+                <>
+                  {refinancing.insight_sentence ? (
+                    <p className="mt-3 text-sm text-slate-200">{refinancing.insight_sentence}</p>
+                  ) : null}
+                  <dl className="mt-3 grid gap-3 sm:grid-cols-3 font-mono text-sm">
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-wide text-slate-500">
+                        Base (+0 bps)
+                      </dt>
+                      <dd className="text-slate-100">
+                        {refinancing.base_total != null
+                          ? `${formatUsdMillions(refinancing.base_total)}/yr`
+                          : "—"}
+                      </dd>
+                      <dd className="mt-1 text-[11px] text-slate-500">
+                        named{" "}
+                        {refinancing.named_base != null
+                          ? formatUsdMillions(refinancing.named_base)
+                          : "—"}
+                        {" · "}est{" "}
+                        {refinancing.estimated_base != null
+                          ? formatUsdMillions(refinancing.estimated_base)
+                          : "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-wide text-slate-500">
+                        Shocked
+                      </dt>
+                      <dd className="text-slate-100">
+                        {refinancing.shocked_total != null
+                          ? `${formatUsdMillions(refinancing.shocked_total)}/yr`
+                          : "—"}
+                      </dd>
+                      <dd className="mt-1 text-[11px] text-slate-500">
+                        Δ{" "}
+                        {refinancing.delta != null
+                          ? formatUsdMillions(refinancing.delta)
+                          : "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-wide text-slate-500">
+                        Coverage
+                      </dt>
+                      <dd className="text-slate-100">
+                        {refinancing.coverage_before != null
+                          ? Number(refinancing.coverage_before).toFixed(1)
+                          : "—"}
+                        {" → "}
+                        {refinancing.coverage_after_base != null
+                          ? Number(refinancing.coverage_after_base).toFixed(1)
+                          : "—"}
+                        {refinancing.coverage_after_shock != null && shockBps > 0
+                          ? ` (shock ${Number(refinancing.coverage_after_shock).toFixed(1)})`
+                          : ""}
+                      </dd>
+                      <dd className="mt-1 text-[11px] text-slate-500">
+                        {refinancing.coverage_missing
+                          ? refinancing.coverage_missing
+                          : refinancing.pressure_rank != null
+                            ? `pressure rank #${refinancing.pressure_rank}`
+                            : "—"}
+                      </dd>
+                    </div>
+                  </dl>
+                  {(refinancing.buckets?.length ?? 0) > 0 ? (
+                    <ul className="mt-3 space-y-1 font-mono text-[11px] text-slate-500">
+                      {refinancing.buckets.map((b) => (
+                        <li key={b.label}>
+                          {b.label}: coupon{" "}
+                          {b.maturing_coupon_pct != null
+                            ? `${Number(b.maturing_coupon_pct).toFixed(2)}%`
+                            : "—"}{" "}
+                          ({b.maturing_coupon_source ?? "—"})
+                          {b.unattributed_amount != null &&
+                          Number(b.unattributed_amount) > 0
+                            ? `; remainder ${b.remainder_coupon_source ?? "—"}`
+                            : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {Object.keys(refinancing.weights).length > 0 ? (
+                    <p className="mt-3 font-mono text-[11px] text-slate-500">
+                      Rank weights:{" "}
+                      {Object.entries(refinancing.weights)
+                        .map(([k, v]) => `${k} ${v}`)
+                        .join(" · ")}
+                    </p>
+                  ) : null}
+                  <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
+                    {refinancing.footnote}
+                  </p>
+                </>
+              ) : (
+                <p className="mt-3 text-xs text-slate-500">Loading refinancing…</p>
+              )}
+            </div>
           </section>
 
           <section aria-labelledby="instruments-heading">
@@ -474,7 +656,7 @@ export function IssuerDetailClient() {
               </label>
             </div>
             <p className="mb-4 text-sm text-slate-500">
-              Located by SAM 3.1, read by Muse Spark, accepted only if bar heights match the
+              Located in the slide image, read by Muse Spark, accepted only if bar heights match the
               printed values.
             </p>
             {!charts ? (

@@ -28,12 +28,15 @@ from app.ingest.live import (
     pending_live_events,
     poll_all,
 )
+from app.insight.brief import generate_daily_brief
 from app.insight.generate import generate_impact, generate_snapshot
 from app.llm import LLMClient
 from app.models import Alert, Event, Issuer
 from app.replay.runner import process_one_event
 from app.sources.edgar import EdgarClient
+from app.sources.fred import FredError
 from app.sources.newsroom import NewsroomClient
+from scripts.load_rates import DEFAULT_START, load_rates
 
 
 def _outcome_label(status: str, material: bool | None) -> str:
@@ -96,6 +99,22 @@ async def _run(
             f"git_sha={cfg.git_sha} prompt={cfg.prompt_version}"
         )
 
+        # FRED Treasury + FX refresh (same schedule as this job: twice daily).
+        # Does not touch the agent; failures leave existing RateObservation rows.
+        try:
+            rate_counts = load_rates(start=DEFAULT_START, end=date.today(), session=session)
+            session.commit()
+            rate_total = sum(rate_counts.values())
+            print(
+                f"live: load_rates {DEFAULT_START.isoformat()} → {date.today().isoformat()} "
+                f"({rate_total} observations upserted)"
+            )
+            for series_id, n in rate_counts.items():
+                print(f"live: load_rates {series_id}: {n}")
+        except FredError as exc:
+            session.rollback()
+            print(f"live: load_rates FAILED (continuing): {exc}", file=sys.stderr)
+
         if not resume_only:
             docs = poll_all(session, edgar, newsroom, since=since, until=until)
             session.commit()
@@ -154,6 +173,19 @@ async def _run(
                 if event is not None:
                     event.status = "failed"
                     session.commit()
+
+        # Muse Wonder daily brief (display-only; after insights). Cap $0.50 inside.
+        try:
+            brief = await generate_daily_brief(session, date.today())
+            print(
+                f"live: brief @ {brief.as_of}: {brief.status} "
+                f"kept={len(brief.sentences or [])} refused={len(brief.dropped or [])} "
+                f"cost=${float(brief.cost_usd or 0):.4f}"
+            )
+        except Exception as exc:
+            errors += 1
+            traceback.print_exc()
+            print(f"live: brief FAILED: {exc}", file=sys.stderr)
 
     print(f"live: complete processed={processed} errors={errors}")
     return 1 if errors and not processed else 0

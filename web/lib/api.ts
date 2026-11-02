@@ -247,6 +247,52 @@ export type IssuerDetailOut = {
   events: IssuerEventOut[];
 };
 
+/** Display-only refinancing panel (`GET /api/issuers/{key}/refinancing`). */
+export type RefinancingBucket = {
+  label: string;
+  total_outstanding: string | null;
+  named_amount: string | null;
+  unattributed_amount: string | null;
+  maturing_coupon_pct: string | null;
+  maturing_coupon_source: string | null;
+  remainder_coupon_pct: string | null;
+  remainder_coupon_source: string | null;
+  incremental_annual_interest: string | null;
+};
+
+export type RefinancingPanel = {
+  as_of: string;
+  tenor_years: number;
+  tenor_choices: number[];
+  shock_bps: number;
+  shock_bps_min: number;
+  shock_bps_max: number;
+  derivation_line: string | null;
+  spread_pct: string | null;
+  spread_bps: number | null;
+  treasury_pct: string | null;
+  treasury_obs_date: string | null;
+  cost_of_debt_pct: string | null;
+  cost_of_debt_label: string | null;
+  base_total: string | null;
+  named_base: string | null;
+  estimated_base: string | null;
+  shocked_total: string | null;
+  delta: string | null;
+  coverage_before: string | null;
+  coverage_after_base: string | null;
+  coverage_after_shock: string | null;
+  coverage_missing: string | null;
+  missing: string | null;
+  buckets: RefinancingBucket[];
+  pressure_rank: number | null;
+  pressure_score: string | null;
+  weights: Record<string, string>;
+  footnote: string;
+  insight_sentence: string | null;
+  insight_status: string | null;
+};
+
 export type QuoteHighlight = {
   fact_id: string;
   quote: string;
@@ -397,6 +443,8 @@ export type WatchlistRow = {
 
 export type EvalSummary = {
   text: string;
+  label?: string | null;
+  kind?: string | null;
   evaluated_at: string | null;
   precision: number | null;
   recall: number | null;
@@ -404,8 +452,27 @@ export type EvalSummary = {
   caught?: number | null;
   expected_material?: number | null;
   false_alert_count?: number | null;
+  unsupported_claims?: number | null;
   missed_events?: EvalDetailEvent[];
   false_events?: EvalDetailEvent[];
+};
+
+export type BriefSentence = {
+  sentence: string;
+  refs: { href: string; kind?: string; match?: string }[];
+};
+
+export type DailyBrief = {
+  as_of: string;
+  status: string;
+  sentences: BriefSentence[];
+  refused_count: number;
+  provider: string | null;
+  model: string | null;
+  check_model: string | null;
+  cost_usd: number | null;
+  model_calls: number;
+  attribution: string;
 };
 
 export type LiveDocument = {
@@ -437,9 +504,11 @@ export type LiveSection = {
 
 export type CreditOverview = {
   header: OverviewHeader;
+  brief: DailyBrief | null;
   feed: FeedItem[];
   watchlist: WatchlistRow[];
   evaluation: EvalSummary | null;
+  baseline: EvalSummary | null;
   live: LiveSection | null;
   thresholds: ThresholdBand[];
 };

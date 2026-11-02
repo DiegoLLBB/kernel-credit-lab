@@ -70,9 +70,11 @@ jobs:
 
       - name: Deploy API
         run: |
+          # min-instances=1 keeps one warm API (memory-only idle ≈ <$1/week at 512Mi;
+          # under the $5/week polish budget for faster first load).
           gcloud run deploy kernel-api --region="$REGION" --image="$REGISTRY/api:$SHA" \
             --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
-            --allow-unauthenticated --min-instances=0 --max-instances=2 --concurrency=20 \
+            --allow-unauthenticated --min-instances=1 --max-instances=2 --concurrency=20 \
             --cpu=1 --memory=512Mi --timeout=900 \
             --set-secrets="$JOB_SECRETS" \
             --set-env-vars="$JOB_ENV_VARS"
@@ -133,11 +135,22 @@ jobs:
           # Same image/secrets/env as kernel-replay. Polls EDGAR + newsrooms twice a
           # day via Cloud Scheduler; --max-cost-usd 5 caps each execution. First run
           # writes live_config (go-live freeze) and backfills since 2026-10-27.
+          # Also refreshes FRED rates and writes the Muse Wonder daily brief.
           gcloud run jobs deploy kernel-live --region="$REGION" --image="$REGISTRY/api:$SHA" \
             --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
             --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS@GIT_SHA=$SHA" \
             --cpu=1 --memory=1Gi --task-timeout=7200 --max-retries=0 \
             --command=python --args="-m,scripts.live_job,--max-cost-usd,5"
+
+      - name: Deploy baseline job
+        run: |
+          # One-shot Muse Spark over each replay source document (no tools). Cap $8.
+          # Run once by hand via the Run job workflow; stores kind=baseline eval row.
+          gcloud run jobs deploy kernel-baseline --region="$REGION" --image="$REGISTRY/api:$SHA" \
+            --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
+            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
+            --cpu=1 --memory=1Gi --task-timeout=7200 --max-retries=0 \
+            --command=python --args="-m,scripts.run_baseline,--max-cost-usd,8"
 
       - name: Ensure live scheduler
         run: |
@@ -181,7 +194,9 @@ jobs:
       - name: Smoke test
         run: |
           for i in 1 2 3 4 5; do
-            if curl -fsS "$SITE_URL/health" && curl -fsS -o /dev/null "$SITE_URL/"; then echo; echo "live: $SITE_URL ($SHA)"; exit 0; fi
+            if curl -fsS "$SITE_URL/health" >/dev/null; then break; fi
             sleep 10
           done
-          echo "smoke test failed"; exit 1
+          # Full route + API smoke (fails deploy on non-200 / empty required fields).
+          docker run --rm --entrypoint python "$REGISTRY/api:$SHA" -m scripts.smoke_live --base-url "$SITE_URL"
+          echo "live: $SITE_URL ($SHA)"

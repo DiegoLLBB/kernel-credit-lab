@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -21,6 +21,8 @@ from app.api.schemas import (
     IssuerListOut,
     IssuerRef,
     IssuerSnapshotOut,
+    RefinancingBucketOut,
+    RefinancingPanelOut,
     SnapshotInsightOut,
     SnapshotWallOut,
     TimelineItemOut,
@@ -32,6 +34,14 @@ from app.models import Alert, Event, Instrument, Issuer
 from app.models.credit import CreditInsight
 from app.models.trace import AgentRun
 from app.tools.maturity import instrument_state_at, maturity_wall
+from app.tools.refinancing import (
+    DEFAULT_TENOR_YEARS,
+    FOOTNOTE,
+    SHOCK_BPS_MAX,
+    SHOCK_BPS_MIN,
+    TENOR_YEARS,
+    refinancing_panel,
+)
 
 router = APIRouter(prefix="/api/issuers", tags=["issuers"])
 DbSession = Annotated[Session, Depends(get_session)]
@@ -180,6 +190,107 @@ def get_issuer(
         maturity_wall=issuer_wall,
         group_maturity_wall=group_wall_out,
         events=timeline,
+    )
+
+
+@router.get("/{key}/refinancing", response_model=RefinancingPanelOut)
+def get_refinancing(
+    key: str,
+    session: DbSession,
+    as_of: date | None = None,
+    shock_bps: int = Query(0, ge=SHOCK_BPS_MIN, le=SHOCK_BPS_MAX),
+    tenor_years: int = Query(DEFAULT_TENOR_YEARS),
+) -> RefinancingPanelOut:
+    """Display-only rate-reset cost and Treasury shock (0–300 bps). Not agent/alert input."""
+    if tenor_years not in TENOR_YEARS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"tenor_years must be one of {list(TENOR_YEARS)}",
+        )
+    issuer = session.scalars(select(Issuer).where(Issuer.key == key)).first()
+    if issuer is None:
+        raise HTTPException(status_code=404, detail="Issuer not found")
+    point = as_of or date.today()
+    panel = refinancing_panel(
+        session, issuer.id, point, shock_bps=shock_bps, tenor_years=tenor_years
+    )
+    base = panel["base"]
+    shocked = panel["shocked"]
+    spread = base.get("spread") or {}
+    bench = base.get("benchmark") or spread.get("benchmark") or {}
+    cod = spread.get("cost_of_debt") or {}
+
+    def _opt(raw: Any) -> Decimal | None:
+        if raw is None or raw == "":
+            return None
+        return Decimal(str(raw))
+
+    buckets = [
+        RefinancingBucketOut(
+            label=str(b["label"]),
+            total_outstanding=_opt(b.get("total_outstanding")),
+            named_amount=_opt(b.get("named_amount")),
+            unattributed_amount=_opt(b.get("unattributed_amount")),
+            maturing_coupon_pct=_opt(b.get("maturing_coupon_pct")),
+            maturing_coupon_source=b.get("maturing_coupon_source"),
+            remainder_coupon_pct=_opt(b.get("remainder_coupon_pct")),
+            remainder_coupon_source=b.get("remainder_coupon_source"),
+            incremental_annual_interest=_opt(b.get("incremental_annual_interest")),
+        )
+        for b in (base.get("buckets") or [])
+    ]
+
+    insight_row = session.scalars(
+        select(CreditInsight)
+        .where(
+            CreditInsight.issuer_id == issuer.id,
+            CreditInsight.scope == "refinancing",
+            CreditInsight.ref == "0bp",
+            CreditInsight.as_of <= point,
+        )
+        .order_by(CreditInsight.as_of.desc())
+    ).first()
+    insight_sentence = None
+    insight_status = None
+    if insight_row is not None and insight_row.sentences:
+        insight_sentence = str(insight_row.sentences[0])
+        insight_status = insight_row.status
+
+    tsy_obs = None
+    if bench.get("obs_date"):
+        tsy_obs = date.fromisoformat(str(bench["obs_date"])[:10])
+
+    return RefinancingPanelOut(
+        as_of=point,
+        tenor_years=int(panel["tenor_years"]),
+        tenor_choices=list(panel.get("tenor_choices") or TENOR_YEARS),
+        shock_bps=int(panel["shock_bps"]),
+        shock_bps_min=int(panel["shock_bps_min"]),
+        shock_bps_max=int(panel["shock_bps_max"]),
+        derivation_line=base.get("derivation_line") or spread.get("derivation_line"),
+        spread_pct=_opt(spread.get("spread_pct")),
+        spread_bps=spread.get("spread_bps"),
+        treasury_pct=_opt(bench.get("value")),
+        treasury_obs_date=tsy_obs,
+        cost_of_debt_pct=_opt(cod.get("rate_pct")),
+        cost_of_debt_label=cod.get("fiscal_label"),
+        base_total=_opt(base.get("total_incremental_annual_interest")),
+        named_base=_opt(base.get("named_incremental_annual_interest")),
+        estimated_base=_opt(base.get("estimated_incremental_annual_interest")),
+        shocked_total=_opt(shocked.get("total_incremental_annual_interest")),
+        delta=_opt(panel.get("delta_incremental_annual_interest")),
+        coverage_before=_opt(panel["coverage_base"].get("coverage_before")),
+        coverage_after_base=_opt(panel["coverage_base"].get("coverage_after")),
+        coverage_after_shock=_opt(panel["coverage_shocked"].get("coverage_after")),
+        coverage_missing=panel["coverage_base"].get("missing"),
+        missing=base.get("missing"),
+        buckets=buckets,
+        pressure_rank=panel.get("pressure_rank"),
+        pressure_score=_opt(panel.get("pressure_score")),
+        weights=dict(panel.get("weights") or {}),
+        footnote=str(panel.get("footnote") or FOOTNOTE),
+        insight_sentence=insight_sentence,
+        insight_status=insight_status,
     )
 
 

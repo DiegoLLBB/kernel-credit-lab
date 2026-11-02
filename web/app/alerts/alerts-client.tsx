@@ -118,7 +118,10 @@ export function AlertsClient() {
       {loading ? <LoadingLine label="Loading alerts…" /> : null}
 
       {!loading && data && data.items.length === 0 ? (
-        <EmptyLine>No alerts yet. Run the replay.</EmptyLine>
+        <EmptyLine>
+          No material changes yet. Alerts appear after the historical replay (or a live filing) finds a
+          debt move large enough to surface here.
+        </EmptyLine>
       ) : null}
 
       {!loading && data && data.items.length > 0 ? (

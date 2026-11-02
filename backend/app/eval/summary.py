@@ -66,32 +66,51 @@ def _detail_events(per_event: list[Any]) -> tuple[list[dict[str, str]], list[dic
 
 
 def build_eval_summary(
-    session: Session, row: ReplayEvaluation | None = None
+    session: Session,
+    row: ReplayEvaluation | None = None,
+    *,
+    kind: str = "agent",
 ) -> dict[str, Any] | None:
     """Caught X of Y, Z false; precision=X/(X+Z), recall=X/Y — one count.
 
-    Prefers ``alert_counts`` on the latest ``ReplayEvaluation`` row. When the row
-    still parks paused/failed expected alerts outside ``false_negative`` (legacy),
-    recomputes via ``evaluate_latest`` so they count as misses.
+    Prefers ``alert_counts`` on the latest ``ReplayEvaluation`` row for ``kind``
+    (``agent`` or ``baseline``). When an agent row still parks paused/failed
+    expected alerts outside ``false_negative`` (legacy), recomputes via
+    ``evaluate_latest`` so they count as misses. Baseline rows are never
+    recomputed from agent runs.
     """
     if row is None:
         row = session.scalars(
-            select(ReplayEvaluation).order_by(ReplayEvaluation.evaluated_at.desc())
+            select(ReplayEvaluation)
+            .where(ReplayEvaluation.kind == kind)
+            .order_by(ReplayEvaluation.evaluated_at.desc())
         ).first()
+        # Pre-migration rows have kind='agent' via server default; also accept
+        # legacy rows that predate the column by falling back to latest overall
+        # when no kind-filtered row exists for agent.
+        if row is None and kind == "agent":
+            row = session.scalars(
+                select(ReplayEvaluation).order_by(ReplayEvaluation.evaluated_at.desc())
+            ).first()
+            if row is not None and getattr(row, "kind", "agent") not in (None, "agent"):
+                row = None
     if row is None:
         return None
 
     counts = _counts_from_row(row)
     needs_recompute = (
-        not row.alert_counts
-        or (
-            counts.true_positive
-            + counts.false_positive
-            + counts.false_negative
-            + counts.true_negative
-            == 0
+        kind == "agent"
+        and (
+            not row.alert_counts
+            or (
+                counts.true_positive
+                + counts.false_positive
+                + counts.false_negative
+                + counts.true_negative
+                == 0
+            )
+            or not _fn_covers_parked(counts)
         )
-        or not _fn_covers_parked(counts)
     )
     if needs_recompute:
         report = evaluate_latest(session)
@@ -115,8 +134,12 @@ def build_eval_summary(
     else:
         text = f"Caught {x} of {y} material changes, {z} {false_word}"
     missed, false_list = _detail_events(list(row.per_event or []))
+    unsupported = int(getattr(row, "unsupported_claims", 0) or 0)
+    label = "Kernel agent" if kind == "agent" else "one-shot model"
     return {
         "text": text,
+        "label": label,
+        "kind": kind,
         "evaluated_at": row.evaluated_at.isoformat() if row.evaluated_at else None,
         "precision": precision
         if precision is not None
@@ -128,6 +151,7 @@ def build_eval_summary(
         "caught": x,
         "expected_material": y,
         "false_alerts": z,
+        "unsupported_claims": unsupported,
         "missed_events": missed,
         "false_events": false_list,
     }

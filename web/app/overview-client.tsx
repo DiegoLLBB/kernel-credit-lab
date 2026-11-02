@@ -6,7 +6,9 @@ import { ChangeArrow, FlagDot, formatTileValue } from "@/components/credit";
 import { EmptyLine, ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
 import {
   getJson,
+  type BriefSentence,
   type CreditOverview,
+  type EvalSummary,
   type MetricTile,
   type WatchlistRow,
 } from "@/lib/api";
@@ -21,6 +23,103 @@ const WATCH_METRICS = [
 ] as const;
 
 type SortKey = "name" | (typeof WATCH_METRICS)[number];
+
+function BriefSentenceText({
+  sentence,
+  refs,
+}: {
+  sentence: string;
+  refs: BriefSentence["refs"];
+}) {
+  const primary = refs[0];
+  if (!primary?.href) {
+    return <>{sentence}</>;
+  }
+  // Link the first matching token; fall back to linking the whole sentence.
+  const match = primary.match && sentence.includes(primary.match) ? primary.match : null;
+  if (!match) {
+    return (
+      <Link href={primary.href} className="underline decoration-slate-600 underline-offset-2 hover:text-white">
+        {sentence}
+      </Link>
+    );
+  }
+  const idx = sentence.indexOf(match);
+  return (
+    <>
+      {sentence.slice(0, idx)}
+      <Link
+        href={primary.href}
+        className="underline decoration-slate-600 underline-offset-2 hover:text-white"
+      >
+        {match}
+      </Link>
+      {sentence.slice(idx + match.length)}
+    </>
+  );
+}
+
+function EvalBlock({
+  title,
+  summary,
+  empty,
+}: {
+  title: string;
+  summary: EvalSummary | null | undefined;
+  empty: string;
+}) {
+  return (
+    <div>
+      <p className="font-mono text-[11px] uppercase tracking-wide text-slate-500">{title}</p>
+      <p className="mt-1 text-sm leading-relaxed text-slate-300">
+        {summary ? summary.text : empty}
+      </p>
+      {summary && (summary.precision != null || summary.recall != null) ? (
+        <p className="mt-1 font-mono text-xs text-slate-500">
+          precision {summary.precision != null ? summary.precision.toFixed(3) : "n/a"} · recall{" "}
+          {summary.recall != null ? summary.recall.toFixed(3) : "n/a"}
+          {summary.unsupported_claims != null
+            ? ` · unsupported claims ${summary.unsupported_claims}`
+            : ""}
+        </p>
+      ) : summary && summary.unsupported_claims != null ? (
+        <p className="mt-1 font-mono text-xs text-slate-500">
+          unsupported claims {summary.unsupported_claims}
+        </p>
+      ) : null}
+      {summary &&
+      ((summary.missed_events?.length ?? 0) > 0 || (summary.false_events?.length ?? 0) > 0) ? (
+        <details className="mt-2 text-xs text-slate-400">
+          <summary className="cursor-pointer text-slate-300">Details</summary>
+          {(summary.missed_events?.length ?? 0) > 0 ? (
+            <div className="mt-2">
+              <p className="font-medium text-slate-300">Missed</p>
+              <ul className="mt-1 space-y-0.5 font-mono text-[11px]">
+                {summary.missed_events?.map((e) => (
+                  <li key={`m-${title}-${e.name}`}>
+                    {e.date} · {e.name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {(summary.false_events?.length ?? 0) > 0 ? (
+            <div className="mt-2">
+              <p className="font-medium text-slate-300">False alerts</p>
+              <ul className="mt-1 space-y-0.5 font-mono text-[11px]">
+                {summary.false_events?.map((e) => (
+                  <li key={`f-${title}-${e.name}`}>
+                    {e.date} · {e.name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </details>
+      ) : null}
+    </div>
+  );
+}
 
 function tileValue(row: WatchlistRow, metric: string): number | null {
   const tile = row.metrics.find((t) => t.metric === metric);
@@ -114,6 +213,42 @@ export function OverviewClient() {
 
       {overview ? (
         <>
+          {overview.brief && overview.brief.sentences.length > 0 ? (
+            <section
+              aria-labelledby="brief-heading"
+              className="mb-10 max-w-3xl rounded-lg border border-slate-700/60 bg-ink-soft/40 p-5"
+            >
+              <h2
+                id="brief-heading"
+                className="text-sm font-semibold uppercase tracking-wide text-slate-400"
+              >
+                Today&apos;s brief · {formatDate(overview.brief.as_of)}
+              </h2>
+              <ul className="mt-3 space-y-3">
+                {overview.brief.sentences.map((item, i) => (
+                  <li key={`brief-${i}`} className="text-sm leading-relaxed text-slate-200">
+                    <BriefSentenceText sentence={item.sentence} refs={item.refs} />
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 font-mono text-[11px] text-slate-500">
+                {overview.brief.attribution}
+              </p>
+            </section>
+          ) : (
+            <section className="mb-10 max-w-3xl" aria-labelledby="brief-empty">
+              <h2
+                id="brief-empty"
+                className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400"
+              >
+                Today&apos;s brief
+              </h2>
+              <EmptyLine>
+                No brief yet — written after each live run (and once for the replay&apos;s last day).
+              </EmptyLine>
+            </section>
+          )}
+
           <section aria-labelledby="feed-heading" className="mb-10">
             <h2 id="feed-heading" className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
               Material changes, newest first
@@ -321,53 +456,18 @@ export function OverviewClient() {
             <h2 id="eval-heading" className="text-sm font-semibold uppercase tracking-wide text-slate-400">
               How well does it work?
             </h2>
-            <p className="mt-2 text-sm leading-relaxed text-slate-300">
-              {overview.evaluation ? overview.evaluation.text : "Not tested yet."}
-            </p>
-            {overview.evaluation &&
-            (overview.evaluation.precision != null || overview.evaluation.recall != null) ? (
-              <p className="mt-1 font-mono text-xs text-slate-500">
-                precision{" "}
-                {overview.evaluation.precision != null
-                  ? overview.evaluation.precision.toFixed(3)
-                  : "n/a"}{" "}
-                · recall{" "}
-                {overview.evaluation.recall != null
-                  ? overview.evaluation.recall.toFixed(3)
-                  : "n/a"}
-              </p>
-            ) : null}
-            {overview.evaluation &&
-            ((overview.evaluation.missed_events?.length ?? 0) > 0 ||
-              (overview.evaluation.false_events?.length ?? 0) > 0) ? (
-              <details className="mt-3 text-xs text-slate-400">
-                <summary className="cursor-pointer text-slate-300">Details</summary>
-                {(overview.evaluation.missed_events?.length ?? 0) > 0 ? (
-                  <div className="mt-2">
-                    <p className="font-medium text-slate-300">Missed</p>
-                    <ul className="mt-1 space-y-0.5 font-mono text-[11px]">
-                      {overview.evaluation.missed_events?.map((e) => (
-                        <li key={`m-${e.name}`}>
-                          {e.date} · {e.name}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {(overview.evaluation.false_events?.length ?? 0) > 0 ? (
-                  <div className="mt-2">
-                    <p className="font-medium text-slate-300">False alerts</p>
-                    <ul className="mt-1 space-y-0.5 font-mono text-[11px]">
-                      {overview.evaluation.false_events?.map((e) => (
-                        <li key={`f-${e.name}`}>
-                          {e.date} · {e.name}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </details>
-            ) : null}
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
+              <EvalBlock
+                title="Kernel agent"
+                summary={overview.evaluation}
+                empty="Not tested yet."
+              />
+              <EvalBlock
+                title="One-shot model"
+                summary={overview.baseline}
+                empty="Baseline not run yet."
+              />
+            </div>
           </section>
         </>
       ) : null}

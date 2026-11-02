@@ -485,12 +485,41 @@ class ChartReading(TimestampMixin, Base):
     filing: Mapped[Filing] = relationship(back_populates="chart_readings")
 
 
+class DailyBrief(TimestampMixin, Base):
+    """Watchlist daily brief from Muse Wonder, claims-checked like snapshots.
+
+    One row per ``as_of`` day. ``sentences`` are kept prose; ``dropped`` holds
+    refused sentences and reasons; ``links`` maps number spans to alert/issuer
+    URLs for the overview card. Display-only — never read by the agent.
+    """
+
+    __tablename__ = "daily_brief"
+    __table_args__ = (UniqueConstraint("as_of", name="uq_daily_brief_as_of"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    as_of: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    sentences: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    dropped: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    facts: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+    check: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+    links: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="empty", index=True
+    )  # complete | partial | empty | error
+    provider: Mapped[str | None] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(128))
+    model_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+
+
 class ReplayEvaluation(TimestampMixin, Base):
     """Persisted replay evaluation summary (one row per ``--eval-latest`` run).
 
     Cloud Run jobs have no durable filesystem, so the dashboard reads the latest
     row here instead of ``replay_runs/latest_eval.json``. The JSON files are still
     written locally for inspection; per-event rows live in ``per_event``.
+    ``kind`` is ``agent`` (Kernel) or ``baseline`` (plain one-shot Spark).
     """
 
     __tablename__ = "replay_evaluation"
@@ -499,6 +528,9 @@ class ReplayEvaluation(TimestampMixin, Base):
     evaluated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="agent", index=True
+    )  # agent | baseline
     precision: Mapped[Decimal | None] = mapped_column(Numeric(6, 5))
     recall: Mapped[Decimal | None] = mapped_column(Numeric(6, 5))
     incomplete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -507,6 +539,7 @@ class ReplayEvaluation(TimestampMixin, Base):
     expectation_count: Mapped[int | None] = mapped_column(Integer)
     per_event: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
     alert_counts: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+    unsupported_claims: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     git_sha: Mapped[str | None] = mapped_column(String(40))
     prompt_version: Mapped[str | None] = mapped_column(String(64))
     error: Mapped[str | None] = mapped_column(Text)

@@ -21,7 +21,9 @@ from app.api.alerts import _applied_changes, _issuer_ref, impact_for_alert
 from app.api.common import clamp_limit
 from app.api.schemas import (
     BeforeAfterOut,
+    BriefSentenceOut,
     CreditOverviewOut,
+    DailyBriefOut,
     EvalDetailEventOut,
     EvalSummaryOut,
     FeedItemOut,
@@ -36,6 +38,7 @@ from app.api.schemas import (
 from app.db import get_session
 from app.eval.summary import build_eval_summary
 from app.ingest.live import live_stats
+from app.insight.brief import latest_brief
 from app.metrics.compute import METRIC_IDS
 from app.metrics.config import load_metric_config
 from app.metrics.periods import prior_same_period
@@ -252,12 +255,14 @@ def _feed_before_after(session: Session, alert: Alert) -> BeforeAfterOut | None:
     return None
 
 
-def _eval_summary_out(session: Session) -> EvalSummaryOut | None:
-    data = build_eval_summary(session)
+def _eval_summary_out(session: Session, *, kind: str = "agent") -> EvalSummaryOut | None:
+    data = build_eval_summary(session, kind=kind)
     if data is None:
         return None
     return EvalSummaryOut(
         text=data["text"],
+        label=data.get("label"),
+        kind=data.get("kind") or kind,
         evaluated_at=data["evaluated_at"],
         precision=data["precision"],
         recall=data["recall"],
@@ -265,8 +270,50 @@ def _eval_summary_out(session: Session) -> EvalSummaryOut | None:
         caught=data["caught"],
         expected_material=data["expected_material"],
         false_alert_count=data["false_alerts"],
+        unsupported_claims=data.get("unsupported_claims"),
         missed_events=[EvalDetailEventOut(**e) for e in data["missed_events"]],
         false_events=[EvalDetailEventOut(**e) for e in data["false_events"]],
+    )
+
+
+def _brief_out(session: Session) -> DailyBriefOut | None:
+    row = latest_brief(session)
+    if row is None:
+        return None
+    if row.status in {"empty", "error"} and not (row.sentences or []):
+        return None
+    links = row.links if isinstance(row.links, list) else []
+    sentences: list[BriefSentenceOut] = []
+    if links:
+        for item in links:
+            if isinstance(item, dict) and item.get("sentence"):
+                sentences.append(
+                    BriefSentenceOut(
+                        sentence=str(item["sentence"]),
+                        refs=list(item.get("refs") or []),
+                    )
+                )
+    else:
+        for s in row.sentences or []:
+            sentences.append(BriefSentenceOut(sentence=str(s), refs=[]))
+    check = row.check if isinstance(row.check, dict) else {}
+    verifier = check.get("verifier_models") or []
+    check_model = verifier[0] if verifier else "Muse Spark Open"
+    refused = len(row.dropped or [])
+    return DailyBriefOut(
+        as_of=row.as_of,
+        status=row.status,
+        sentences=sentences,
+        refused_count=refused,
+        provider=row.provider,
+        model=row.model,
+        check_model=str(check_model),
+        cost_usd=float(row.cost_usd) if row.cost_usd is not None else None,
+        model_calls=int(row.model_calls or 0),
+        attribution=(
+            f"Written by Muse Wonder · checked by Muse Spark Open · "
+            f"{refused} sentence{'s' if refused != 1 else ''} refused"
+        ),
     )
 
 
@@ -381,9 +428,11 @@ def credit_overview(
     ]
     return CreditOverviewOut(
         header=header,
+        brief=_brief_out(session),
         feed=feed,
         watchlist=watchlist,
-        evaluation=_eval_summary_out(session),
+        evaluation=_eval_summary_out(session, kind="agent"),
+        baseline=_eval_summary_out(session, kind="baseline"),
         live=live_section,
         thresholds=threshold_legend(),
     )

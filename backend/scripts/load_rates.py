@@ -3,8 +3,8 @@
 Usage (from backend/):
     python -m scripts.load_rates
 
-Series: DGS1, DGS2, DGS3, DGS5, DGS10, DEXUSEU, DEXUSUK, DEXCAUS.
-Window: 2025-12-01 → 2026-10-31 (inclusive).
+Series: DGS1, DGS2, DGS3, DGS5, DGS7, DGS10, DEXUSEU, DEXUSUK, DEXCAUS.
+Window: 2025-12-01 → today (inclusive). Pass ``--end`` to override.
 Requires FRED_API_KEY (env or .env).
 """
 
@@ -23,7 +23,11 @@ from app.db import SessionLocal
 from app.sources.fred import SUPPORTED_SERIES, FredClient, FredError
 
 DEFAULT_START = date(2025, 12, 1)
-DEFAULT_END = date(2026, 10, 31)
+
+
+def default_end() -> date:
+    """Inclusive end of the FRED window: today (never a fixed past cutoff)."""
+    return date.today()
 
 
 def _load_dotenv_candidates() -> None:
@@ -44,12 +48,15 @@ def _load_dotenv_candidates() -> None:
 def load_rates(
     *,
     start: date = DEFAULT_START,
-    end: date = DEFAULT_END,
+    end: date | None = None,
     series: tuple[str, ...] = SUPPORTED_SERIES,
     client: FredClient | None = None,
     session: Session | None = None,
 ) -> dict[str, int]:
     """Fetch and upsert observations; returns ``{series_id: row_count}``."""
+    end = end or default_end()
+    if end < start:
+        raise FredError(f"FRED window end {end.isoformat()} is before start {start.isoformat()}")
     close_client = False
     close_session = False
     fred = client
@@ -86,16 +93,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--end",
         type=date.fromisoformat,
-        default=DEFAULT_END,
-        help=f"Inclusive end (default {DEFAULT_END.isoformat()})",
+        default=None,
+        help="Inclusive end (default: today)",
     )
     args = parser.parse_args(argv)
+    end = args.end or default_end()
 
     _load_dotenv_candidates()
     get_settings.cache_clear()
 
     try:
-        counts = load_rates(start=args.start, end=args.end)
+        counts = load_rates(start=args.start, end=end)
     except FredError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -103,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     total = sum(counts.values())
     for series_id, n in counts.items():
         print(f"{series_id}: {n} observations")
-    print(f"total: {total} RateObservation rows upserted ({args.start} → {args.end})")
+    print(f"total: {total} RateObservation rows upserted ({args.start} → {end})")
     return 0
 
 

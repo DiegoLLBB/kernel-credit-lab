@@ -16,6 +16,7 @@ on:
           - decks
           - insight
           - live
+          - baseline
       args:
         description: >-
           Replace the job's default arguments entirely (the python module is added
@@ -64,6 +65,7 @@ jobs:
             decks) BASE="-m,scripts.decks_job" ;;
             insight) BASE="-m,scripts.insight_job" ;;
             live) BASE="-m,scripts.live_job" ;;
+            baseline) BASE="-m,scripts.run_baseline" ;;
           esac
           WAIT=""
           if [ "${{ inputs.wait }}" = "true" ]; then WAIT="--wait"; fi

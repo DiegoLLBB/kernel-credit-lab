@@ -34,7 +34,7 @@ from app.models import RateObservation
 FRED_API = "https://api.stlouisfed.org/fred"
 MAX_RPS = 2.0  # FRED allows 120 req/min; stay well under
 
-TREASURY_SERIES = ("DGS1", "DGS2", "DGS3", "DGS5", "DGS10")
+TREASURY_SERIES = ("DGS1", "DGS2", "DGS3", "DGS5", "DGS7", "DGS10")
 FX_SERIES = ("DEXUSEU", "DEXUSUK", "DEXCAUS")
 SUPPORTED_SERIES = TREASURY_SERIES + FX_SERIES
 
