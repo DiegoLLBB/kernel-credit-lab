@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import select
-
 from app.db import SessionLocal
 from app.eval.replay_eval import (
     _applied_changes_for_event,
@@ -22,10 +20,15 @@ from app.eval.rescore import (
     _material_changes,
     _maturity_year,
 )
-from app.models import Event, ReplayEvaluation, StateChange
+from app.models import Event
 
 
-def _line(expected: dict[str, Any], diff: dict[str, Any] | None, matched: bool, detail: str) -> dict:
+def _line(
+    expected: dict[str, Any],
+    diff: dict[str, Any] | None,
+    matched: bool,
+    detail: str,
+) -> dict:
     mat = (diff or {}).get("maturity")
     act_year = int(str(mat)[:4]) if mat and str(mat)[:4].isdigit() else None
     act_amt = None
@@ -153,7 +156,7 @@ def main() -> int:
         # Also dump raw applied diffs for multi-tranche keys of interest.
         focus = {"amzn_usd_mar", "amzn_eur_mar", "amzn_usd_jul"}
         focus_out: dict[str, Any] = {}
-        for score_key, group, _ in groups:
+        for _score_key, group, _ in groups:
             keys = [g.key for g in group]
             if not focus.intersection(keys):
                 continue
