@@ -427,3 +427,41 @@ def test_alert_facts_skips_text_changes(session):
             "after": 2000.0,
         }
     ]
+
+
+def test_template_impact_uses_wall_deltas_only():
+    from app.insight.generate import _template_impact
+
+    sentence = _template_impact(
+        {
+            "issuer": "Verizon Communications Inc.",
+            "wall_deltas": [
+                {
+                    "bucket": "FY2028",
+                    "before": 13_032_000_000.0,
+                    "after": 11_782_000_000.0,
+                    "change": -1_250_000_000.0,
+                    "change_abs": 1_250_000_000.0,
+                }
+            ],
+        }
+    )
+    assert sentence is not None
+    assert "FY2028" in sentence
+    assert "13,032 million" in sentence
+    assert "11,782 million" in sentence
+    from app.insight.numbers import find_violations, collect_numbers
+
+    facts = {
+        "issuer": "Verizon Communications Inc.",
+        "wall_deltas": [
+            {
+                "bucket": "FY2028",
+                "before": 13_032_000_000.0,
+                "after": 11_782_000_000.0,
+                "change": -1_250_000_000.0,
+                "change_abs": 1_250_000_000.0,
+            }
+        ],
+    }
+    assert find_violations(sentence, collect_numbers(facts)) == []

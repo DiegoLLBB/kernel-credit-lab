@@ -161,11 +161,15 @@ def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[s
         b, a = _num(delta.get("before")), _num(delta.get("after"))
         if b is None and a is None:
             continue
+        diff = (a - b) if b is not None and a is not None else None
         entry = {
             "bucket": delta.get("label"),
             "field": "total_outstanding",
             "before": b,
             "after": a,
+            # Precomputed so the model never invents the delta (a common refusal).
+            "change": diff,
+            "change_abs": abs(diff) if diff is not None else None,
         }
         before_after.append(entry)
         wall_deltas.append(entry)

@@ -35,7 +35,7 @@ from app.llm.recorder import db_recorder
 from app.models import Alert, Event, Issuer
 from app.models.credit import CreditInsight
 
-PROMPT_VERSION = "insight_v2"
+PROMPT_VERSION = "insight_v3"
 
 SNAPSHOT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_snapshot.md").read_text()
 IMPACT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_impact.md").read_text()
@@ -293,6 +293,48 @@ async def generate_snapshot(
     )
 
 
+def _format_usd_millions(value: float) -> str:
+    millions = value / 1_000_000
+    if abs(millions) >= 100_000:
+        return f"${millions / 1000:,.1f} billion"
+    if abs(millions) >= 1000:
+        return f"${millions:,.0f} million"
+    return f"${millions:,.1f} million"
+
+
+def _template_impact(facts: dict[str, Any]) -> str | None:
+    """Deterministic impact sentence from wall_deltas / before_after numbers.
+
+    Used when the model sentence is refused so the overview still has a
+    grounded line. Every figure comes from the facts JSON.
+    """
+    issuer = facts.get("issuer") or facts.get("issuer_key") or "This issuer"
+    deltas = facts.get("wall_deltas") or []
+    if deltas:
+        parts = []
+        for d in deltas:
+            label = d.get("bucket") or "the maturity wall"
+            before, after = d.get("before"), d.get("after")
+            if before is None or after is None:
+                continue
+            parts.append(
+                f"{label} from {_format_usd_millions(float(before))} to "
+                f"{_format_usd_millions(float(after))}"
+            )
+        if parts:
+            return f"{issuer}: debt due moved {'; '.join(parts)}."
+    for change in facts.get("before_after") or []:
+        before, after = change.get("before"), change.get("after")
+        if before is None or after is None:
+            continue
+        field = change.get("field") or change.get("bucket") or "the figure"
+        return (
+            f"{issuer}: {field} moved from {_format_usd_millions(float(before))} "
+            f"to {_format_usd_millions(float(after))}."
+        )
+    return None
+
+
 async def generate_impact(
     session: Any,
     alert_id: str,
@@ -313,26 +355,33 @@ async def generate_impact(
     text, provider, model, error = await _spark_text(
         IMPACT_SYSTEM, facts, ImpactTextModel, "insight_impact", client
     )
+    dropped: list[dict[str, Any]] = []
+    summary: dict[str, Any] = {"check_prompt": CHECK_PROMPT_VERSION}
+    kept: list[str] = []
     if text is None or not isinstance(text, ImpactTextModel):
-        return _store(
-            session,
-            alert.issuer_id,
-            as_of,
-            "impact",
-            alert_id,
-            digest,
-            None,
-            [],
-            [{"sentence": None, "reason": "generation failed", "problem": error}],
-            facts,
-            {"status": "error", "check_prompt": CHECK_PROMPT_VERSION},
-            provider,
-            model,
-            "error",
-        )
-    assert isinstance(text, ImpactTextModel)
-    kept, dropped, summary = await _gate_sentences([text.impact.strip()], facts, client)
-    status = "complete" if kept else "empty"
+        dropped.append({"sentence": None, "reason": "generation failed", "problem": error})
+        summary["status"] = "error"
+    else:
+        kept, dropped, gate_summary = await _gate_sentences([text.impact.strip()], facts, client)
+        summary.update({"status": "checked", **gate_summary})
+    if not kept:
+        template = _template_impact(facts)
+        if template is not None:
+            t_kept, t_dropped, t_summary = await _gate_sentences([template], facts, client)
+            if t_kept:
+                kept = t_kept
+                dropped = (
+                    dropped
+                    + [{"sentence": None, "reason": "fell back to template after model refusal"}]
+                    + t_dropped
+                )
+                summary["fallback"] = "template"
+                summary.update(t_summary)
+                provider = provider or "template"
+                model = model or "wall_deltas"
+            else:
+                dropped.extend(t_dropped)
+    status = "complete" if kept else ("error" if summary.get("status") == "error" else "empty")
     return _store(
         session,
         alert.issuer_id,
@@ -344,7 +393,7 @@ async def generate_impact(
         kept,
         dropped,
         facts,
-        {"status": "checked", "check_prompt": CHECK_PROMPT_VERSION, **summary},
+        summary,
         provider,
         model,
         status,
