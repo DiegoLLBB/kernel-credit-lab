@@ -276,9 +276,10 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
 29. **Live mode (Mon 2 Nov):** Cloud Run job `kernel-live` + Scheduler (07:00 / 19:00
     Europe/Madrid) polls EDGAR and newsrooms for the 6 companies, creates `source=live` events,
     runs the **frozen** agent (`event_v10` — do not change after go-live; freeze row in
-    `live_config` stores go-live timestamp, git SHA and prompt version). First run also backfills
-    filings since 27 Oct 2026. Overview has a separate "Live since …" section; live alerts never
-    count toward the replay score. Replay score sentence is now one consistent count
-    (caught X of Y, Z false → precision/recall). Watchlist YoY uses the same point one year
-    earlier. Public demo sets `REVIEW_WRITES_ENABLED=false` (403 on review POST; browser-local
-    reviews).
+    `live_config` stores go-live timestamp, git SHA and prompt version). **Go-live:**
+    `2026-11-02T12:39:47Z`, SHA `f997487c2fbf`, prompt `event_v10`. First run backfilled 10
+    filings since 27 Oct 2026 (1 alerted, 6 logged, 1 refused, 2 paused; ~$5.01). Overview has a
+    separate "Live since …" section; live alerts never count toward the replay score. Replay
+    score sentence is one consistent count (caught X of Y, Z false → precision/recall).
+    Watchlist YoY uses the same point one year earlier. Public demo sets
+    `REVIEW_WRITES_ENABLED=false` (403 on review POST; browser-local reviews).

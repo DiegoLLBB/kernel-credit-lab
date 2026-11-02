@@ -329,6 +329,9 @@ def live_stats(session: Session) -> dict[str, Any]:
             logged += 1
         elif status in {"needs_input", "refused"}:
             refused += 1
+        elif status == "paused":
+            # Hit the per-run cost/token wall mid-flight; counts as refused for the overview.
+            refused += 1
         elif status in {"failed", "pending", "processing"}:
             if status == "failed":
                 failed += 1
