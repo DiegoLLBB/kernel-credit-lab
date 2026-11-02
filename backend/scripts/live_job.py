@@ -95,9 +95,7 @@ async def _run(*, since: date, until: date, max_cost_usd: float) -> int:
             f"({len(new_docs)} new events)"
         )
         for d in new_docs:
-            print(
-                f"live: new {d.issuer_key}\t{d.form}\t{d.filed_at.isoformat()}\t{d.identity}"
-            )
+            print(f"live: new {d.issuer_key}\t{d.form}\t{d.filed_at.isoformat()}\t{d.identity}")
 
         pending = pending_live_events(session)
         spent = 0.0

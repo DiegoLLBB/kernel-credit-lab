@@ -64,10 +64,7 @@ def build_eval_summary(
 
     counts = _counts_from_row(row)
     if (
-        counts.true_positive
-        + counts.false_positive
-        + counts.false_negative
-        + counts.true_negative
+        counts.true_positive + counts.false_positive + counts.false_negative + counts.true_negative
         == 0
         and not row.alert_counts
     ):
@@ -91,12 +88,12 @@ def build_eval_summary(
     return {
         "text": text,
         "evaluated_at": row.evaluated_at.isoformat() if row.evaluated_at else None,
-        "precision": precision if precision is not None else (
-            float(row.precision) if row.precision is not None else None
-        ),
-        "recall": recall if recall is not None else (
-            float(row.recall) if row.recall is not None else None
-        ),
+        "precision": precision
+        if precision is not None
+        else (float(row.precision) if row.precision is not None else None),
+        "recall": recall
+        if recall is not None
+        else (float(row.recall) if row.recall is not None else None),
         "incomplete": bool(row.incomplete),
         "caught": x,
         "expected_material": y,

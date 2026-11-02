@@ -284,12 +284,8 @@ def poll_all(
     until = until or date.today()
     docs: list[LiveDocument] = []
     for issuer in _watchlist_issuers(session):
-        docs.extend(
-            poll_edgar_for_issuer(session, edgar, issuer, since=since, until=until)
-        )
-        docs.extend(
-            poll_newsroom_for_issuer(session, newsroom, issuer, since=since, until=until)
-        )
+        docs.extend(poll_edgar_for_issuer(session, edgar, issuer, since=since, until=until))
+        docs.extend(poll_newsroom_for_issuer(session, newsroom, issuer, since=since, until=until))
     session.flush()
     return docs
 

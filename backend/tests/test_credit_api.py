@@ -160,9 +160,11 @@ def test_overview_shape(client: TestClient, api_db: Session) -> None:
     assert liq["flag"] is None
     assert "Cash only" in liq["label"]
     assert isinstance(body["thresholds"], list) and body["thresholds"]
-    assert body["evaluation"] is None or "Caught" in body["evaluation"]["text"] or "pending" in (
-        body["evaluation"]["text"] or ""
-    ).lower()
+    assert (
+        body["evaluation"] is None
+        or "Caught" in body["evaluation"]["text"]
+        or "pending" in (body["evaluation"]["text"] or "").lower()
+    )
 
 
 def test_snapshot_shape(client: TestClient, api_db: Session) -> None:
