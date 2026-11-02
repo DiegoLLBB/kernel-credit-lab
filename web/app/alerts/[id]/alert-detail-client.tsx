@@ -15,6 +15,7 @@ import {
   postJson,
   type AlertDetailOut,
   type AlertReviewOut,
+  type AlertStatus,
 } from "@/lib/api";
 import { formatDate, formatUsdMillions, formatUsdMillionsDelta } from "@/lib/format";
 
@@ -28,6 +29,29 @@ function changeCell(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function localReviewKey(alertId: string): string {
+  return `kernel-alert-review:${alertId}`;
+}
+
+type LocalReview = { status: "confirmed" | "dismissed"; note?: string };
+
+function readLocalReview(alertId: string): LocalReview | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(localReviewKey(alertId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LocalReview;
+    if (parsed.status === "confirmed" || parsed.status === "dismissed") return parsed;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function writeLocalReview(alertId: string, review: LocalReview): void {
+  window.localStorage.setItem(localReviewKey(alertId), JSON.stringify(review));
+}
+
 export function AlertDetailClient() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -36,6 +60,8 @@ export function AlertDetailClient() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [localStatus, setLocalStatus] = useState<AlertStatus | null>(null);
+  const [browserOnly, setBrowserOnly] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,7 +69,17 @@ export function AlertDetailClient() {
     setAlert(null);
     getJson<AlertDetailOut>(`/api/alerts/${id}`)
       .then((d) => {
-        if (!cancelled) setAlert(d);
+        if (cancelled) return;
+        setAlert(d);
+        const writes = d.review_writes_enabled !== false;
+        setBrowserOnly(!writes);
+        const local = readLocalReview(d.id);
+        if (!writes && local) {
+          setLocalStatus(local.status);
+          if (local.note) setNote(local.note);
+        } else {
+          setLocalStatus(null);
+        }
       })
       .catch((e: Error) => {
         if (!cancelled) setError(e.message);
@@ -53,18 +89,38 @@ export function AlertDetailClient() {
     };
   }, [id]);
 
+  const displayStatus: AlertStatus =
+    browserOnly && localStatus ? localStatus : (alert?.status ?? "new");
+
   async function review(action: "confirm" | "dismiss") {
     if (!alert) return;
     setBusy(true);
     setReviewError(null);
+    const next: "confirmed" | "dismissed" =
+      action === "confirm" ? "confirmed" : "dismissed";
+    if (browserOnly || alert.review_writes_enabled === false) {
+      writeLocalReview(alert.id, { status: next, note: note.trim() || undefined });
+      setLocalStatus(next);
+      setBrowserOnly(true);
+      setBusy(false);
+      return;
+    }
     try {
       const out = await postJson<AlertReviewOut>(`/api/alerts/${alert.id}/review`, {
         action,
         note: note.trim() || null,
       });
       setAlert({ ...alert, status: out.status });
+      setLocalStatus(null);
     } catch (e) {
-      setReviewError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("403") || /disabled|forbidden/i.test(msg)) {
+        writeLocalReview(alert.id, { status: next, note: note.trim() || undefined });
+        setLocalStatus(next);
+        setBrowserOnly(true);
+      } else {
+        setReviewError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -88,8 +144,13 @@ export function AlertDetailClient() {
               <span className="font-mono text-xs text-slate-500">
                 {formatDate(alert.event_date)}
               </span>
+              {alert.live ? (
+                <span className="rounded border border-accent/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-accent">
+                  live
+                </span>
+              ) : null}
               <MaterialBadge material={alert.material} />
-              <AlertStatusChip status={alert.status} />
+              <AlertStatusChip status={displayStatus} />
             </div>
             <h2 className="mt-3 text-2xl font-semibold leading-snug text-white">{alert.title}</h2>
             {alert.summary ? (
@@ -304,8 +365,13 @@ export function AlertDetailClient() {
               Review
             </h3>
             <p className="mt-2 text-sm text-slate-400">
-              Current status: <AlertStatusChip status={alert.status} />
+              Current status: <AlertStatusChip status={displayStatus} />
             </p>
+            {browserOnly ? (
+              <p className="mt-2 text-xs text-slate-500">
+                Your review, saved in this browser — the shared demo is read-only.
+              </p>
+            ) : null}
             <label className="mt-4 block text-xs text-slate-400">
               Optional note
               <textarea
@@ -318,7 +384,7 @@ export function AlertDetailClient() {
             <div className="mt-4 flex flex-wrap gap-3">
               <button
                 type="button"
-                disabled={busy || alert.status === "confirmed"}
+                disabled={busy || displayStatus === "confirmed"}
                 onClick={() => void review("confirm")}
                 className="rounded bg-emerald-600/90 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
@@ -326,7 +392,7 @@ export function AlertDetailClient() {
               </button>
               <button
                 type="button"
-                disabled={busy || alert.status === "dismissed"}
+                disabled={busy || displayStatus === "dismissed"}
                 onClick={() => void review("dismiss")}
                 className="rounded border border-slate-600 px-4 py-2 text-sm text-slate-200 hover:bg-ink disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >

@@ -249,6 +249,7 @@ def get_alert(
     wall_after = after_issuer if isinstance(after_issuer, dict) else after
     deltas = [WallBucketDelta(**d) for d in bucket_deltas(wall_before, wall_after)]
     sentence, _, impact_status = impact_for_alert(session, alert)
+    from app.config import get_settings
 
     return AlertDetailOut(
         id=alert.id,
@@ -272,11 +273,20 @@ def get_alert(
             alert.claims_check if isinstance(alert.claims_check, dict) else None
         ),
         created_at=alert.created_at,
+        review_writes_enabled=get_settings().review_writes_enabled,
+        live=bool(event is not None and event.source == "live"),
     )
 
 
 @router.post("/{alert_id}/review", response_model=AlertReviewOut)
 def review_alert(alert_id: str, body: AlertReviewIn, session: DbSession) -> AlertReviewOut:
+    from app.config import get_settings
+
+    if not get_settings().review_writes_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Review writes disabled on the public demo; saved in your browser only.",
+        )
     alert = session.get(Alert, alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")

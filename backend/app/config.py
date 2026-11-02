@@ -53,6 +53,10 @@ class Settings(BaseSettings):
         "http://localhost:3000,https://kernel-credit-lab.web.app,https://credit.kernelterminal.com"
     )
 
+    # Public demo is read-only: POST /api/alerts/{id}/review returns 403 when false.
+    # Local default stays enabled so analysts can confirm/dismiss during development.
+    review_writes_enabled: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

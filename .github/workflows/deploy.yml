@@ -31,7 +31,7 @@ env:
   # through the same code paths that run locally. Only --set-secrets references here;
   # no secret values anywhere in code, workflow files or logs.
   JOB_SECRETS: DATABASE_URL=DATABASE_URL:latest,MODEL_API_KEY=MODEL_API_KEY:latest,SEC_USER_AGENT=SEC_USER_AGENT:latest,FRED_API_KEY=FRED_API_KEY:latest,BASETEN_API_KEY=BASETEN_API_KEY:latest
-  JOB_ENV_VARS: '^@^APP_ENV=production@LOG_LEVEL=INFO@META_MODEL_API_BASE_URL=https://api.meta.ai/v1@DEFAULT_MODEL=muse-spark-1.3@DEEP_RESEARCH_MODEL=muse-wonder-1.0@VISION_SEGMENTATION_MODEL=sam-3.1@BASETEN_BASE_URL=https://inference.baseten.co/v1@OPEN_MODEL=meta-models/muse-spark-open-1026@MODEL_PRICING_JSON={"muse-spark-1.3": [1.25, 4.25], "meta-models/muse-spark-open-1026": [0, 0]}@MAX_RUN_COST_USD=2.0@QUEUE_ENABLED=false'
+  JOB_ENV_VARS: '^@^APP_ENV=production@LOG_LEVEL=INFO@META_MODEL_API_BASE_URL=https://api.meta.ai/v1@DEFAULT_MODEL=muse-spark-1.3@DEEP_RESEARCH_MODEL=muse-wonder-1.0@VISION_SEGMENTATION_MODEL=sam-3.1@BASETEN_BASE_URL=https://inference.baseten.co/v1@OPEN_MODEL=meta-models/muse-spark-open-1026@MODEL_PRICING_JSON={"muse-spark-1.3": [1.25, 4.25], "meta-models/muse-spark-open-1026": [0, 0]}@MAX_RUN_COST_USD=2.0@QUEUE_ENABLED=false@REVIEW_WRITES_ENABLED=false'
 
 jobs:
   deploy:
@@ -127,6 +127,43 @@ jobs:
             --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
             --cpu=1 --memory=1Gi --task-timeout=1800 --max-retries=0 \
             --command=python --args="-m,scripts.insight_job"
+
+      - name: Deploy live job
+        run: |
+          # Same image/secrets/env as kernel-replay. Polls EDGAR + newsrooms twice a
+          # day via Cloud Scheduler; --max-cost-usd 5 caps each execution. First run
+          # writes live_config (go-live freeze) and backfills since 2026-10-27.
+          gcloud run jobs deploy kernel-live --region="$REGION" --image="$REGISTRY/api:$SHA" \
+            --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
+            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
+            --cpu=1 --memory=1Gi --task-timeout=7200 --max-retries=0 \
+            --command=python --args="-m,scripts.live_job,--max-cost-usd,5"
+
+      - name: Ensure live scheduler
+        run: |
+          # Idempotent: 07:00 and 19:00 Europe/Madrid → kernel-live.
+          for SUFFIX in morning evening; do
+            if [ "$SUFFIX" = "morning" ]; then CRON="0 7 * * *"; else CRON="0 19 * * *"; fi
+            NAME="kernel-live-$SUFFIX"
+            if gcloud scheduler jobs describe "$NAME" --location="$REGION" >/dev/null 2>&1; then
+              gcloud scheduler jobs update http "$NAME" --location="$REGION" \
+                --schedule="$CRON" --time-zone="Europe/Madrid" \
+                --uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/kernel-live:run" \
+                --http-method=POST \
+                --oauth-service-account-email="$RUNTIME_SA" \
+                --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" || true
+            else
+              gcloud scheduler jobs create http "$NAME" --location="$REGION" \
+                --schedule="$CRON" --time-zone="Europe/Madrid" \
+                --uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/kernel-live:run" \
+                --http-method=POST \
+                --oauth-service-account-email="$RUNTIME_SA" \
+                --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform"
+            fi
+          done
+          # Runtime SA needs permission to invoke the job (idempotent bind).
+          gcloud run jobs add-iam-policy-binding kernel-live --region="$REGION" \
+            --member="serviceAccount:$RUNTIME_SA" --role="roles/run.invoker" >/dev/null || true
 
       - name: Deploy web
         run: |

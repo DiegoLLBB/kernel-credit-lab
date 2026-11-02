@@ -273,3 +273,12 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     metrics from the live SEC API; `kernel-insight` wrote 9 complete snapshots (Verizon's first
     attempt crashed on a non-numeric before/after, fixed and rerun: 0 errors). Live site shows
     the What changed overview, issuer credit snapshot and alert impact-first layout.
+29. **Live mode (Mon 2 Nov):** Cloud Run job `kernel-live` + Scheduler (07:00 / 19:00
+    Europe/Madrid) polls EDGAR and newsrooms for the 6 companies, creates `source=live` events,
+    runs the **frozen** agent (`event_v10` — do not change after go-live; freeze row in
+    `live_config` stores go-live timestamp, git SHA and prompt version). First run also backfills
+    filings since 27 Oct 2026. Overview has a separate "Live since …" section; live alerts never
+    count toward the replay score. Replay score sentence is now one consistent count
+    (caught X of Y, Z false → precision/recall). Watchlist YoY uses the same point one year
+    earlier. Public demo sets `REVIEW_WRITES_ENABLED=false` (403 on review POST; browser-local
+    reviews).

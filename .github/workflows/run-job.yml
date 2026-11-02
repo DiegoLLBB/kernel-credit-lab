@@ -15,6 +15,7 @@ on:
           - replay
           - decks
           - insight
+          - live
       args:
         description: >-
           Replace the job's default arguments entirely (the python module is added
@@ -62,6 +63,7 @@ jobs:
             replay) BASE="-m,scripts.run_replay" ;;
             decks) BASE="-m,scripts.decks_job" ;;
             insight) BASE="-m,scripts.insight_job" ;;
+            live) BASE="-m,scripts.live_job" ;;
           esac
           WAIT=""
           if [ "${{ inputs.wait }}" = "true" ]; then WAIT="--wait"; fi

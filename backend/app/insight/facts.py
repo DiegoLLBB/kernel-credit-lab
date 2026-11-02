@@ -12,7 +12,7 @@ model never does its own arithmetic.
 from __future__ import annotations
 
 import contextlib
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -20,8 +20,6 @@ from sqlalchemy import select
 
 from app.metrics.compute import METRIC_IDS
 from app.models import Alert, CreditMetric, Event, Issuer, MaturitySchedule
-
-_YEAR_DAYS = 365
 
 
 def _num(value: Any) -> float | None:
@@ -59,12 +57,9 @@ def _metric_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
             out[metric] = {"value": None, "missing": "no data yet"}
             continue
         latest = series[-1]
-        prior = None
-        cutoff = latest.period_end - timedelta(days=_YEAR_DAYS)
-        for row in reversed(series[:-1]):
-            if row.period_end <= cutoff:
-                prior = row
-                break
+        from app.metrics.periods import prior_same_period
+
+        prior = prior_same_period(series, latest)
         now_val, then_val = _num(latest.value), _num(prior.value) if prior else None
         detail = dict(latest.detail or {})
         pct = _change_pct(now_val, then_val)
@@ -77,6 +72,7 @@ def _metric_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
             "missing": detail.pop("missing", None),
             "previous_value": then_val,
             "previous_period": prior.fiscal_label if prior else None,
+            "previous_period_end": prior.period_end.isoformat() if prior else None,
             # change_pct is signed (negative = down). change_pct_abs lets prose
             # write "down 5.4%" for -5.4; direction stays the verifier's job.
             "change_pct": pct,

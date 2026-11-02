@@ -43,18 +43,26 @@ function formatChangeValue(tile: MetricTile, raw: string | null): string {
   return formatTileValue({ ...tile, value: raw });
 }
 
-/** Year-on-year move. Ratios show prior → current; dollar metrics show a % arrow.
+/** Year-on-year move vs the same point one year earlier (prior_period_end).
+ *  Ratios show prior → current; dollar metrics show a % arrow.
  *  Suppressed when the API omits prior_value / change_pct (prior ≤ 0 or near zero). */
 export function ChangeArrow({ tile }: { tile: MetricTile }) {
+  const vs = tile.prior_period_end
+    ? `vs ${formatDate(tile.prior_period_end)}`
+    : "Versus same point one year earlier";
   if (RATIO_METRICS.has(tile.metric)) {
     if (tile.prior_value === null || tile.value === null) {
-      return <span className="font-mono text-xs text-slate-500">—</span>;
+      return (
+        <span className="font-mono text-xs text-slate-500" title={vs}>
+          —
+        </span>
+      );
     }
     return (
       <span
         className="font-mono text-xs text-slate-300"
-        title="Versus one year earlier"
-        aria-label={`Versus one year earlier: ${formatChangeValue(tile, tile.prior_value)} to ${formatTileValue(tile)}`}
+        title={vs}
+        aria-label={`${vs}: ${formatChangeValue(tile, tile.prior_value)} to ${formatTileValue(tile)}`}
       >
         {formatChangeValue(tile, tile.prior_value)} → {formatTileValue(tile)}
       </span>
@@ -62,7 +70,11 @@ export function ChangeArrow({ tile }: { tile: MetricTile }) {
   }
   const changePct = tile.change_pct;
   if (changePct === null || changePct === undefined || !Number.isFinite(changePct)) {
-    return <span className="font-mono text-xs text-slate-500">—</span>;
+    return (
+      <span className="font-mono text-xs text-slate-500" title={vs}>
+        —
+      </span>
+    );
   }
   const up = changePct > 0.05;
   const down = changePct < -0.05;
@@ -71,8 +83,8 @@ export function ChangeArrow({ tile }: { tile: MetricTile }) {
   return (
     <span
       className="font-mono text-xs text-slate-300"
-      title={`Versus one year earlier: ${word}`}
-      aria-label={`${word} ${Math.abs(changePct).toFixed(1)} percent versus one year earlier`}
+      title={`${vs}: ${word}`}
+      aria-label={`${word} ${Math.abs(changePct).toFixed(1)} percent ${vs}`}
     >
       {arrow} {Math.abs(changePct).toFixed(1)}%
     </span>

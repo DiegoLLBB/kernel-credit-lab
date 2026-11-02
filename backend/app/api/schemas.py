@@ -108,6 +108,8 @@ class AlertDetailOut(BaseModel):
     after_wall: dict[str, Any] | None = None
     claims_check: ClaimsCheckOut | None = None
     created_at: datetime | None = None
+    review_writes_enabled: bool = True
+    live: bool = False
 
 
 class AlertReviewIn(BaseModel):
@@ -239,6 +241,11 @@ class DocumentPageOut(BaseModel):
     highlight: QuoteHighlight | None = None
 
 
+class EvalDetailEventOut(BaseModel):
+    name: str
+    date: str
+
+
 class ReplayEvalSummary(BaseModel):
     precision: float | None = None
     recall: float | None = None
@@ -246,6 +253,12 @@ class ReplayEvalSummary(BaseModel):
     cost_usd: float | None = None
     source_path: str | None = None
     evaluated_at: str | None = None
+    text: str | None = None
+    caught: int | None = None
+    expected_material: int | None = None
+    false_alert_count: int | None = None
+    missed_events: list[EvalDetailEventOut] = Field(default_factory=list)
+    false_events: list[EvalDetailEventOut] = Field(default_factory=list)
 
 
 class ReplayStatusOut(BaseModel):
@@ -298,6 +311,7 @@ class MetricTileOut(BaseModel):
     missing_reason: str | None = None
     change_pct: float | None = None
     prior_value: Decimal | None = None
+    prior_period_end: date | None = None
     flag: Literal["green", "amber", "red"] | None = None
     cash_only: bool | None = None
     wall_disagrees: bool = False
@@ -384,6 +398,7 @@ class FeedItemOut(BaseModel):
     impact_sentence: str | None = None
     impact_pending: bool = False
     before_after: BeforeAfterOut | None = None
+    live: bool = False
 
 
 class WatchlistRowOut(BaseModel):
@@ -398,6 +413,23 @@ class EvalSummaryOut(BaseModel):
     precision: float | None = None
     recall: float | None = None
     incomplete: bool = False
+    caught: int | None = None
+    expected_material: int | None = None
+    false_alert_count: int | None = None
+    missed_events: list[EvalDetailEventOut] = Field(default_factory=list)
+    false_events: list[EvalDetailEventOut] = Field(default_factory=list)
+
+
+class LiveSectionOut(BaseModel):
+    since: str
+    git_sha: str | None = None
+    prompt_version: str | None = None
+    documents_read: int = 0
+    alerted: int = 0
+    logged: int = 0
+    refused: int = 0
+    failed: int = 0
+    feed: list[FeedItemOut] = Field(default_factory=list)
 
 
 class CreditOverviewOut(BaseModel):
@@ -405,4 +437,5 @@ class CreditOverviewOut(BaseModel):
     feed: list[FeedItemOut] = Field(default_factory=list)
     watchlist: list[WatchlistRowOut] = Field(default_factory=list)
     evaluation: EvalSummaryOut | None = None
+    live: LiveSectionOut | None = None
     thresholds: list[ThresholdBandOut] = Field(default_factory=list)

@@ -37,9 +37,11 @@ bind() { gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAcco
 bind "$(sa kcl-runtime)" roles/cloudsql.client
 bind "$(sa kcl-runtime)" roles/secretmanager.secretAccessor
 # Deployer: push images, deploy Cloud Run, deploy Firebase Hosting.
-for role in roles/run.admin roles/artifactregistry.writer roles/firebasehosting.admin roles/serviceusage.serviceUsageConsumer; do
+for role in roles/run.admin roles/artifactregistry.writer roles/firebasehosting.admin roles/serviceusage.serviceUsageConsumer roles/cloudscheduler.admin; do
   bind "$(sa kcl-deployer)" "$role"
 done
+# Runtime SA may be invoked by Scheduler to start kernel-live.
+bind "$(sa kcl-runtime)" roles/run.developer
 for id in kcl-runtime kcl-web; do
   gcloud iam service-accounts add-iam-policy-binding "$(sa "$id")" \
     --member="serviceAccount:$(sa kcl-deployer)" --role=roles/iam.serviceAccountUser >/dev/null

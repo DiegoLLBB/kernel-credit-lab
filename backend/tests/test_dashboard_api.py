@@ -220,6 +220,9 @@ def test_alerts_list_detail_review_and_document(client: TestClient, seeded_alert
     assert page["highlight"]["fact_id"] == fact_id
     assert page["highlight"]["end"] > page["highlight"]["start"]
 
+    detail_flags = client.get(f"/api/alerts/{alert.id}")
+    assert detail_flags.json().get("review_writes_enabled") is True
+
     review = client.post(
         f"/api/alerts/{alert.id}/review",
         json={"action": "confirm", "note": "Looks right"},
@@ -244,6 +247,29 @@ def test_alerts_list_detail_review_and_document(client: TestClient, seeded_alert
     )
     assert dismissed.status_code == 200
     assert dismissed.json()["status"] == "dismissed"
+
+
+def test_review_writes_disabled_returns_403(
+    client: TestClient, seeded_alert: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import get_settings
+
+    run = seeded_alert["run"]
+    session: Session = seeded_alert["session"]
+    alert = session.scalars(select(Alert).where(Alert.run_id == run.id)).one()
+    monkeypatch.setenv("REVIEW_WRITES_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        detail = client.get(f"/api/alerts/{alert.id}")
+        assert detail.status_code == 200
+        assert detail.json()["review_writes_enabled"] is False
+        blocked = client.post(
+            f"/api/alerts/{alert.id}/review",
+            json={"action": "confirm"},
+        )
+        assert blocked.status_code == 403
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

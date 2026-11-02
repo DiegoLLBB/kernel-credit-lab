@@ -134,6 +134,8 @@ export type AlertDetailOut = {
   after_wall: MaturityWall | null;
   claims_check: ClaimsCheckOut | null;
   created_at: string | null;
+  review_writes_enabled?: boolean;
+  live?: boolean;
 };
 
 export type AlertReviewIn = {
@@ -343,6 +345,7 @@ export type MetricTile = {
   missing_reason: string | null;
   change_pct: number | null;
   prior_value: string | null;
+  prior_period_end: string | null;
   flag: "green" | "amber" | "red" | null;
   cash_only: boolean | null;
   wall_disagrees: boolean;
@@ -378,6 +381,12 @@ export type FeedItem = {
   impact_sentence: string | null;
   impact_pending: boolean;
   before_after: BeforeAfter | null;
+  live?: boolean;
+};
+
+export type EvalDetailEvent = {
+  name: string;
+  date: string;
 };
 
 export type WatchlistRow = {
@@ -392,6 +401,23 @@ export type EvalSummary = {
   precision: number | null;
   recall: number | null;
   incomplete: boolean;
+  caught?: number | null;
+  expected_material?: number | null;
+  false_alert_count?: number | null;
+  missed_events?: EvalDetailEvent[];
+  false_events?: EvalDetailEvent[];
+};
+
+export type LiveSection = {
+  since: string;
+  git_sha: string | null;
+  prompt_version: string | null;
+  documents_read: number;
+  alerted: number;
+  logged: number;
+  refused: number;
+  failed: number;
+  feed: FeedItem[];
 };
 
 export type CreditOverview = {
@@ -399,6 +425,7 @@ export type CreditOverview = {
   feed: FeedItem[];
   watchlist: WatchlistRow[];
   evaluation: EvalSummary | null;
+  live: LiveSection | null;
   thresholds: ThresholdBand[];
 };
 

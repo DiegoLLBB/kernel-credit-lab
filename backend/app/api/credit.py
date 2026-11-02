@@ -7,7 +7,7 @@ with its reason, never filled in.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
@@ -22,8 +22,10 @@ from app.api.common import clamp_limit
 from app.api.schemas import (
     BeforeAfterOut,
     CreditOverviewOut,
+    EvalDetailEventOut,
     EvalSummaryOut,
     FeedItemOut,
+    LiveSectionOut,
     MetricTileOut,
     OverviewHeaderOut,
     SparkPoint,
@@ -31,9 +33,12 @@ from app.api.schemas import (
     WatchlistRowOut,
 )
 from app.db import get_session
+from app.eval.summary import build_eval_summary
+from app.ingest.live import live_stats
 from app.metrics.compute import METRIC_IDS
 from app.metrics.config import load_metric_config
-from app.models import Alert, CreditMetric, Event, Filing, Issuer, ReplayEvaluation
+from app.metrics.periods import prior_same_period
+from app.models import Alert, CreditMetric, Event, Filing, Issuer
 
 router = APIRouter(prefix="/api/credit", tags=["credit"])
 DbSession = Annotated[Session, Depends(get_session)]
@@ -180,12 +185,7 @@ def metric_tiles(
             )
             continue
         latest = series[-1]
-        prior = None
-        cutoff = latest.period_end - timedelta(days=365)
-        for row in reversed(series[:-1]):
-            if row.period_end <= cutoff:
-                prior = row
-                break
+        prior = prior_same_period(series, latest)
         prior_val = prior.value if prior else None
         # Liquidity never includes undrawn credit lines (rarely tagged) and has
         # no risk band — a cash ratio alone is not a full liquidity judgement.
@@ -207,6 +207,7 @@ def metric_tiles(
                 missing_reason=(detail.get("missing") if latest.value is None else None),
                 change_pct=_change_pct(latest.value, prior_val),
                 prior_value=_prior_for_display(prior_val),
+                prior_period_end=prior.period_end if prior else None,
                 flag=flag,
                 cash_only=detail.get("cash_only"),
                 wall_disagrees=detail.get("wall_agrees") is False,
@@ -250,38 +251,39 @@ def _feed_before_after(session: Session, alert: Alert) -> BeforeAfterOut | None:
     return None
 
 
-def _plain_words_eval(row: ReplayEvaluation | None) -> EvalSummaryOut | None:
-    if row is None:
+def _eval_summary_out(session: Session) -> EvalSummaryOut | None:
+    data = build_eval_summary(session)
+    if data is None:
         return None
-    per_event = row.per_event or []
-    judged = [e for e in per_event if isinstance(e, dict) and e.get("expected_alert") is not None]
-    material = [e for e in judged if e.get("expected_alert") is True]
-    caught = [e for e in material if not e.get("miss")]
-    false_alerts = [
-        e
-        for e in judged
-        if e.get("expected_alert") is False and str(e.get("got") or "").lower().startswith("alert")
-    ]
-    if judged:
-        tail = (
-            "no false alerts"
-            if not false_alerts
-            else f"{len(false_alerts)} false alert{'s' if len(false_alerts) != 1 else ''}"
-        )
-        text = (
-            f"Tested on {len(judged)} real 2026 events: caught {len(caught)} of "
-            f"{len(material)} material changes, {tail}"
-        )
-    elif row.event_count:
-        text = f"Tested on {row.event_count} real 2026 events."
-    else:
-        text = "Evaluation pending."
     return EvalSummaryOut(
-        text=text,
-        evaluated_at=row.evaluated_at.isoformat() if row.evaluated_at else None,
-        precision=float(row.precision) if row.precision is not None else None,
-        recall=float(row.recall) if row.recall is not None else None,
-        incomplete=bool(row.incomplete),
+        text=data["text"],
+        evaluated_at=data["evaluated_at"],
+        precision=data["precision"],
+        recall=data["recall"],
+        incomplete=data["incomplete"],
+        caught=data["caught"],
+        expected_material=data["expected_material"],
+        false_alert_count=data["false_alerts"],
+        missed_events=[EvalDetailEventOut(**e) for e in data["missed_events"]],
+        false_events=[EvalDetailEventOut(**e) for e in data["false_events"]],
+    )
+
+
+def _feed_item(session: Session, alert: Alert, *, live: bool) -> FeedItemOut | None:
+    issuer = session.get(Issuer, alert.issuer_id)
+    if issuer is None:
+        return None
+    event = session.get(Event, alert.event_id) if alert.event_id else None
+    sentence, pending, _ = impact_for_alert(session, alert)
+    return FeedItemOut(
+        alert_id=alert.id,
+        issuer=_issuer_ref(issuer),
+        event_date=event.event_date if event else None,
+        title=alert.title,
+        impact_sentence=sentence or alert.summary,
+        impact_pending=pending,
+        before_after=_feed_before_after(session, alert),
+        live=live,
     )
 
 
@@ -290,15 +292,27 @@ def credit_overview(
     session: DbSession,
     limit: int = Query(20, ge=1, le=100),
 ) -> CreditOverviewOut:
-    """What changed: header counts, impact feed, watchlist, evaluation."""
+    """What changed: replay feed + live section + watchlist + evaluation."""
     limit = clamp_limit(limit)
     roots = session.scalars(
         select(Issuer).where(Issuer.parent_id.is_(None)).order_by(Issuer.key)
     ).all()
+    # Replay-only material changes: live alerts never mix into the score header.
+    # Alerts with no event_id (legacy/test) still count as replay.
     filings_read = session.scalar(select(func.count()).select_from(Filing)) or 0
-    material_changes = session.scalar(select(func.count()).select_from(Alert)) or 0
+    live_event_ids = select(Event.id).where(Event.source == "live")
+    material_changes = (
+        session.scalar(
+            select(func.count())
+            .select_from(Alert)
+            .where(Alert.event_id.is_(None) | ~Alert.event_id.in_(live_event_ids))
+        )
+        or 0
+    )
     last_check = session.scalar(
-        select(func.max(Event.event_date)).where(Event.status == "processed")
+        select(func.max(Event.event_date)).where(
+            Event.status == "processed", Event.source != "live"
+        )
     )
     header = OverviewHeaderOut(
         companies=len(roots),
@@ -307,25 +321,41 @@ def credit_overview(
         last_check=last_check,
     )
     feed: list[FeedItemOut] = []
-    for alert in session.scalars(
-        select(Alert).order_by(Alert.created_at.desc()).limit(limit)
-    ).all():
-        issuer = session.get(Issuer, alert.issuer_id)
-        if issuer is None:
-            continue
+    for alert in session.scalars(select(Alert).order_by(Alert.created_at.desc())).all():
         event = session.get(Event, alert.event_id) if alert.event_id else None
-        sentence, pending, _ = impact_for_alert(session, alert)
-        feed.append(
-            FeedItemOut(
-                alert_id=alert.id,
-                issuer=_issuer_ref(issuer),
-                event_date=event.event_date if event else None,
-                title=alert.title,
-                impact_sentence=sentence or alert.summary,
-                impact_pending=pending,
-                before_after=_feed_before_after(session, alert),
-            )
+        if event is not None and event.source == "live":
+            continue
+        item = _feed_item(session, alert, live=False)
+        if item is not None:
+            feed.append(item)
+        if len(feed) >= limit:
+            break
+
+    live_feed: list[FeedItemOut] = []
+    for alert in session.scalars(select(Alert).order_by(Alert.created_at.desc())).all():
+        event = session.get(Event, alert.event_id) if alert.event_id else None
+        if event is None or event.source != "live":
+            continue
+        item = _feed_item(session, alert, live=True)
+        if item is not None:
+            live_feed.append(item)
+        if len(live_feed) >= limit:
+            break
+    stats = live_stats(session)
+    live_section = None
+    if stats.get("go_live_at"):
+        live_section = LiveSectionOut(
+            since=stats["go_live_at"],
+            git_sha=stats.get("git_sha"),
+            prompt_version=stats.get("prompt_version"),
+            documents_read=int(stats.get("documents_read") or 0),
+            alerted=int(stats.get("alerted") or 0),
+            logged=int(stats.get("logged") or 0),
+            refused=int(stats.get("refused") or 0),
+            failed=int(stats.get("failed") or 0),
+            feed=live_feed,
         )
+
     watchlist = [
         WatchlistRowOut(
             issuer=_issuer_ref(iss),
@@ -346,13 +376,11 @@ def credit_overview(
         for iss in roots
         if iss.key
     ]
-    latest_eval = session.scalars(
-        select(ReplayEvaluation).order_by(ReplayEvaluation.evaluated_at.desc())
-    ).first()
     return CreditOverviewOut(
         header=header,
         feed=feed,
         watchlist=watchlist,
-        evaluation=_plain_words_eval(latest_eval),
+        evaluation=_eval_summary_out(session),
+        live=live_section,
         thresholds=threshold_legend(),
     )

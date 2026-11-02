@@ -17,8 +17,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.schemas import ReplayEvalSummary, ReplayStatusOut
+from app.api.schemas import EvalDetailEventOut, ReplayEvalSummary, ReplayStatusOut
 from app.db import get_session
+from app.eval.summary import build_eval_summary
 from app.ingest.replay import DEFAULT_REPLAY_PATH
 from app.models import Event, ReplayEvaluation
 from app.replay.runner import DEFAULT_RUNS_DIR
@@ -51,13 +52,24 @@ def _latest_eval_summary(session: Session, runs_dir: Path) -> ReplayEvalSummary 
         select(ReplayEvaluation).order_by(ReplayEvaluation.evaluated_at.desc())
     ).first()
     if row is not None:
+        built = build_eval_summary(session, row)
         return ReplayEvalSummary(
-            precision=float(row.precision) if row.precision is not None else None,
-            recall=float(row.recall) if row.recall is not None else None,
+            precision=(built or {}).get("precision"),
+            recall=(built or {}).get("recall"),
             incomplete=bool(row.incomplete),
             cost_usd=float(row.cost_usd) if row.cost_usd is not None else None,
             source_path=f"replay_evaluation:{row.id}",
             evaluated_at=row.evaluated_at.isoformat() if row.evaluated_at else None,
+            text=(built or {}).get("text"),
+            caught=(built or {}).get("caught"),
+            expected_material=(built or {}).get("expected_material"),
+            false_alert_count=(built or {}).get("false_alerts"),
+            missed_events=[
+                EvalDetailEventOut(**e) for e in ((built or {}).get("missed_events") or [])
+            ],
+            false_events=[
+                EvalDetailEventOut(**e) for e in ((built or {}).get("false_events") or [])
+            ],
         )
     # Fallback for databases that predate the replay_evaluation table rows.
     return _latest_eval_summary_from_files(runs_dir)

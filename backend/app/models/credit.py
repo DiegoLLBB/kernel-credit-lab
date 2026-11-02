@@ -162,8 +162,10 @@ class Filing(TimestampMixin, Base):
 class Event(TimestampMixin, Base):
     """Typed corporate or macro event that can trigger an agent run.
 
-    ``replay_key`` idempotently identifies seeded/calendar/rate events. Evaluation
+    ``replay_key`` idempotently identifies seeded/calendar/rate/live events. Evaluation
     fields (expected_changes, expected_alert, why) live only on ``ReplayExpectation``.
+    ``source`` is ``replay`` (seeded eval set) or ``live`` (post go-live polling); live
+    events never count toward the replay score.
     """
 
     __tablename__ = "event"
@@ -185,6 +187,9 @@ class Event(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="pending", index=True
     )  # pending | processing | processed | failed
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="replay", index=True
+    )  # replay | live
     run_id: Mapped[str | None] = mapped_column(
         ForeignKey("research_run.id", ondelete="SET NULL"), index=True
     )
@@ -501,6 +506,22 @@ class ReplayEvaluation(TimestampMixin, Base):
     event_count: Mapped[int | None] = mapped_column(Integer)
     expectation_count: Mapped[int | None] = mapped_column(Integer)
     per_event: Mapped[list[Any]] = mapped_column(JsonType, nullable=False, default=list)
+    alert_counts: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
     git_sha: Mapped[str | None] = mapped_column(String(40))
     prompt_version: Mapped[str | None] = mapped_column(String(64))
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class LiveConfig(TimestampMixin, Base):
+    """Singleton freeze record written on the first live job execution.
+
+    Stores go-live time, git SHA and the agent prompt version. The agent
+    (``event_v10``) must not change after this row exists — see PROGRESS.md.
+    """
+
+    __tablename__ = "live_config"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    go_live_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    git_sha: Mapped[str | None] = mapped_column(String(40))
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)

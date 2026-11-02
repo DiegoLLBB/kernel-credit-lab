@@ -1062,6 +1062,7 @@ def store_latest_evaluation(session: Session, report: EvalReport) -> ReplayEvalu
         event_count=report.totals.get("events"),
         expectation_count=report.totals.get("expectations"),
         per_event=[r.to_dict() for r in report.per_event],
+        alert_counts=report.alert.to_dict(),
         git_sha=_git_sha(),
         prompt_version=PROMPT_VERSION,
         error=report.error,

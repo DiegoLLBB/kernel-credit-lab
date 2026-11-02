@@ -52,15 +52,31 @@ is never copied into the cloud; the cloud database is built by running the jobs.
 | `kernel-replay` | `python -m scripts.run_replay` | Runs the agent over the replay events day by day, then `--eval-latest`: writes `replay_evaluation`, the database row the dashboard reads. Defaults: full window, `--max-cost-usd 30`. Resumable: re-executing continues where it stopped | ~$0.25 per press-release event, ~$1 per 10-Q event; ~$15 for a full 29-event replay |
 | `kernel-decks` | `python -m scripts.decks_job` | `fetch_decks` (5 investor decks into `Filing` rows) then `process_decks` (SAM locates charts, Spark reads values, geometry verifies) | ~$0.40 per full pass |
 | `kernel-insight` | `python -m scripts.insight_job` | Checked credit-insight text: one snapshot per issuer (`--issuer` to narrow, `--as-of` for the date) plus any missing alert impact sentences; cached by input hash so re-runs only pay for new inputs | ~$0.05–0.15 per issuer snapshot |
+| `kernel-live` | `python -m scripts.live_job` | Polls EDGAR (10-Q/10-K/8-K/424B*) + newsrooms for the 6 watchlist issuers, creates `source=live` events, runs the frozen agent (`event_v10`), refreshes XBRL metrics and insights. Defaults: `--max-cost-usd 5`, backfill since 2026-10-27. First run writes `live_config` (go-live freeze). Scheduled 07:00 and 19:00 Europe/Madrid | Cap $5/execution |
 
 Resources (with the reason in `deploy.yml`): seed 1 CPU / 1 GiB / 30 min; replay 1 CPU /
 1 GiB / 6 h with `--max-retries=0`; decks 2 CPU / 2 GiB (PDF rendering) / 2 h with
-`--max-retries=0`.
+`--max-retries=0`; live 1 CPU / 1 GiB / 2 h.
+
+**Live scheduler:** deploy creates/updates `kernel-live-morning` and `kernel-live-evening`
+(Cloud Scheduler → Cloud Run job). Pause without deleting:
+
+```bash
+gcloud scheduler jobs pause kernel-live-morning --location=europe-west1
+gcloud scheduler jobs pause kernel-live-evening --location=europe-west1
+# resume:
+gcloud scheduler jobs resume kernel-live-morning --location=europe-west1
+gcloud scheduler jobs resume kernel-live-evening --location=europe-west1
+```
+
+**Public demo:** `REVIEW_WRITES_ENABLED=false` on Cloud Run so
+`POST /api/alerts/{id}/review` returns 403; the alert page keeps confirm/dismiss in the
+browser only.
 
 ### From GitHub (one click)
 
-Actions → **Run job** → Run workflow: pick `seed`, `replay` or `decks`. The `args` field
-overrides the job's default arguments (space-separated, e.g.
+Actions → **Run job** → Run workflow: pick `seed`, `replay`, `decks`, `insight` or `live`.
+The `args` field overrides the job's default arguments (space-separated, e.g.
 `--only vz_redemption_notice --max-cost-usd 2 --eval-latest`); empty keeps the defaults.
 `wait` (default true) waits for the execution to finish. The run summary shows the job
 name, the arguments used, the execution id and the link to its logs.
@@ -73,6 +89,7 @@ gcloud run jobs execute kernel-replay --region=europe-west1 \
   --args=-m,scripts.run_replay,--only,vz_redemption_notice,--max-cost-usd,2,--eval-latest \
   --wait
 gcloud run jobs execute kernel-decks --region=europe-west1 --wait
+gcloud run jobs execute kernel-live --region=europe-west1 --wait
 ```
 
 (`--args` is comma-separated; each comma becomes one container argument. It replaces the
