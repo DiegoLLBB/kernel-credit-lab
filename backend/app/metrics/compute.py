@@ -551,6 +551,11 @@ def _due_row(
 ) -> tuple[Decimal | None, MetricRow]:
     if dp is None:
         return None, _missing(metric, period_end, label, _due_reason(cfg))
+    detail = dict(_wall_detail(dp.value, period_end, wall, tol, wall_index))
+    # Maturity schedule figures are annual 10-K disclosures; label them when
+    # the tile falls back to FY because quarters omit the tags.
+    if label.startswith("FY"):
+        detail["source_note"] = f"from the {label} 10-K"
     return dp.value, MetricRow(
         metric,
         period_end,
@@ -560,7 +565,7 @@ def _due_row(
         dp.tag,
         dp.accession or None,
         dp.filed,
-        _wall_detail(dp.value, period_end, wall, tol, wall_index),
+        detail,
     )
 
 

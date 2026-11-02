@@ -158,6 +158,10 @@ def test_iso_date_and_bare_digits_rejected():
     assert find_style_violations("As of 2026-09-30 debt rose.") == ["2026-09-30"]
     assert find_style_violations("Outstanding 160962000000 dollars.") == ["160962000000"]
     assert find_style_violations("Debt is $925M at 4.6×.") == []
+    assert find_style_violations("As of TTM Q3 2026 debt was $166bn with $17bn due in FY2026.") == [
+        "mixed TTM/FY periods"
+    ]
+    assert find_style_violations("Watch FY2027 at $4.6bn and FY2029 at $7.4bn.") == []
 
 
 def test_years_forms_and_quarters_skipped():

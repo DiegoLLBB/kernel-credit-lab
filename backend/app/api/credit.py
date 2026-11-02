@@ -206,6 +206,16 @@ def metric_tiles(
             if metric == "liquidity_coverage"
             else flag_for(metric, latest.value, sector=issuer.sector)
         )
+        source_note = detail.get("source_note")
+        # Annual-only maturity / cash-cover tiles: label even if the stored row
+        # predates source_note (seed refresh writes it into detail).
+        if (
+            not source_note
+            and metric in {"due_12m", "due_24m", "liquidity_coverage"}
+            and (latest.fiscal_label or "").startswith("FY")
+            and latest.value is not None
+        ):
+            source_note = f"from the {latest.fiscal_label} 10-K"
         tiles.append(
             MetricTileOut(
                 metric=metric,
@@ -224,7 +234,7 @@ def metric_tiles(
                 cash_only=detail.get("cash_only"),
                 wall_disagrees=detail.get("wall_agrees") is False,
                 wall_value=Decimal(str(detail["wall_due"])) if detail.get("wall_due") else None,
-                source_note=detail.get("source_note"),
+                source_note=source_note,
                 sparkline=[
                     SparkPoint(period_end=r.period_end, label=r.fiscal_label, value=r.value)
                     for r in series

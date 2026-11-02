@@ -39,7 +39,7 @@ from app.llm.recorder import db_recorder
 from app.models import Alert, Event, Issuer
 from app.models.credit import CreditInsight
 
-PROMPT_VERSION = "insight_v4"
+PROMPT_VERSION = "insight_v5"
 
 SNAPSHOT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_snapshot.md").read_text()
 IMPACT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_impact.md").read_text()

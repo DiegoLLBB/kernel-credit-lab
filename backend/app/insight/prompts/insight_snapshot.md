@@ -17,6 +17,15 @@ fields when writing money, multiples, and dates. At most six numeric tokens
 across the whole output (headline + three sentences). Never mention missing
 data, unavailable metrics, or gaps — write only from facts that have values.
 
+PERIOD DISCIPLINE (hard):
+- Each sentence uses figures from **one** reporting period only. Do not put a
+  TTM/quarter total-debt or EBITDA figure in the same sentence as an FY-only
+  maturity or cash-coverage figure.
+- When a metric carries `source_note` (e.g. "from the FY2025 10-K"), either
+  keep that sentence to FY figures only, or append the note when you cite it.
+- Cash coverage (liquidity) must use the cash and due-within-24-months numbers
+  that share the same `period` / `period_end` in the facts — never mix.
+
 HARD RULES (violations cause the sentence to be dropped):
 - NUMBERS: every figure must match a number in the input JSON within rounding.
   Prefer the `*_display` strings provided. Never compute your own percentages

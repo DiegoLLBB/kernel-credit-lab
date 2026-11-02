@@ -34,6 +34,8 @@ _SCALE_WORDS = {
 
 _ISO_DATE_RE = re.compile(r"\b(19|20)\d{2}-\d{2}-\d{2}\b")
 _BARE_LONG_DIGITS_RE = re.compile(r"(?<![$×x])\b\d{5,}\b(?![%])")
+_TTM_LABEL_RE = re.compile(r"\bTTM\b", re.I)
+_FY_LABEL_RE = re.compile(r"\bFY\d{4}\b")
 
 _TOKEN_RE = re.compile(
     r"(?<![A-Za-z])(?P<sym>\$)?\s*"
@@ -64,13 +66,16 @@ def _token_value(num: str, unit: str | None) -> tuple[Decimal, Decimal]:
 
 
 def find_style_violations(text: str) -> list[str]:
-    """Reject raw ISO dates and bare long digit runs without $ or ×."""
+    """Reject raw ISO dates, bare long digit runs, and mixed TTM/FY periods."""
     violations: list[str] = []
     normalized = text.replace("\u00a0", " ")
     for match in _ISO_DATE_RE.finditer(normalized):
         violations.append(match.group(0))
     for match in _BARE_LONG_DIGITS_RE.finditer(normalized):
         violations.append(match.group(0))
+    # One sentence must not cite a TTM/quarter total alongside an FY maturity.
+    if _TTM_LABEL_RE.search(normalized) and _FY_LABEL_RE.search(normalized):
+        violations.append("mixed TTM/FY periods")
     return violations
 
 
