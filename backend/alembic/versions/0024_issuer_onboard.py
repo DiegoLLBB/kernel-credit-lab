@@ -32,9 +32,12 @@ def upgrade() -> None:
         sa.Column("onboard_source", sa.String(length=16), nullable=True),
     )
     op.add_column("watchlist", sa.Column("monitor_from", sa.Date(), nullable=True))
+    # Model had index=True on daily_brief.status since 0023; migration omitted it.
+    op.create_index("ix_daily_brief_status", "daily_brief", ["status"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_daily_brief_status", table_name="daily_brief")
     op.drop_column("watchlist", "monitor_from")
     op.drop_column("issuer", "onboard_source")
     op.drop_column("issuer", "onboarded_at")
