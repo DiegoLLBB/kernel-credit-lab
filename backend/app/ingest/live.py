@@ -352,9 +352,17 @@ def _outcome_reason(run: Any | None, status: str) -> str | None:
     return None
 
 
+def _needs_input_question(session: Session, run: Any | None) -> str | None:
+    if run is None:
+        return None
+    from app.replay.runner import _needs_input_detail
+
+    return _needs_input_detail(session, run)
+
+
 def live_document_rows(session: Session) -> list[dict[str, Any]]:
     """One row per live event for the overview document list."""
-    from app.models import Alert, Issuer
+    from app.models import Alert, Filing, Issuer
     from app.models.trace import AgentRun
 
     rows: list[dict[str, Any]] = []
@@ -369,7 +377,7 @@ def live_document_rows(session: Session) -> list[dict[str, Any]]:
         run = session.get(AgentRun, event.run_id) if event.run_id else None
         status = (run.status if run else event.status) or "pending"
         if status == "needs_input":
-            outcome = "refused"
+            outcome = "needs_input"
         elif status in {"alerted", "logged", "paused", "failed", "pending", "processing"}:
             outcome = status
         elif session.scalars(select(Alert).where(Alert.event_id == event.id)).first():
@@ -380,6 +388,16 @@ def live_document_rows(session: Session) -> list[dict[str, Any]]:
             outcome = status
         issuer = session.get(Issuer, event.issuer_id) if event.issuer_id else None
         alert = session.scalars(select(Alert).where(Alert.event_id == event.id)).first()
+        reason = _outcome_reason(run, status)
+        if status == "needs_input":
+            question = _needs_input_question(session, run)
+            if question:
+                reason = f"Kernel needs an analyst: {question}"
+        doc_url: str | None = None
+        if event.source_filing_id:
+            filing = session.get(Filing, event.source_filing_id)
+            if filing is not None:
+                doc_url = filing.url
         rows.append(
             {
                 "event_id": event.id,
@@ -390,8 +408,9 @@ def live_document_rows(session: Session) -> list[dict[str, Any]]:
                 "event_date": event.event_date.isoformat() if event.event_date else None,
                 "title": event.summary or (alert.title if alert else event.event_type),
                 "outcome": outcome,
-                "reason": _outcome_reason(run, status),
+                "reason": reason,
                 "cost_usd": float(run.total_cost_usd or 0) if run else None,
+                "document_url": doc_url,
             }
         )
     return rows

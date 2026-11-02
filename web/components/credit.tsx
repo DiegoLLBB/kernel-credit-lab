@@ -150,7 +150,11 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
         <>
           <p className="mt-1 font-mono text-xl text-slate-100">{formatTileValue(tile)}</p>
           <p className="mt-0.5 font-mono text-[11px] text-slate-500">
-            {[tile.fiscal_label, tile.filed ? `filed ${formatDate(tile.filed)}` : null]
+            {[
+              tile.fiscal_label,
+              tile.source_note,
+              tile.filed ? `filed ${formatDate(tile.filed)}` : null,
+            ]
               .filter(Boolean)
               .join(" · ")}
           </p>

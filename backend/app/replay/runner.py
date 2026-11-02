@@ -612,14 +612,16 @@ async def process_one_event(
             max_wall_seconds=limits.max_wall_seconds,
         )
     started = time.perf_counter()
-    if _is_paused(session, event) and event.run_id:
-        run = await resume_run(session, event.run_id, client, limits, model=model)
-    else:
-        run = await run_event(session, event.id, client, limits, model=model)
-    session.commit()
-    outcome = _outcome_from_run(session, event, run, duration_s=time.perf_counter() - started)
-    _refresh_metrics_for_event(session, event)
-    return outcome
+    try:
+        if _is_paused(session, event) and event.run_id:
+            run = await resume_run(session, event.run_id, client, limits, model=model)
+        else:
+            run = await run_event(session, event.id, client, limits, model=model)
+        session.commit()
+        return _outcome_from_run(session, event, run, duration_s=time.perf_counter() - started)
+    finally:
+        _refresh_metrics_for_event(session, event)
+        session.commit()
 
 
 async def run_replay(

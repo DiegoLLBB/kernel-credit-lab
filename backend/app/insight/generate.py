@@ -39,7 +39,7 @@ from app.llm.recorder import db_recorder
 from app.models import Alert, Event, Issuer
 from app.models.credit import CreditInsight
 
-PROMPT_VERSION = "insight_v3"
+PROMPT_VERSION = "insight_v4"
 
 SNAPSHOT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_snapshot.md").read_text()
 IMPACT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_impact.md").read_text()
@@ -50,7 +50,7 @@ REFINANCING_SYSTEM = (
 
 class SnapshotTextModel(BaseModel):
     headline: str = Field(description="At most 12 words")
-    snapshot: list[str] = Field(description="3 to 4 sentences")
+    snapshot: list[str] = Field(description="Exactly 3 sentences")
 
 
 class ImpactTextModel(BaseModel):
@@ -276,9 +276,9 @@ async def generate_snapshot(
         headline = None
     kept, dropped, summary = await _gate_sentences(text.snapshot, facts, client)
     dropped = headline_dropped + dropped
-    if len(text.snapshot) < 3 or len(text.snapshot) > 5:
+    if len(text.snapshot) != 3:
         summary["sentence_count_note"] = (
-            f"model wrote {len(text.snapshot)} sentences (want 3-4); kept {len(kept)}"
+            f"model wrote {len(text.snapshot)} sentences (want 3); kept {len(kept)}"
         )
     if kept and headline is not None:
         status = "complete"
@@ -514,3 +514,44 @@ async def generate_refinancing(
         model,
         status,
     )
+
+
+_SNAPSHOT_TILE_KEYS = (
+    "total_debt",
+    "due_24m",
+    "leverage",
+    "interest_coverage",
+    "liquidity_coverage",
+)
+
+
+def assert_snapshot_matches_metric_tiles(
+    session: Any, issuer_key: str, as_of: date, facts: dict[str, Any]
+) -> None:
+    """Raise when grounded snapshot facts disagree with current metric tiles (>1%)."""
+    from app.api.credit import metric_tiles
+    from app.models import Issuer
+
+    issuer = session.scalars(select(Issuer).where(Issuer.key == issuer_key)).first()
+    if issuer is None:
+        return
+    tiles = {t.metric: t for t in metric_tiles(session, issuer, as_of)}
+    metric_facts = facts.get("metrics") or {}
+    problems: list[str] = []
+    for key in _SNAPSHOT_TILE_KEYS:
+        fact = metric_facts.get(key) or {}
+        fact_val = fact.get("value")
+        tile = tiles.get(key)
+        tile_val = float(tile.value) if tile and tile.value is not None else None
+        if fact_val is None and tile_val is None:
+            continue
+        if fact_val is None or tile_val is None:
+            problems.append(f"{key}: facts={fact_val} tile={tile_val}")
+            continue
+        base = abs(tile_val) if tile_val != 0 else abs(fact_val)
+        if base == 0:
+            continue
+        if abs(float(fact_val) - tile_val) / base > 0.01:
+            problems.append(f"{key}: facts={fact_val} tile={tile_val}")
+    if problems:
+        raise ValueError("snapshot facts stale vs metric tiles: " + "; ".join(problems))

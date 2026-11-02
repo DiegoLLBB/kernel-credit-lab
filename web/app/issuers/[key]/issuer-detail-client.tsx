@@ -380,6 +380,9 @@ export function IssuerDetailClient() {
                 Treasury tenor plus the issuer’s filing-derived spread. Display only; not used
                 by alerts.
               </p>
+              {refinancing?.shock_bps === 0 && refinancing?.base_scenario_line ? (
+                <p className="mt-2 text-sm text-slate-400">{refinancing.base_scenario_line}</p>
+              ) : null}
               {refinancing?.derivation_line ? (
                 <p className="mt-2 text-sm text-slate-200">{refinancing.derivation_line}</p>
               ) : refinancing?.missing ? (
@@ -610,7 +613,15 @@ export function IssuerDetailClient() {
                         <td className="px-3 py-2 font-mono text-xs text-slate-400">
                           {formatDate(inst.maturity)}
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-200">
+                        <td
+                          className="px-3 py-2 font-mono text-xs text-slate-200"
+                          title={
+                            inst.original_amount &&
+                            inst.original_amount !== inst.amount_outstanding
+                              ? `Original par ${formatUsdMillions(inst.original_amount, inst.currency)} before reductions`
+                              : undefined
+                          }
+                        >
                           {formatUsdMillions(inst.amount_outstanding, inst.currency)}
                         </td>
                         <td className="px-3 py-2 font-mono text-xs text-slate-400">

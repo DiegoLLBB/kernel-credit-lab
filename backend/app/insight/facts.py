@@ -18,8 +18,9 @@ from typing import Any
 
 from sqlalchemy import select
 
+from app.insight.display import format_date_display, format_multiple_display, format_usd_display
 from app.metrics.compute import METRIC_IDS
-from app.models import Alert, CreditMetric, Event, Issuer, MaturitySchedule
+from app.models import Alert, CreditMetric, Event, Issuer
 
 
 def _num(value: Any) -> float | None:
@@ -56,67 +57,98 @@ def _metric_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
         if not series:
             out[metric] = {"value": None, "missing": "no data yet"}
             continue
-        latest = series[-1]
+        latest = next((r for r in reversed(series) if r.value is not None), series[-1])
         from app.metrics.periods import prior_same_period
 
         prior = prior_same_period(series, latest)
         now_val, then_val = _num(latest.value), _num(prior.value) if prior else None
         detail = dict(latest.detail or {})
         pct = _change_pct(now_val, then_val)
+        unit = latest.unit or "USD"
+        display_value = (
+            format_usd_display(now_val)
+            if unit == "USD"
+            else format_multiple_display(now_val)
+            if unit == "x"
+            else str(now_val)
+            if now_val is not None
+            else None
+        )
         out[metric] = {
             "value": now_val,
-            "unit": latest.unit,
+            "value_display": display_value,
+            "unit": unit,
             "period": latest.fiscal_label,
             "period_end": latest.period_end.isoformat(),
+            "period_end_display": format_date_display(latest.period_end),
             "filed": latest.filed.isoformat() if latest.filed else None,
             "missing": detail.pop("missing", None),
             "previous_value": then_val,
+            "previous_value_display": (
+                format_usd_display(then_val)
+                if unit == "USD" and then_val is not None
+                else format_multiple_display(then_val)
+                if unit == "x" and then_val is not None
+                else None
+            ),
             "previous_period": prior.fiscal_label if prior else None,
             "previous_period_end": prior.period_end.isoformat() if prior else None,
-            # change_pct is signed (negative = down). change_pct_abs lets prose
-            # write "down 5.4%" for -5.4; direction stays the verifier's job.
             "change_pct": pct,
             "change_pct_abs": abs(pct) if pct is not None else None,
             "cash_only": detail.get("cash_only"),
             "wall_disagrees": detail.get("wall_agrees") is False,
             "wall_value": float(detail["wall_due"]) if detail.get("wall_due") else None,
+            "wall_value_display": format_usd_display(detail.get("wall_due")),
+            "source_note": detail.get("source_note"),
         }
     return out
 
 
 def _wall_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
-    schedules = session.scalars(
-        select(MaturitySchedule)
-        .where(MaturitySchedule.issuer_id == issuer_id, MaturitySchedule.as_of <= as_of)
-        .order_by(MaturitySchedule.as_of.desc())
-        .limit(2)
-    ).all()
-    if not schedules:
-        return {"buckets": [], "changes": []}
-    current = {b.get("label"): _num(b.get("amount")) for b in schedules[0].buckets or []}
-    buckets = [{"label": label, "amount": amount} for label, amount in current.items()]
+    from app.tools.maturity import maturity_wall
+
+    wall = maturity_wall(session, issuer_id, as_of)
+    buckets_raw = wall.get("buckets") or {}
+    buckets = []
+    for label, data in buckets_raw.items():
+        total = _num((data or {}).get("total_outstanding"))
+        buckets.append(
+            {
+                "label": label,
+                "amount": total,
+                "amount_display": format_usd_display(total),
+            }
+        )
+    year_start = date(as_of.year, 1, 1)
+    wall_then = maturity_wall(session, issuer_id, year_start)
+    then_buckets = (wall_then.get("buckets") or {}) if wall_then else {}
     changes: list[dict[str, Any]] = []
-    if len(schedules) == 2:
-        prev = {b.get("label"): _num(b.get("amount")) for b in schedules[1].buckets or []}
-        for label, amount in current.items():
-            if label in prev and prev[label] != amount:
-                delta = (
-                    (amount - prev[label])
-                    if amount is not None and prev[label] is not None
-                    else None
-                )
-                changes.append(
-                    {
-                        "label": label,
-                        "before": prev[label],
-                        "after": amount,
-                        "delta": delta,
-                        "delta_abs": abs(delta) if delta is not None else None,
-                    }
-                )
+    for label, data in buckets_raw.items():
+        amount = _num((data or {}).get("total_outstanding"))
+        prev_data = then_buckets.get(label) if isinstance(then_buckets, dict) else None
+        prev = _num((prev_data or {}).get("total_outstanding")) if prev_data else None
+        if prev is not None and amount is not None and prev != amount:
+            delta = amount - prev
+            changes.append(
+                {
+                    "label": label,
+                    "before": prev,
+                    "after": amount,
+                    "before_display": format_usd_display(prev),
+                    "after_display": format_usd_display(amount),
+                    "delta": delta,
+                    "delta_abs": abs(delta),
+                    "delta_display": format_usd_display(delta),
+                }
+            )
+    schedule_as_of = wall.get("schedule_as_of")
+    if hasattr(schedule_as_of, "isoformat"):
+        schedule_as_of = schedule_as_of.isoformat()
     return {
-        "as_of": schedules[0].as_of.isoformat(),
-        "previous_as_of": schedules[1].as_of.isoformat() if len(schedules) == 2 else None,
+        "as_of": as_of.isoformat(),
+        "as_of_display": format_date_display(as_of),
+        "schedule_as_of": schedule_as_of,
+        "previous_as_of": year_start.isoformat(),
         "buckets": buckets,
         "changes": changes,
     }
@@ -142,10 +174,10 @@ def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[s
                 "field": change.field,
                 "before": before,
                 "after": after,
+                "before_display": format_usd_display(before),
+                "after_display": format_usd_display(after),
             }
         )
-    # Wall bucket moves (the numbers the overview feed shows) — without these
-    # the model has no grounded before→after to quote and the sentence is dropped.
     before = alert.before_metrics if isinstance(alert.before_metrics, dict) else None
     after = alert.after_metrics if isinstance(alert.after_metrics, dict) else None
     before_issuer = (before or {}).get("issuer") if before else None
@@ -163,9 +195,11 @@ def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[s
             "field": "total_outstanding",
             "before": b,
             "after": a,
-            # Precomputed so the model never invents the delta (a common refusal).
+            "before_display": format_usd_display(b),
+            "after_display": format_usd_display(a),
             "change": diff,
             "change_abs": abs(diff) if diff is not None else None,
+            "change_display": format_usd_display(diff),
         }
         before_after.append(entry)
         wall_deltas.append(entry)
@@ -174,6 +208,7 @@ def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[s
         "title": alert.title,
         "summary": alert.summary,
         "event_date": event.event_date.isoformat() if event and event.event_date else None,
+        "event_date_display": format_date_display(event.event_date) if event else None,
         "event_type": event.event_type if event else None,
         "before_after": before_after,
         "wall_deltas": wall_deltas,
@@ -182,7 +217,7 @@ def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[s
 
 
 def build_snapshot_facts(session: Any, issuer_key: str, as_of: date) -> dict[str, Any]:
-    """Facts JSON for the issuer snapshot headline + 3–4 sentences."""
+    """Facts JSON for the issuer snapshot headline + 3 sentences."""
     issuer = session.scalars(select(Issuer).where(Issuer.key == issuer_key)).first()
     if issuer is None:
         raise ValueError(f"unknown issuer: {issuer_key}")
@@ -203,6 +238,7 @@ def build_snapshot_facts(session: Any, issuer_key: str, as_of: date) -> dict[str
         "issuer_key": issuer.key,
         "ticker": issuer.ticker,
         "as_of": as_of.isoformat(),
+        "as_of_display": format_date_display(as_of),
         "metrics": _metric_facts(session, issuer.id, as_of),
         "wall": _wall_facts(session, issuer.id, as_of),
         "alerts": visible,
@@ -241,10 +277,12 @@ def build_refinancing_facts(
     spread = base.get("spread") or {}
     buckets = []
     for b in base.get("buckets") or []:
+        inc = _num(b.get("incremental_annual_interest"))
         buckets.append(
             {
                 "label": b.get("label"),
-                "incremental_annual_interest": _num(b.get("incremental_annual_interest")),
+                "incremental_annual_interest": inc,
+                "incremental_display": format_usd_display(inc),
                 "maturing_coupon_pct": _num(b.get("maturing_coupon_pct")),
                 "maturing_coupon_source": b.get("maturing_coupon_source"),
             }
@@ -253,9 +291,11 @@ def build_refinancing_facts(
         "issuer": issuer.name,
         "issuer_key": issuer.key,
         "as_of": as_of.isoformat(),
+        "as_of_display": format_date_display(as_of),
         "tenor_years": tenor,
         "shock_bps": 0,
         "derivation_line": base.get("derivation_line"),
+        "base_scenario_line": panel.get("base_scenario_line"),
         "spread_pct": _num(spread.get("spread_pct")),
         "treasury_pct": _num((base.get("benchmark") or {}).get("value")),
         "cost_of_debt_pct": _num((spread.get("cost_of_debt") or {}).get("rate_pct")),

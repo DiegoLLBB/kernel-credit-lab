@@ -22,7 +22,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.models import CallTerms, CuratedSource, Instrument, Issuer, MaturitySchedule, Watchlist
+from app.models import (
+    CallTerms,
+    CuratedSource,
+    Instrument,
+    Issuer,
+    MaturitySchedule,
+    StateChange,
+    Watchlist,
+)
 
 CURATED_FIELDS = (
     "coupon",
@@ -454,14 +462,30 @@ def load_seed(session: Session, path: Path | str) -> LoadStats:
         instrument.issue_date = _parse_date(
             raw.get("issue_date"), field_name="issue_date", context=key
         )
-        instrument.amount_outstanding = _parse_decimal(
-            raw["amount_outstanding"], field_name="amount_outstanding", context=key
-        )
+        # Do not clobber amount/status when the agent has applied StateChanges —
+        # a seed reload after replay used to wipe tenders/redemptions from the wall.
+        has_applied = False
+        if instrument.id:
+            has_applied = (
+                session.scalars(
+                    select(StateChange.id)
+                    .where(
+                        StateChange.instrument_id == instrument.id,
+                        StateChange.status == "applied",
+                    )
+                    .limit(1)
+                ).first()
+                is not None
+            )
+        if not has_applied:
+            instrument.amount_outstanding = _parse_decimal(
+                raw["amount_outstanding"], field_name="amount_outstanding", context=key
+            )
+            instrument.status = str(raw.get("status") or "active")
         instrument.currency = str(raw.get("currency") or "USD").upper()
         instrument.seniority = raw.get("seniority")
         instrument.security = raw.get("security")
         instrument.cusip = str(cusip) if cusip else None
-        instrument.status = str(raw.get("status") or "active")
 
         session.flush()
 

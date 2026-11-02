@@ -21,7 +21,14 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.insight.brief import generate_daily_brief, replay_last_day
-from app.insight.generate import generate_impact, generate_refinancing, generate_snapshot
+from app.insight.facts import build_snapshot_facts
+from app.insight.generate import (
+    assert_snapshot_matches_metric_tiles,
+    generate_impact,
+    generate_refinancing,
+    generate_snapshot,
+    input_hash,
+)
 from app.metrics.config import load_metric_config, merge_db_configs
 from app.models import Alert, Issuer
 from app.models.credit import CreditInsight
@@ -38,7 +45,21 @@ async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
                 print(f"insight: {key}: no such issuer, skipped")
                 continue
             try:
-                row = await generate_snapshot(session, key, as_of)
+                facts = build_snapshot_facts(session, key, as_of)
+                digest = input_hash("snapshot", "", facts)
+                cached = session.scalar(
+                    select(CreditInsight).where(
+                        CreditInsight.issuer_id == issuer.id,
+                        CreditInsight.as_of == as_of,
+                        CreditInsight.scope == "snapshot",
+                        CreditInsight.ref == "",
+                    )
+                )
+                if cached is None or cached.input_hash != digest:
+                    row = await generate_snapshot(session, key, as_of)
+                else:
+                    row = cached
+                assert_snapshot_matches_metric_tiles(session, key, as_of, facts)
                 print(f"insight: snapshot {key} @ {as_of}: {row.status}")
                 stats["snapshots"] += 1
             except Exception as exc:

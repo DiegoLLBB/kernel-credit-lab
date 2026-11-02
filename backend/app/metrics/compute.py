@@ -575,8 +575,15 @@ def _due_24m_row(
 ) -> tuple[Decimal | None, MetricRow]:
     if mat12 is None or mat2 is None:
         return None, _missing("due_24m", period_end, label, _due_reason(cfg))
+    if mat12.end != mat2.end:
+        return None, _missing(
+            "due_24m", period_end, label, "maturity tags use different period ends"
+        )
     value = mat12.value + mat2.value
     tags, accn, filed = _latest_inputs([mat12, mat2])
+    extra: dict[str, Any] = dict(_wall_detail(value, period_end, wall, tol, 1))
+    if label.startswith("FY"):
+        extra["source_note"] = f"from the {label} 10-K"
     return value, MetricRow(
         "due_24m",
         period_end,
@@ -586,7 +593,7 @@ def _due_24m_row(
         tags,
         accn,
         filed,
-        _wall_detail(value, period_end, wall, tol, 1),
+        extra,
     )
 
 
@@ -613,6 +620,14 @@ def _liquidity_row(
         )
     cushion = cash_val + (stinv_val or Decimal(0))
     tags, accn, filed = _latest_inputs(inputs)
+    detail: dict[str, Any] = {
+        "cash_only": stinv_val is None,
+        "cash": str(cash_val),
+        "st_investments": str(stinv_val) if stinv_val is not None else None,
+        "due_24m": str(due24),
+    }
+    if label.startswith("FY"):
+        detail["source_note"] = f"from the {label} 10-K"
     return MetricRow(
         "liquidity_coverage",
         period_end,
@@ -622,12 +637,7 @@ def _liquidity_row(
         tags,
         accn,
         filed,
-        {
-            "cash_only": stinv_val is None,
-            "cash": str(cash_val),
-            "st_investments": str(stinv_val) if stinv_val is not None else None,
-            "due_24m": str(due24),
-        },
+        detail,
     )
 
 

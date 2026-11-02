@@ -85,8 +85,11 @@ Kernel's answer:
 | 1 | Event monitor + alerts feed (watchers, per-event run, materiality, alerts, daily brief) | Flagship — the product |
 | 2 | Refinancing-pressure engine (maturity wall, rate-reset cost, pro-forma coverage, ranking) | Core — recomputed on every event |
 | 3 | Replay mode (run monitor over real Jan–Oct 2026 events) | Core for demo + eval |
-| 4 | Structural-subordination view (holdco vs. opco, Duke) | Thin — issuer-page panel |
-| 5 | Ad-hoc drill-down questions | Thin — from alert/issuer page |
+| 4 | Structural-subordination view (holdco vs. opco, Duke) | **Not built** (issuer-page panel only in plan) |
+| 5 | Ad-hoc drill-down questions | **Not built** |
+| — | Dedicated bond detail page | **Not built** |
+| — | Bond comparables matrix | **Not built** |
+| — | Par-call window UI | **Not built** (calendar logic only) |
 
 **Non-goals:** global/multi-asset coverage; live executable prices; investment recommendations; trading/portfolio optimization; rating histories or licensed ratings data; auth/billing/multi-tenancy/Kubernetes; live dependence on Wonder or SAM during the judged demo (replay runs are pre-computed and cached); real-time streaming or paid news feeds (watchers poll public sources on a schedule).
 

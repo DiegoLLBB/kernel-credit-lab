@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
 import { AlertStatusChip, MaterialBadge } from "@/components/status-chip";
 import { EmptyLine, ErrorLine, LoadingLine } from "@/components/loading-error";
 import {
@@ -143,6 +144,15 @@ export function AlertsClient() {
                     </span>
                     <MaterialBadge material={a.material} />
                     <AlertStatusChip status={a.status} />
+                    {a.live ? (
+                      <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-sky-200">
+                        live
+                      </span>
+                    ) : null}
+                    <ReplayVerdictBadge
+                      verdict={a.replay_verdict}
+                      reason={a.replay_verdict_reason}
+                    />
                   </div>
                   <p className="mt-1 text-sm text-slate-100">{a.title}</p>
                   {a.impact_sentence ? (

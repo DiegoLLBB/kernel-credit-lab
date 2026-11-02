@@ -291,6 +291,34 @@ def test_verizon_tender_replay_amounts(seeded_session: Session) -> None:
     assert fy2028_before["total_outstanding"] == Decimal("13032000000")  # $13,032M
 
 
+def test_verizon_tender_survives_seed_reset_of_instrument_row(seeded_session: Session) -> None:
+    """Applied StateChange still drives the wall when the instrument row was reset to seed."""
+    verizon = seeded_session.scalars(select(Issuer).where(Issuer.cik == "732712")).one()
+    bond = seeded_session.scalars(select(Instrument).where(Instrument.key == "vz_2100_2028")).one()
+    seeded_session.add(
+        StateChange(
+            instrument_id=bond.id,
+            status="applied",
+            effective_date=date(2026, 6, 22),
+            proposed_diff={
+                "field": "amount_outstanding",
+                "before": "2068135000",
+                "after": "925154000",
+            },
+        )
+    )
+    # Simulate seed reload clobbering the live amount back to par.
+    bond.amount_outstanding = Decimal("2068135000")
+    seeded_session.commit()
+
+    amt_before, _ = instrument_state_at(seeded_session, bond, date(2026, 6, 1))
+    amt_after, _ = instrument_state_at(seeded_session, bond, date(2026, 6, 30))
+    assert amt_before == Decimal("2068135000")
+    assert amt_after == Decimal("925154000")
+    wall_after = maturity_wall(seeded_session, verizon.id, date(2026, 10, 31))
+    assert wall_after["buckets"]["FY2028"]["total_outstanding"] == Decimal("11889019000")
+
+
 def test_new_issuance_gated_by_as_of(seeded_session: Session) -> None:
     duke = seeded_session.scalars(select(Issuer).where(Issuer.cik == "1326160")).one()
     seeded_session.add(

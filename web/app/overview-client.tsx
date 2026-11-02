@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ChangeArrow, FlagDot, formatTileValue } from "@/components/credit";
+import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
 import { EmptyLine, ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
 import {
   getJson,
@@ -274,6 +275,10 @@ export function OverviewClient() {
                               live
                             </span>
                           ) : null}
+                          <ReplayVerdictBadge
+                            verdict={item.replay_verdict}
+                            reason={item.replay_verdict_reason}
+                          />
                         </div>
                         <p className="mt-1 text-sm text-slate-200">
                           {item.impact_sentence ?? item.title}

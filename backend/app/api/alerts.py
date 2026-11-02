@@ -31,6 +31,7 @@ from app.api.schemas import (
     WallBucketDelta,
 )
 from app.db import get_session
+from app.eval.replay_verdict import replay_verdict_for_alert
 from app.models import Alert, Event, Fact, Filing, Issuer, StateChange
 from app.models.credit import CreditInsight
 from app.models.trace import AgentRun
@@ -82,6 +83,7 @@ def _list_item(session: Session, alert: Alert) -> AlertListItem:
         raise HTTPException(status_code=500, detail="alert issuer missing")
     event = session.get(Event, alert.event_id) if alert.event_id else None
     sentence, _, impact_status = impact_for_alert(session, alert)
+    verdict, verdict_reason = replay_verdict_for_alert(session, alert)
     return AlertListItem(
         id=alert.id,
         issuer=_issuer_ref(issuer),
@@ -96,6 +98,9 @@ def _list_item(session: Session, alert: Alert) -> AlertListItem:
         created_at=alert.created_at,
         impact_sentence=sentence,
         impact_status=impact_status,
+        live=bool(event is not None and event.source == "live"),
+        replay_verdict=verdict,
+        replay_verdict_reason=verdict_reason,
     )
 
 
@@ -249,6 +254,7 @@ def get_alert(
     wall_after = after_issuer if isinstance(after_issuer, dict) else after
     deltas = [WallBucketDelta(**d) for d in bucket_deltas(wall_before, wall_after)]
     sentence, _, impact_status = impact_for_alert(session, alert)
+    verdict, verdict_reason = replay_verdict_for_alert(session, alert)
     from app.config import get_settings
 
     return AlertDetailOut(
@@ -275,6 +281,8 @@ def get_alert(
         created_at=alert.created_at,
         review_writes_enabled=get_settings().review_writes_enabled,
         live=bool(event is not None and event.source == "live"),
+        replay_verdict=verdict,
+        replay_verdict_reason=verdict_reason,
     )
 
 

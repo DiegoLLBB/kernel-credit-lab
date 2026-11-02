@@ -32,6 +32,9 @@ _SCALE_WORDS = {
     "m": Decimal(1_000_000),
 }
 
+_ISO_DATE_RE = re.compile(r"\b(19|20)\d{2}-\d{2}-\d{2}\b")
+_BARE_LONG_DIGITS_RE = re.compile(r"(?<![$×x])\b\d{5,}\b(?![%])")
+
 _TOKEN_RE = re.compile(
     r"(?<![A-Za-z])(?P<sym>\$)?\s*"
     r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
@@ -60,9 +63,21 @@ def _token_value(num: str, unit: str | None) -> tuple[Decimal, Decimal]:
     return base * scale, (Decimal(1).scaleb(-decimals) / 2 or Decimal("0.5")) * scale
 
 
+def find_style_violations(text: str) -> list[str]:
+    """Reject raw ISO dates and bare long digit runs without $ or ×."""
+    violations: list[str] = []
+    normalized = text.replace("\u00a0", " ")
+    for match in _ISO_DATE_RE.finditer(normalized):
+        violations.append(match.group(0))
+    for match in _BARE_LONG_DIGITS_RE.finditer(normalized):
+        violations.append(match.group(0))
+    return violations
+
+
 def find_violations(text: str, registry: list[Decimal]) -> list[str]:
     """Tokens in ``text`` with no match in ``registry`` (empty = all grounded)."""
     violations: list[str] = []
+    violations.extend(find_style_violations(text))
     for match in _TOKEN_RE.finditer(text.replace(" ", " ")):
         token = match.group(0).strip()
         if not token:

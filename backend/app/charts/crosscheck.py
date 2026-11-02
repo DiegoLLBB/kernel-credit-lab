@@ -172,6 +172,69 @@ def _unit_matches(chart_unit: str | None, unit_any: list[str]) -> bool:
     return False
 
 
+_SEGMENT_TITLE_KEYWORDS = (
+    "segment",
+    "business unit",
+    "geographic",
+    "region",
+    "by region",
+    "by business",
+)
+_SEGMENT_CATEGORY_HINTS = (
+    "aws",
+    "north america",
+    "international",
+    "europe",
+    "asia",
+    "cloud",
+    "commercial",
+    "consumer",
+)
+
+
+def _is_segment_chart(chart: ChartReading) -> bool:
+    title = _norm(chart.title)
+    if any(k in title for k in _SEGMENT_TITLE_KEYWORDS):
+        return True
+    for cat in chart.categories or []:
+        c = _norm(str(cat))
+        if any(h in c for h in _SEGMENT_CATEGORY_HINTS):
+            return True
+    return False
+
+
+def _chart_wants_ttm(title: str | None, category: Any) -> bool:
+    blob = f"{title or ''} {category or ''}".lower()
+    return "ttm" in blob or "ltm" in blob or "trailing twelve" in blob
+
+
+def _ttm_sum_from_companyfacts(
+    facts: dict[str, Any],
+    tags: list[str],
+    *,
+    end_year: int,
+    end_quarter: int,
+) -> Decimal | None:
+    """Sum four quarterly flow values ending at end_year/end_quarter."""
+    quarter_ends: list[tuple[int, int]] = []
+    y, q = end_year, end_quarter
+    for _ in range(4):
+        quarter_ends.append((y, q))
+        q -= 1
+        if q < 1:
+            q = 4
+            y -= 1
+    total = Decimal(0)
+    found = 0
+    for y, q in quarter_ends:
+        period = {"kind": "quarter", "year": y, "quarter": q, "fp": f"Q{q}"}
+        picked = _pick_xbrl_point(facts, tags, period, instant=False)
+        if picked and picked.get("val") is not None and not picked.get("ambiguous"):
+            total += Decimal(str(picked["val"]))
+            found += 1
+    return total if found == 4 else None
+
+
 def match_metric_family(title: str | None, unit: str | None) -> dict[str, Any] | None:
     """Return the configured family for this chart title+unit, or None."""
     t = _norm(title)
@@ -431,6 +494,25 @@ def crosscheck_chart(
     companyfacts: dict[str, Any] | None = None,
 ) -> ChartCrosscheck:
     """Cross-check one verified chart against filings / credit metrics."""
+    if _is_segment_chart(chart):
+        return ChartCrosscheck(
+            chart_id=chart.id,
+            title=chart.title,
+            unit=chart.unit,
+            metric_id=None,
+            metric_label=None,
+            summary_status="not_comparable",
+            values=[
+                ValueCrosscheck(
+                    category="*",
+                    chart_value=None,
+                    chart_unit=chart.unit,
+                    status="not_comparable",
+                    reason="segment",
+                )
+            ],
+        )
+
     fam = match_metric_family(chart.title, chart.unit)
     if fam is None:
         return ChartCrosscheck(
@@ -522,14 +604,27 @@ def crosscheck_chart(
                 period_end = row.period_end.isoformat() if row.period_end else None
                 filing_url = accession_url(issuer.cik, accession)
 
-        # 2) Companyfacts fallback
+        # 2) Companyfacts fallback (TTM/LTM charts → sum four quarters)
         if xbrl_val is None and companyfacts is not None:
-            picked = _pick_xbrl_point(
-                companyfacts,
-                list(fam.get("xbrl_tags") or []),
-                period,
-                instant=bool(fam.get("instant")),
-                per_share=bool(fam.get("per_share")),
+            if _chart_wants_ttm(chart.title, cat) and period.get("kind") == "quarter":
+                ttm = _ttm_sum_from_companyfacts(
+                    companyfacts,
+                    list(fam.get("xbrl_tags") or []),
+                    end_year=int(period["year"]),
+                    end_quarter=int(period["quarter"]),
+                )
+                if ttm is not None:
+                    xbrl_val = ttm
+            picked = (
+                None
+                if xbrl_val is not None
+                else _pick_xbrl_point(
+                    companyfacts,
+                    list(fam.get("xbrl_tags") or []),
+                    period,
+                    instant=bool(fam.get("instant")),
+                    per_share=bool(fam.get("per_share")),
+                )
             )
             if picked and picked.get("ambiguous"):
                 results.append(

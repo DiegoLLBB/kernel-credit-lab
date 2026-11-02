@@ -34,6 +34,9 @@ export type AlertListItem = {
   created_at: string | null;
   impact_sentence: string | null;
   impact_status: string | null;
+  live?: boolean;
+  replay_verdict?: string | null;
+  replay_verdict_reason?: string | null;
 };
 
 export type AlertListOut = {
@@ -136,6 +139,8 @@ export type AlertDetailOut = {
   created_at: string | null;
   review_writes_enabled?: boolean;
   live?: boolean;
+  replay_verdict?: string | null;
+  replay_verdict_reason?: string | null;
 };
 
 export type AlertReviewIn = {
@@ -196,6 +201,8 @@ export type InstrumentOut = {
   maturity_precision: string;
   /** Absolute USD (or native) dollars as string */
   amount_outstanding: string;
+  /** Par / seed amount when a StateChange reduced outstanding */
+  original_amount: string | null;
   currency: string;
   status: string;
   issuer_id: string;
@@ -290,6 +297,7 @@ export type RefinancingPanel = {
   shock_bps_min: number;
   shock_bps_max: number;
   derivation_line: string | null;
+  base_scenario_line: string | null;
   spread_pct: string | null;
   spread_bps: number | null;
   treasury_pct: string | null;
@@ -446,6 +454,7 @@ export type MetricTile = {
   wall_disagrees: boolean;
   /** Decimal arrives as string */
   wall_value: string | null;
+  source_note: string | null;
   sparkline: SparkPoint[];
 };
 
@@ -477,6 +486,9 @@ export type FeedItem = {
   impact_pending: boolean;
   before_after: BeforeAfter | null;
   live?: boolean;
+  replay_verdict?: string | null;
+  replay_verdict_reason?: string | null;
+  created_at?: string | null;
 };
 
 export type EvalDetailEvent = {
@@ -567,6 +579,7 @@ export type LiveDocument = {
   outcome: string;
   reason: string | null;
   cost_usd: number | null;
+  document_url: string | null;
 };
 
 export type LiveSection = {

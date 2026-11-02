@@ -221,6 +221,26 @@ def test_disagree_is_surfaced(db_session: Session) -> None:
     )
 
 
+def test_segment_chart_not_comparable(db_session: Session) -> None:
+    iss, filing = _seed_issuer(db_session, key="amzn-seg", cik="0001018724", name="Amazon")
+    chart = ChartReading(
+        issuer_id=iss.id,
+        filing_id=filing.id,
+        page=1,
+        title="Net sales by segment",
+        unit="$B",
+        categories=["AWS", "North America"],
+        values=[90.0, 40.0],
+        verified=True,
+        bbox={},
+    )
+    db_session.add(chart)
+    db_session.flush()
+    result = crosscheck_chart(db_session, chart, issuer=iss, companyfacts=None)
+    assert result.summary_status == "not_comparable"
+    assert result.values[0].reason == "segment"
+
+
 def test_period_unclear_not_comparable(db_session: Session) -> None:
     iss, filing = _seed_issuer(db_session, key="amzn2", cik="0001018724", name="Amazon")
     chart = ChartReading(

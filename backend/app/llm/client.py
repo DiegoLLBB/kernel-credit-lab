@@ -146,10 +146,15 @@ class LLMClient:
         )
         self._recorder = recorder or _log_recorder
         self._sleep = sleep
-        self._pricing: dict[str, tuple[float, float]] = {
-            k: (float(v[0]), float(v[1]))
-            for k, v in json.loads(self.settings.model_pricing_json or "{}").items()
-        }
+        self._pricing: dict[str, tuple[float, float]] = {}
+        for k, v in json.loads(self.settings.model_pricing_json or "{}").items():
+            if not isinstance(v, (list, tuple)) or len(v) < 2:
+                continue
+            inp, out = float(v[0]), float(v[1])
+            # Treat [0, 0] as unknown (Baseten bills separately); omit from map.
+            if inp == 0.0 and out == 0.0:
+                continue
+            self._pricing[k] = (inp, out)
         self._pricing_warned = False
         # Sticky tool_choice after first accepted /responses call ("required" or "auto").
         self._responses_tool_choice: Any | None = None

@@ -70,36 +70,78 @@ def _subsidiary_ids(session: Session, issuer_id: str) -> set[str]:
 def instrument_state_at(session: Session, instrument: Instrument, d: date) -> tuple[Decimal, str]:
     """Amount and status of ``instrument`` as of date ``d``.
 
-    Starts from the current row and undoes every applied ``StateChange`` for that
-    instrument with ``effective_date > d``, latest first. Applied diffs use
+    Reconstructs from applied ``StateChange`` rows so a later seed reload that
+    resets the instrument row cannot erase tender/redemption history. Steps:
+    start from the current row → undo every applied change (newest first) to
+    recover the pre-replay baseline → re-apply changes with
+    ``effective_date <= d`` (oldest first). Diffs use
     ``{"field": "amount_outstanding"|"status", "before": ..., "after": ...}``.
     """
     amount = Decimal(instrument.amount_outstanding)
     status = str(instrument.status)
 
-    changes = session.scalars(
-        select(StateChange)
-        .where(
-            StateChange.instrument_id == instrument.id,
-            StateChange.status == "applied",
-            StateChange.effective_date.is_not(None),
-            StateChange.effective_date > d,
-        )
-        .order_by(StateChange.effective_date.desc(), StateChange.created_at.desc())
-    ).all()
+    changes = list(
+        session.scalars(
+            select(StateChange)
+            .where(
+                StateChange.instrument_id == instrument.id,
+                StateChange.status == "applied",
+                StateChange.effective_date.is_not(None),
+            )
+            .order_by(StateChange.effective_date.desc(), StateChange.created_at.desc())
+        ).all()
+    )
 
     for change in changes:
         diff = change.proposed_diff or {}
         field = diff.get("field")
-        if field not in {"amount_outstanding", "status"}:
-            continue
-        if "before" not in diff:
+        if field not in {"amount_outstanding", "status"} or "before" not in diff:
             continue
         if field == "amount_outstanding":
             amount = Decimal(str(diff["before"]))
         else:
             status = str(diff["before"])
 
+    for change in sorted(
+        changes,
+        key=lambda c: (c.effective_date or date.min, str(c.created_at or ""), c.id or ""),
+    ):
+        if change.effective_date is None or change.effective_date > d:
+            continue
+        diff = change.proposed_diff or {}
+        field = diff.get("field")
+        if field not in {"amount_outstanding", "status"} or "after" not in diff:
+            continue
+        if field == "amount_outstanding":
+            amount = Decimal(str(diff["after"]))
+        else:
+            status = str(diff["after"])
+
+    return amount, status
+
+
+def instrument_baseline(session: Session, instrument: Instrument) -> tuple[Decimal, str]:
+    """Pre-replay amount/status (current row with all applied changes undone)."""
+    amount = Decimal(instrument.amount_outstanding)
+    status = str(instrument.status)
+    changes = session.scalars(
+        select(StateChange)
+        .where(
+            StateChange.instrument_id == instrument.id,
+            StateChange.status == "applied",
+            StateChange.effective_date.is_not(None),
+        )
+        .order_by(StateChange.effective_date.desc(), StateChange.created_at.desc())
+    ).all()
+    for change in changes:
+        diff = change.proposed_diff or {}
+        field = diff.get("field")
+        if field not in {"amount_outstanding", "status"} or "before" not in diff:
+            continue
+        if field == "amount_outstanding":
+            amount = Decimal(str(diff["before"]))
+        else:
+            status = str(diff["before"])
     return amount, status
 
 

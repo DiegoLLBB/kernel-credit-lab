@@ -33,6 +33,8 @@ FOOTNOTE = (
     "not a forecast or investment advice."
 )
 
+BASE_SCENARIO_LINE = "At today's Treasury plus spread, before any rate shock."
+
 PRESSURE_WEIGHTS: dict[str, Decimal] = {
     "rate_reset_cost": Decimal("0.45"),
     "maturity_concentration_24m": Decimal("0.35"),
@@ -730,4 +732,5 @@ def refinancing_panel(
         "pressure_score": rank_row["score"] if rank_row else None,
         "weights": ranking.get("weights") or {},
         "footnote": FOOTNOTE,
+        "base_scenario_line": BASE_SCENARIO_LINE if shock_bps == 0 else None,
     }

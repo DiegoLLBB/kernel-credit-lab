@@ -28,7 +28,7 @@ from app.insight.generate import (
     generate_snapshot,
     input_hash,
 )
-from app.insight.numbers import collect_numbers, find_violations
+from app.insight.numbers import collect_numbers, find_style_violations, find_violations
 from app.llm.client import LLMError
 from app.models import Alert, Event, Filing, Issuer
 
@@ -152,6 +152,12 @@ def test_exact_and_rounded_numbers_pass():
 def test_hallucinated_number_fails():
     registry = [Decimal(160962000000)]
     assert find_violations("Debt stands at $170 billion.", registry) != []
+
+
+def test_iso_date_and_bare_digits_rejected():
+    assert find_style_violations("As of 2026-09-30 debt rose.") == ["2026-09-30"]
+    assert find_style_violations("Outstanding 160962000000 dollars.") == ["160962000000"]
+    assert find_style_violations("Debt is $925M at 4.6×.") == []
 
 
 def test_years_forms_and_quarters_skipped():
@@ -426,6 +432,8 @@ def test_alert_facts_skips_text_changes(session):
             "field": "amount_outstanding",
             "before": 1000.0,
             "after": 2000.0,
+            "before_display": "$1,000",
+            "after_display": "$2,000",
         }
     ]
 

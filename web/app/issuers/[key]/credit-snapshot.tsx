@@ -137,8 +137,10 @@ export function CreditSnapshot({
                 <p className="font-mono text-[11px] text-slate-500">
                   {formatDate(item.event_date)}
                 </p>
-                <p className="text-slate-200">{item.title}</p>
-                {item.effect ? <p className="text-slate-400">{item.effect}</p> : null}
+                <p className="text-slate-200">{item.effect ?? item.title}</p>
+                {item.effect && item.title && item.effect !== item.title ? (
+                  <p className="text-xs text-slate-500">{item.title}</p>
+                ) : null}
                 {item.alert_id ? (
                   <p className="mt-1 text-xs">
                     <Link

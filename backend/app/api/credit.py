@@ -7,7 +7,7 @@ with its reason, never filled in.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
@@ -41,6 +41,7 @@ from app.api.schemas import (
 from app.charts.crosscheck import crosscheck_verified_charts, summarize_crosschecks
 from app.charts.facts_cache import load_companyfacts
 from app.db import get_session
+from app.eval.replay_verdict import replay_verdict_for_alert
 from app.eval.rescore import build_comparison
 from app.eval.summary import build_eval_summary
 from app.ingest.live import live_stats
@@ -48,7 +49,8 @@ from app.insight.brief import latest_brief
 from app.metrics.compute import METRIC_IDS
 from app.metrics.config import load_metric_config
 from app.metrics.periods import prior_same_period
-from app.models import Alert, CreditMetric, Event, Filing, Issuer
+from app.models import Alert, CreditMetric, Event, Filing, Issuer, LiveConfig
+from app.models.trace import AgentRun
 
 router = APIRouter(prefix="/api/credit", tags=["credit"])
 DbSession = Annotated[Session, Depends(get_session)]
@@ -182,7 +184,6 @@ def metric_tiles(
                         missing_reason = reason
                         break
                 missing_reason = missing_reason or "no data yet"
-        detail = dict(series[-1].detail or {}) if series else {}
         if not series:
             tiles.append(
                 MetricTileOut(
@@ -194,7 +195,8 @@ def metric_tiles(
                 )
             )
             continue
-        latest = series[-1]
+        latest = next((r for r in reversed(series) if r.value is not None), series[-1])
+        detail = dict(latest.detail or {})
         prior = prior_same_period(series, latest)
         prior_val = prior.value if prior else None
         # Liquidity never includes undrawn credit lines (rarely tagged) and has
@@ -222,6 +224,7 @@ def metric_tiles(
                 cash_only=detail.get("cash_only"),
                 wall_disagrees=detail.get("wall_agrees") is False,
                 wall_value=Decimal(str(detail["wall_due"])) if detail.get("wall_due") else None,
+                source_note=detail.get("source_note"),
                 sparkline=[
                     SparkPoint(period_end=r.period_end, label=r.fiscal_label, value=r.value)
                     for r in series
@@ -377,6 +380,7 @@ def _feed_item(session: Session, alert: Alert, *, live: bool) -> FeedItemOut | N
         return None
     event = session.get(Event, alert.event_id) if alert.event_id else None
     sentence, pending, _ = impact_for_alert(session, alert)
+    verdict, verdict_reason = replay_verdict_for_alert(session, alert)
     return FeedItemOut(
         alert_id=alert.id,
         issuer=_issuer_ref(issuer),
@@ -386,6 +390,9 @@ def _feed_item(session: Session, alert: Alert, *, live: bool) -> FeedItemOut | N
         impact_pending=pending,
         before_after=_feed_before_after(session, alert),
         live=live,
+        replay_verdict=verdict,
+        replay_verdict_reason=verdict_reason,
+        created_at=alert.created_at,
     )
 
 
@@ -411,38 +418,50 @@ def credit_overview(
         )
         or 0
     )
-    last_check = session.scalar(
+    replay_last = session.scalar(
         select(func.max(Event.event_date)).where(
             Event.status == "processed", Event.source != "live"
         )
     )
+    live_cfg = session.scalars(select(LiveConfig).limit(1)).first()
+    live_detected = session.scalar(
+        select(func.max(Event.detected_at)).where(Event.source == "live")
+    )
+    live_run = session.scalar(
+        select(func.max(AgentRun.completed_at))
+        .join(Event, Event.run_id == AgentRun.id)
+        .where(Event.source == "live")
+    )
+    candidates: list[datetime] = []
+    if live_cfg is not None:
+        candidates.append(live_cfg.go_live_at)
+    if live_detected is not None:
+        candidates.append(live_detected)
+    if live_run is not None:
+        candidates.append(live_run)
+    last_check = max(candidates).date() if candidates else replay_last
     header = OverviewHeaderOut(
         companies=len(roots),
         filings_read=int(filings_read),
         material_changes=int(material_changes),
         last_check=last_check,
     )
-    feed: list[FeedItemOut] = []
+    feed_items: list[FeedItemOut] = []
     for alert in session.scalars(select(Alert).order_by(Alert.created_at.desc())).all():
         event = session.get(Event, alert.event_id) if alert.event_id else None
-        if event is not None and event.source == "live":
-            continue
-        item = _feed_item(session, alert, live=False)
+        live = event is not None and event.source == "live"
+        item = _feed_item(session, alert, live=live)
         if item is not None:
-            feed.append(item)
-        if len(feed) >= limit:
-            break
-
-    live_feed: list[FeedItemOut] = []
-    for alert in session.scalars(select(Alert).order_by(Alert.created_at.desc())).all():
-        event = session.get(Event, alert.event_id) if alert.event_id else None
-        if event is None or event.source != "live":
-            continue
-        item = _feed_item(session, alert, live=True)
-        if item is not None:
-            live_feed.append(item)
-        if len(live_feed) >= limit:
-            break
+            feed_items.append(item)
+    feed_items.sort(
+        key=lambda i: (
+            i.event_date or date.min,
+            i.created_at or datetime.min,
+        ),
+        reverse=True,
+    )
+    feed = feed_items[:limit]
+    live_feed = [i for i in feed_items if i.live][:limit]
     stats = live_stats(session)
     live_section = None
     if stats.get("go_live_at"):

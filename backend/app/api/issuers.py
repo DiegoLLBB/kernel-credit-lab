@@ -38,7 +38,7 @@ from app.models import Alert, Event, Instrument, Issuer
 from app.models.credit import CreditInsight
 from app.models.trace import AgentRun
 from app.onboard import OnboardError, onboard_ticker
-from app.tools.maturity import instrument_state_at, maturity_wall
+from app.tools.maturity import instrument_baseline, instrument_state_at, maturity_wall
 from app.tools.refinancing import (
     DEFAULT_TENOR_YEARS,
     FOOTNOTE,
@@ -185,6 +185,7 @@ def get_issuer(
         select(Instrument).where(Instrument.issuer_id == issuer.id).order_by(Instrument.maturity)
     ).all():
         amount, status = instrument_state_at(session, inst, point)
+        original, _ = instrument_baseline(session, inst)
         # Skip instruments not yet issued as of point-in-time.
         if inst.issue_date and inst.issue_date > point:
             continue
@@ -199,6 +200,7 @@ def get_issuer(
                 maturity=inst.maturity,
                 maturity_precision=inst.maturity_precision,
                 amount_outstanding=Decimal(amount),
+                original_amount=Decimal(original),
                 currency=inst.currency,
                 status=status,
                 issuer_id=inst.issuer_id,
@@ -230,20 +232,38 @@ def get_issuer(
                 else:
                     run_status = run.status
         alert_ids: list[str] = []
+        story: str | None = None
         for a in session.scalars(select(Alert).where(Alert.event_id == ev.id)).all():
             if include_superseded or not a.run_id:
                 alert_ids.append(a.id)
+                if story is None and a.title:
+                    story = a.title
                 continue
             r = session.get(AgentRun, a.run_id)
             if r is None or (r.status or "") not in HIDDEN_RUN_STATUSES:
                 alert_ids.append(a.id)
+                if story is None and a.title:
+                    story = a.title
+        if story is None and run_id:
+            run = session.get(AgentRun, run_id)
+            if run is not None:
+                result = run.result if isinstance(run.result, dict) else {}
+                story = (
+                    (result.get("summary") if isinstance(result, dict) else None)
+                    or (result.get("log_summary") if isinstance(result, dict) else None)
+                    or run.question
+                )
+                if isinstance(story, str):
+                    story = story.strip() or None
+        # Prefer the credit story over boilerplate "press release, 11 May 2026".
+        summary_out = story or ev.summary
         timeline.append(
             IssuerEventOut(
                 id=ev.id,
                 replay_key=ev.replay_key,
                 event_type=ev.event_type,
                 event_date=ev.event_date,
-                summary=ev.summary,
+                summary=summary_out,
                 status=ev.status,
                 run_id=run_id,
                 run_status=run_status,
@@ -343,6 +363,7 @@ def get_refinancing(
         shock_bps_min=int(panel["shock_bps_min"]),
         shock_bps_max=int(panel["shock_bps_max"]),
         derivation_line=base.get("derivation_line") or spread.get("derivation_line"),
+        base_scenario_line=panel.get("base_scenario_line"),
         spread_pct=_opt(spread.get("spread_pct")),
         spread_bps=spread.get("spread_bps"),
         treasury_pct=_opt(bench.get("value")),
@@ -382,13 +403,11 @@ def get_snapshot(
     point = as_of or date.today()
 
     insight_row = session.scalars(
-        select(CreditInsight)
-        .where(
+        select(CreditInsight).where(
             CreditInsight.issuer_id == issuer.id,
             CreditInsight.scope == "snapshot",
-            CreditInsight.as_of <= point,
+            CreditInsight.as_of == point,
         )
-        .order_by(CreditInsight.as_of.desc())
     ).first()
     insight = None
     if insight_row is not None:
@@ -476,11 +495,16 @@ def get_snapshot(
             if sentence:
                 effect, alert_id = sentence, alert.id
                 break
+        headline = ev.summary or ev.event_type
+        story = effect
+        if ev_alerts:
+            headline = ev_alerts[0].title or headline
+            story = story or ev_alerts[0].summary
         timeline.append(
             TimelineItemOut(
                 event_date=ev.event_date,
-                title=ev.summary or ev.event_type,
-                effect=effect or (ev_alerts[0].summary if ev_alerts else None),
+                title=headline,
+                effect=story,
                 alert_id=alert_id or (ev_alerts[0].id if ev_alerts else None),
             )
         )

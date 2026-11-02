@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
+import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
 import {
   AlertStatusChip,
   ClaimsStatusChip,
@@ -165,6 +166,10 @@ export function AlertDetailClient() {
               ) : null}
               <MaterialBadge material={alert.material} />
               <AlertStatusChip status={displayStatus} />
+              <ReplayVerdictBadge
+                verdict={alert.replay_verdict}
+                reason={alert.replay_verdict_reason}
+              />
             </div>
             <h2 className="mt-3 text-2xl font-semibold leading-snug text-white">{alert.title}</h2>
             {alert.summary ? (

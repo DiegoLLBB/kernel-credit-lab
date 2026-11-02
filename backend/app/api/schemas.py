@@ -35,6 +35,9 @@ class AlertListItem(BaseModel):
     created_at: datetime | None = None
     impact_sentence: str | None = None
     impact_status: str | None = None
+    live: bool = False
+    replay_verdict: str | None = None
+    replay_verdict_reason: str | None = None
 
 
 class AlertListOut(BaseModel):
@@ -110,6 +113,8 @@ class AlertDetailOut(BaseModel):
     created_at: datetime | None = None
     review_writes_enabled: bool = True
     live: bool = False
+    replay_verdict: str | None = None
+    replay_verdict_reason: str | None = None
 
 
 class AlertReviewIn(BaseModel):
@@ -168,6 +173,7 @@ class InstrumentOut(BaseModel):
     maturity: date
     maturity_precision: str
     amount_outstanding: Decimal
+    original_amount: Decimal | None = None
     currency: str
     status: str
     issuer_id: str
@@ -272,6 +278,7 @@ class RefinancingPanelOut(BaseModel):
     shock_bps_min: int = 0
     shock_bps_max: int = 300
     derivation_line: str | None = None
+    base_scenario_line: str | None = None
     spread_pct: Decimal | None = None
     spread_bps: int | None = None
     treasury_pct: Decimal | None = None
@@ -428,6 +435,7 @@ class MetricTileOut(BaseModel):
     cash_only: bool | None = None
     wall_disagrees: bool = False
     wall_value: Decimal | None = None
+    source_note: str | None = None
     sparkline: list[SparkPoint] = Field(default_factory=list)
 
 
@@ -511,6 +519,9 @@ class FeedItemOut(BaseModel):
     impact_pending: bool = False
     before_after: BeforeAfterOut | None = None
     live: bool = False
+    replay_verdict: str | None = None
+    replay_verdict_reason: str | None = None
+    created_at: datetime | None = None
 
 
 class WatchlistRowOut(BaseModel):
@@ -589,6 +600,7 @@ class LiveDocumentOut(BaseModel):
     outcome: str
     reason: str | None = None
     cost_usd: float | None = None
+    document_url: str | None = None
 
 
 class LiveSectionOut(BaseModel):

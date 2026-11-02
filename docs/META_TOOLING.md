@@ -38,9 +38,22 @@ is not listed here and is not attributed to Meta's models.
 
 | Model | Role | Status |
 |---|---|---|
-| Muse Spark (`muse-spark-1.3`) | The per-event agent: reads documents, records quote-checked facts, proposes data changes, drafts alerts; reads charts from images | Client and strict structured output working (27 Oct) |
-| Muse Wonder (`muse-wonder-1.0`) | Daily brief across alerts | Client working (27 Oct) |
-| SAM 3.1 (`sam-3.1`) | Locates charts and bars in issuer presentations; bar geometry verifies Spark's chart readings | Verified chart reader working (27 Oct) |
-| Muse Spark Open (`meta-models/muse-spark-open-1026`, Baseten) | Event classification; independent claims and coverage checks on the agent's work | Pending Baseten credits |
+| Muse Spark (`muse-spark-1.3`) | Per-event agent; chart reading from images | Production agent (frozen post go-live) |
+| Muse Wonder (`muse-wonder-1.0`) | Credit snapshot, impact sentences, daily brief | Insight job + overview |
+| SAM 3.1 (`sam-3.1`) | Chart segmentation; bar geometry; deck cross-check | Deck pipeline + chart crosscheck |
+| Muse Spark Open (`meta-models/muse-spark-open-1026`, Baseten) | Claims check, insight verifier, coverage judge | Baseten-hosted |
 
 See [CONTEXT.md](CONTEXT.md), Part B, for the full model plan.
+
+## Post-hackathon product rows (since 30 Oct)
+
+| Date | Task | Notes / review catches |
+|---|---|---|
+| 30 Oct–Nov | Dashboard read API, Firebase deploy, Cloud Run jobs (seed, replay, insight, live) | Public demo; review writes disabled in prod |
+| Nov | Analyst layer: metric tiles, credit overview, issuer snapshot, checked insight text | Numbers from DB only; stale snapshot rows refused when `as_of` mismatches |
+| Nov | Live ingestion + overview live section | Never mixed into replay score; `last_check` uses live job timestamps |
+| Nov | Refinancing panel (+0 bp base scenario line) | Display-only; EBITDA ÷ interest from stored metrics |
+| Nov | Daily brief (Wonder + Spark Open verifier) | Hash-cached |
+| Nov | Replay rescore / comparison table | Number-accuracy + wall checks; **replay denominator paused** for some groups |
+| Nov | SAM chart crosscheck vs XBRL | TTM/LTM sums; segment charts marked not comparable |
+| Nov | P0 live-site audit | Replay verdict badges; combined feed; `instrument_state_at` after seed clobber (Verizon tender); maturity wall in insight facts; **refinancing in agent tools reverted after agent freeze**; scorer first-candidate binding noted; stale snapshots fixed; Verizon records reconciliation |

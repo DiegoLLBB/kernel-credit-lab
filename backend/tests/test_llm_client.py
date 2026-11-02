@@ -277,6 +277,19 @@ async def test_responses_falls_back_to_auto_tool_choice():
         assert result2.tool_choice == "auto"
 
 
+async def test_zero_pricing_treated_as_unknown_cost():
+    h = Harness([httpx.Response(200, json=completion("ok"))])
+    async with h.client(
+        model_pricing_json=json.dumps({"spark": [1.0, 4.0], "free-looking": [0.0, 0.0]})
+    ) as client:
+        await client.chat(
+            provider=Provider.META,
+            model="free-looking",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    assert h.records[0].cost_usd is None
+
+
 async def test_responses_honours_retry_after():
     h = Harness(
         [
