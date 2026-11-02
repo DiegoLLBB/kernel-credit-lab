@@ -29,10 +29,10 @@ def upgrade() -> None:
         sa.Column("git_sha", sa.String(length=40), nullable=True),
         sa.Column("prompt_version", sa.String(length=64), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
-        ),
-        sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
         ),
     )
     op.add_column(
