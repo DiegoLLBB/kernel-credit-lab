@@ -135,7 +135,7 @@ jobs:
           # writes live_config (go-live freeze) and backfills since 2026-10-27.
           gcloud run jobs deploy kernel-live --region="$REGION" --image="$REGISTRY/api:$SHA" \
             --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
-            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
+            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS@GIT_SHA=$SHA" \
             --cpu=1 --memory=1Gi --task-timeout=7200 --max-retries=0 \
             --command=python --args="-m,scripts.live_job,--max-cost-usd,5"
 

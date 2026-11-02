@@ -124,7 +124,8 @@ def seed_snapshot_numbers(session: Session, issuer: Issuer) -> None:
     row("total_debt", Decimal(160962000000), date(2026, 9, 30), "Q3 2026", date(2026, 10, 29))
     row("due_24m", Decimal(26836000000), date(2026, 9, 30), "Q3 2026", date(2026, 10, 29))
     row("leverage", Decimal("3.3127"), date(2026, 9, 30), "Q3 2026", date(2026, 10, 29), unit="x")
-    row("leverage", Decimal("3.5"), date(2024, 12, 31), "FY2024", date(2026, 2, 17), unit="x")
+    # Same point one year earlier (not a fiscal year two years back).
+    row("leverage", Decimal("3.5"), date(2025, 9, 30), "Q3 2025", date(2025, 10, 29), unit="x")
     session.add(
         MaturitySchedule(
             issuer_id=issuer.id,

@@ -51,8 +51,13 @@ class LiveDocument:
 
 
 def _git_sha() -> str | None:
+    import os
     import subprocess
 
+    for key in ("GIT_SHA", "COMMIT_SHA", "GITHUB_SHA"):
+        env = (os.environ.get(key) or "").strip()
+        if env:
+            return env[:40]
     try:
         proc = subprocess.run(
             ["git", "rev-parse", "HEAD"],

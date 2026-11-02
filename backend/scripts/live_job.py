@@ -66,8 +66,8 @@ async def _insights_for_event(session, event: Event) -> None:
 
 async def _run(*, since: date, until: date, max_cost_usd: float) -> int:
     settings = get_settings()
-    edgar = EdgarClient(user_agent=settings.sec_user_agent)
-    newsroom = NewsroomClient(user_agent=settings.sec_user_agent)
+    edgar = EdgarClient(settings=settings)
+    newsroom = NewsroomClient(settings=settings)
     llm = LLMClient(settings)
     processed = 0
     errors = 0
