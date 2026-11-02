@@ -450,7 +450,7 @@ def test_template_impact_uses_wall_deltas_only():
     assert "FY2028" in sentence
     assert "13,032 million" in sentence
     assert "11,782 million" in sentence
-    from app.insight.numbers import find_violations, collect_numbers
+    from app.insight.numbers import collect_numbers, find_violations
 
     facts = {
         "issuer": "Verizon Communications Inc.",
