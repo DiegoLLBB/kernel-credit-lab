@@ -239,7 +239,8 @@ async def onboard_ticker(
 
         row = await generate_snapshot(session, key, cutoff)
         snapshot_status = row.status
-        cost_usd = float(row.cost_usd) if row.cost_usd is not None else None
+        # CreditInsight has no cost column; cost stays unknown here (job logs timing).
+        cost_usd = None
 
     elapsed = (datetime.now(UTC) - started).total_seconds()
     msg = (
