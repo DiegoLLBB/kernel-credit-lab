@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,9 @@ from app.api.schemas import (
     IssuerListOut,
     IssuerRef,
     IssuerSnapshotOut,
+    OnboardIssuerIn,
+    OnboardIssuerOut,
+    OnboardMissingOut,
     RefinancingBucketOut,
     RefinancingPanelOut,
     SnapshotInsightOut,
@@ -29,10 +32,12 @@ from app.api.schemas import (
     WallBucketOut,
     WallChangeOut,
 )
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import Alert, Event, Instrument, Issuer
 from app.models.credit import CreditInsight
 from app.models.trace import AgentRun
+from app.onboard import OnboardError, onboard_ticker
 from app.tools.maturity import instrument_state_at, maturity_wall
 from app.tools.refinancing import (
     DEFAULT_TENOR_YEARS,
@@ -45,10 +50,52 @@ from app.tools.refinancing import (
 
 router = APIRouter(prefix="/api/issuers", tags=["issuers"])
 DbSession = Annotated[Session, Depends(get_session)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 def _ref(issuer: Issuer) -> IssuerRef:
     return IssuerRef(id=issuer.id, key=issuer.key, name=issuer.name)
+
+
+def _list_item(session: Session, iss: Issuer) -> IssuerListItem:
+    parent_key = None
+    if iss.parent_id:
+        parent = session.get(Issuer, iss.parent_id)
+        parent_key = parent.key if parent else None
+    sub_count = (
+        session.scalar(select(func.count()).select_from(Issuer).where(Issuer.parent_id == iss.id))
+        or 0
+    )
+    return IssuerListItem(
+        id=iss.id,
+        key=iss.key,
+        name=iss.name,
+        ticker=iss.ticker,
+        sector=iss.sector,
+        parent_key=parent_key,
+        subsidiary_count=int(sub_count),
+        onboard_source=iss.onboard_source,
+        onboarded_at=iss.onboarded_at,
+    )
+
+
+def _require_admin_token(
+    settings: Settings,
+    x_admin_token: str | None,
+    authorization: str | None,
+) -> None:
+    expected = (settings.admin_api_token or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin onboard is not configured (ADMIN_API_TOKEN missing)",
+        )
+    provided = (x_admin_token or "").strip()
+    if not provided and authorization:
+        auth = authorization.strip()
+        provided = auth[7:].strip() if auth.lower().startswith("bearer ") else auth
+    if not provided or provided != expected:
+        raise HTTPException(status_code=401, detail="Admin token required")
 
 
 @router.get("", response_model=IssuerListOut)
@@ -62,30 +109,58 @@ def list_issuers(
     rows = session.scalars(
         select(Issuer).order_by(Issuer.key.asc(), Issuer.name.asc()).offset(offset).limit(limit)
     ).all()
-    items: list[IssuerListItem] = []
-    for iss in rows:
-        parent_key = None
-        if iss.parent_id:
-            parent = session.get(Issuer, iss.parent_id)
-            parent_key = parent.key if parent else None
-        sub_count = (
-            session.scalar(
-                select(func.count()).select_from(Issuer).where(Issuer.parent_id == iss.id)
-            )
-            or 0
-        )
-        items.append(
-            IssuerListItem(
-                id=iss.id,
-                key=iss.key,
-                name=iss.name,
-                ticker=iss.ticker,
-                sector=iss.sector,
-                parent_key=parent_key,
-                subsidiary_count=int(sub_count),
-            )
-        )
-    return IssuerListOut(items=items, total=int(total), limit=limit, offset=offset)
+    items = [_list_item(session, iss) for iss in rows]
+    onboarded = session.scalars(
+        select(Issuer)
+        .where(Issuer.onboard_source == "ticker")
+        .order_by(Issuer.onboarded_at.desc().nullslast(), Issuer.key.asc())
+    ).all()
+    return IssuerListOut(
+        items=items,
+        total=int(total),
+        limit=limit,
+        offset=offset,
+        onboarded_by_ticker=[_list_item(session, iss) for iss in onboarded],
+    )
+
+
+@router.post("", response_model=OnboardIssuerOut)
+async def create_issuer_by_ticker(
+    body: OnboardIssuerIn,
+    session: DbSession,
+    settings: SettingsDep,
+    x_admin_token: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> OnboardIssuerOut:
+    """Add a company by ticker (operator only). Loads XBRL metrics + maturity wall."""
+    _require_admin_token(settings, x_admin_token, authorization)
+    try:
+        result = await onboard_ticker(session, body.ticker)
+        session.commit()
+    except OnboardError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Onboard failed: {exc}") from exc
+    return OnboardIssuerOut(
+        ticker=result.ticker,
+        issuer_key=result.issuer_key,
+        cik=result.cik,
+        name=result.name,
+        sector=result.sector,
+        created=result.created,
+        metrics_created=result.metrics_created,
+        metrics_updated=result.metrics_updated,
+        missing=[OnboardMissingOut(**m) for m in result.missing],
+        wall_buckets=result.wall_buckets,
+        wall_as_of=result.wall_as_of,
+        snapshot_status=result.snapshot_status,
+        monitor_from=result.monitor_from,
+        cost_usd=result.cost_usd,
+        elapsed_seconds=result.elapsed_seconds,
+        message=result.message,
+    )
 
 
 @router.get("/{key}", response_model=IssuerDetailOut)

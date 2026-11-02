@@ -22,7 +22,7 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.insight.brief import generate_daily_brief, replay_last_day
 from app.insight.generate import generate_impact, generate_refinancing, generate_snapshot
-from app.metrics.config import load_metric_config
+from app.metrics.config import load_metric_config, merge_db_configs
 from app.models import Alert, Issuer
 from app.models.credit import CreditInsight
 
@@ -30,7 +30,7 @@ from app.models.credit import CreditInsight
 async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
     stats = {"snapshots": 0, "refinancing": 0, "impacts": 0, "briefs": 0, "errors": 0}
     with SessionLocal() as session:
-        cfg = load_metric_config()
+        cfg = merge_db_configs(session, load_metric_config())
         keys = issuer_keys or list(cfg.issuers)
         for key in keys:
             issuer = session.scalar(select(Issuer).where(Issuer.key == key))
@@ -112,9 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     return (
         1
         if stats["errors"]
-        and not (
-            stats["snapshots"] or stats["impacts"] or stats["refinancing"] or stats["briefs"]
-        )
+        and not (stats["snapshots"] or stats["impacts"] or stats["refinancing"] or stats["briefs"])
         else 0
     )
 

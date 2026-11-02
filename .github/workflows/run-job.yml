@@ -17,11 +17,13 @@ on:
           - insight
           - live
           - baseline
+          - onboard
       args:
         description: >-
           Replace the job's default arguments entirely (the python module is added
           automatically, so only pass script flags, e.g.
-          --only vz_redemption_notice --max-cost-usd 2 --eval-latest).
+          --only vz_redemption_notice --max-cost-usd 2 --eval-latest,
+          or for onboard: --ticker MSFT).
           Empty keeps the deployed defaults.
         required: false
         default: ""
@@ -66,6 +68,7 @@ jobs:
             insight) BASE="-m,scripts.insight_job" ;;
             live) BASE="-m,scripts.live_job" ;;
             baseline) BASE="-m,scripts.run_baseline" ;;
+            onboard) BASE="-m,scripts.onboard_job" ;;
           esac
           WAIT=""
           if [ "${{ inputs.wait }}" = "true" ]; then WAIT="--wait"; fi

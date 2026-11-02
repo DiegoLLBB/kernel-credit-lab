@@ -50,6 +50,10 @@ class Issuer(TimestampMixin, Base):
     parent_id: Mapped[str | None] = mapped_column(
         ForeignKey("issuer.id", ondelete="SET NULL"), index=True
     )
+    # Ticker-onboarded issuers store their us-gaap tag choices here (yaml-shaped).
+    xbrl_config: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
+    onboarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    onboard_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     parent: Mapped["Issuer | None"] = relationship(
         remote_side="Issuer.id", back_populates="subsidiaries"
@@ -397,6 +401,8 @@ class Watchlist(TimestampMixin, Base):
         ForeignKey("issuer.id", ondelete="CASCADE"), nullable=False, index=True
     )
     label: Mapped[str | None] = mapped_column(String(128))
+    # When set, live polling ignores filings before this date (no agent backfill).
+    monitor_from: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     issuer: Mapped[Issuer] = relationship()
 

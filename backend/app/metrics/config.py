@@ -76,6 +76,49 @@ def _config_path(explicit: Path | str | None) -> Path:
     return here.parents[2] / CONFIG_RELATIVE
 
 
+_KNOWN_ENTRY_KEYS = set(TAG_FIELDS) | {
+    "cik",
+    "xbrl",
+    "xbrl_reason",
+    "debt_extra",
+    "revolver",
+    "revolver_reason",
+}
+
+
+def entry_to_issuer_config(
+    key: str,
+    entry: dict[str, Any],
+    *,
+    history_years: int = 3,
+    wall_tolerance_pct: float = 2.0,
+) -> IssuerMetricConfig:
+    """Build an IssuerMetricConfig from a yaml-shaped dict (seed or onboard)."""
+    entry = dict(entry or {})
+    # Onboard stores diagnostic keys that are not tag fields.
+    entry.pop("_missing", None)
+    unknown = set(entry) - _KNOWN_ENTRY_KEYS - {f"{f}_reason" for f in TAG_FIELDS}
+    if unknown:
+        raise ValueError(f"xbrl config {key}: unknown keys {sorted(unknown)}")
+    usable = bool(entry.get("xbrl", True))
+    tags = {f: entry.get(f) for f in TAG_FIELDS}
+    reasons = {f: entry[f"{f}_reason"] for f in TAG_FIELDS if entry.get(f"{f}_reason")}
+    if entry.get("revolver_reason"):
+        reasons["revolver"] = entry["revolver_reason"]
+    debt_extra = tuple(entry.get("debt_extra") or ())
+    return IssuerMetricConfig(
+        issuer_key=key,
+        cik=str(entry.get("cik") or ""),
+        usable=usable,
+        unusable_reason=entry.get("xbrl_reason"),
+        tags=tags,
+        debt_extra=debt_extra,
+        reasons=reasons,
+        history_years=history_years,
+        wall_tolerance_pct=wall_tolerance_pct,
+    )
+
+
 def load_metric_config(path: Path | str | None = None) -> MetricsConfig:
     """Load and validate the XBRL metrics config (raises on unknown keys)."""
     resolved = _config_path(path)
@@ -84,33 +127,10 @@ def load_metric_config(path: Path | str | None = None) -> MetricsConfig:
     history_years = int(defaults.get("history_years", 3))
     wall_tolerance_pct = float(defaults.get("wall_tolerance_pct", 2.0))
     issuers: dict[str, IssuerMetricConfig] = {}
-    known = set(TAG_FIELDS) | {
-        "cik",
-        "xbrl",
-        "xbrl_reason",
-        "debt_extra",
-        "revolver",
-        "revolver_reason",
-    }
     for key, entry in (raw.get("issuers") or {}).items():
-        entry = entry or {}
-        unknown = set(entry) - known - {f"{f}_reason" for f in TAG_FIELDS}
-        if unknown:
-            raise ValueError(f"xbrl_metrics.yaml {key}: unknown keys {sorted(unknown)}")
-        usable = bool(entry.get("xbrl", True))
-        tags = {f: entry.get(f) for f in TAG_FIELDS}
-        reasons = {f: entry[f"{f}_reason"] for f in TAG_FIELDS if entry.get(f"{f}_reason")}
-        if entry.get("revolver_reason"):
-            reasons["revolver"] = entry["revolver_reason"]
-        debt_extra = tuple(entry.get("debt_extra") or ())
-        issuers[key] = IssuerMetricConfig(
-            issuer_key=key,
-            cik=str(entry.get("cik") or ""),
-            usable=usable,
-            unusable_reason=entry.get("xbrl_reason"),
-            tags=tags,
-            debt_extra=debt_extra,
-            reasons=reasons,
+        issuers[key] = entry_to_issuer_config(
+            key,
+            entry or {},
             history_years=history_years,
             wall_tolerance_pct=wall_tolerance_pct,
         )
@@ -118,4 +138,42 @@ def load_metric_config(path: Path | str | None = None) -> MetricsConfig:
         issuers=issuers,
         history_years=history_years,
         wall_tolerance_pct=wall_tolerance_pct,
+    )
+
+
+def merge_db_configs(session: Any, base: MetricsConfig | None = None) -> MetricsConfig:
+    """Overlay Issuer.xbrl_config rows (ticker-onboarded) onto the YAML config."""
+    from sqlalchemy import select
+
+    from app.models import Issuer
+
+    cfg = base or load_metric_config()
+    issuers = dict(cfg.issuers)
+    rows = session.scalars(
+        select(Issuer).where(Issuer.xbrl_config.is_not(None), Issuer.key.is_not(None))
+    ).all()
+    for iss in rows:
+        if not iss.key or not isinstance(iss.xbrl_config, dict):
+            continue
+        # YAML wins for hand-verified seed issuers; DB only fills gaps.
+        if iss.key in issuers and iss.onboard_source != "ticker":
+            continue
+        if iss.key in issuers and iss.onboard_source == "ticker":
+            # Prefer DB for ticker-onboarded (may refresh tags on re-onboard).
+            pass
+        elif iss.key in issuers:
+            continue
+        try:
+            issuers[iss.key] = entry_to_issuer_config(
+                iss.key,
+                iss.xbrl_config,
+                history_years=cfg.history_years,
+                wall_tolerance_pct=cfg.wall_tolerance_pct,
+            )
+        except ValueError:
+            continue
+    return MetricsConfig(
+        issuers=issuers,
+        history_years=cfg.history_years,
+        wall_tolerance_pct=cfg.wall_tolerance_pct,
     )

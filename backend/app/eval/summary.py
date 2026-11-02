@@ -98,19 +98,16 @@ def build_eval_summary(
         return None
 
     counts = _counts_from_row(row)
-    needs_recompute = (
-        kind == "agent"
-        and (
-            not row.alert_counts
-            or (
-                counts.true_positive
-                + counts.false_positive
-                + counts.false_negative
-                + counts.true_negative
-                == 0
-            )
-            or not _fn_covers_parked(counts)
+    needs_recompute = kind == "agent" and (
+        not row.alert_counts
+        or (
+            counts.true_positive
+            + counts.false_positive
+            + counts.false_negative
+            + counts.true_negative
+            == 0
         )
+        or not _fn_covers_parked(counts)
     )
     if needs_recompute:
         report = evaluate_latest(session)

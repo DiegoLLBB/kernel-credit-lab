@@ -182,6 +182,8 @@ class IssuerListItem(BaseModel):
     sector: str | None = None
     parent_key: str | None = None
     subsidiary_count: int = 0
+    onboard_source: str | None = None
+    onboarded_at: datetime | None = None
 
 
 class IssuerListOut(BaseModel):
@@ -189,6 +191,35 @@ class IssuerListOut(BaseModel):
     total: int
     limit: int
     offset: int
+    onboarded_by_ticker: list[IssuerListItem] = Field(default_factory=list)
+
+
+class OnboardIssuerIn(BaseModel):
+    ticker: str = Field(..., min_length=1, max_length=16)
+
+
+class OnboardMissingOut(BaseModel):
+    field: str
+    reason: str
+
+
+class OnboardIssuerOut(BaseModel):
+    ticker: str
+    issuer_key: str
+    cik: str
+    name: str
+    sector: str
+    created: bool
+    metrics_created: int = 0
+    metrics_updated: int = 0
+    missing: list[OnboardMissingOut] = Field(default_factory=list)
+    wall_buckets: int = 0
+    wall_as_of: date | None = None
+    snapshot_status: str | None = None
+    monitor_from: date | None = None
+    cost_usd: float | None = None
+    elapsed_seconds: float | None = None
+    message: str = ""
 
 
 class IssuerEventOut(BaseModel):
@@ -544,9 +575,7 @@ class DailyBriefOut(BaseModel):
     check_model: str | None = None
     cost_usd: float | None = None
     model_calls: int = 0
-    attribution: str = (
-        "Written by Muse Wonder · checked by Muse Spark Open"
-    )
+    attribution: str = "Written by Muse Wonder · checked by Muse Spark Open"
 
 
 class LiveDocumentOut(BaseModel):

@@ -210,6 +210,8 @@ export type IssuerListItem = {
   sector: string | null;
   parent_key: string | null;
   subsidiary_count: number;
+  onboard_source?: string | null;
+  onboarded_at?: string | null;
 };
 
 export type IssuerListOut = {
@@ -217,6 +219,26 @@ export type IssuerListOut = {
   total: number;
   limit: number;
   offset: number;
+  onboarded_by_ticker?: IssuerListItem[];
+};
+
+export type OnboardIssuerOut = {
+  ticker: string;
+  issuer_key: string;
+  cik: string;
+  name: string;
+  sector: string;
+  created: boolean;
+  metrics_created: number;
+  metrics_updated: number;
+  missing: { field: string; reason: string }[];
+  wall_buckets: number;
+  wall_as_of: string | null;
+  snapshot_status: string | null;
+  monitor_from: string | null;
+  cost_usd: number | null;
+  elapsed_seconds: number | null;
+  message: string;
 };
 
 export type IssuerEventOut = {
@@ -633,10 +655,18 @@ export async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function postJson<T>(path: string, body: unknown): Promise<T> {
+export async function postJson<T>(
+  path: string,
+  body: unknown,
+  opts?: { adminToken?: string },
+): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (opts?.adminToken) {
+    headers["X-Admin-Token"] = opts.adminToken;
+  }
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -651,6 +681,28 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
     throw new Error(detail);
   }
   return (await res.json()) as T;
+}
+
+export const ADMIN_TOKEN_STORAGE_KEY = "kernel_admin_token";
+
+export function readAdminToken(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return (window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+export function writeAdminToken(token: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const t = token.trim();
+    if (t) window.localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, t);
+    else window.localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function chartImageUrl(chartId: string, overlay = true): string {

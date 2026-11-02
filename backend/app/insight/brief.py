@@ -419,6 +419,4 @@ def latest_brief(session: Any) -> DailyBrief | None:
 
 def replay_last_day(session: Any) -> date | None:
     """Last calendar day of the seeded replay (for one-shot brief)."""
-    return session.scalar(
-        select(func.max(Event.event_date)).where(Event.source != "live")
-    )
+    return session.scalar(select(func.max(Event.event_date)).where(Event.source != "live"))

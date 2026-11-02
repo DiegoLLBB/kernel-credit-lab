@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # Local default stays enabled so analysts can confirm/dismiss during development.
     review_writes_enabled: bool = True
 
+    # Operator token for POST /api/issuers (ticker onboard). Empty → endpoint disabled.
+    # Production: Secret Manager ADMIN_API_TOKEN. Never expose to the public UI bundle.
+    admin_api_token: str = Field(default="", repr=False)
+
 
 @lru_cache
 def get_settings() -> Settings:

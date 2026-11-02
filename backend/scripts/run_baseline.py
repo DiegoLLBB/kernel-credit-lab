@@ -62,9 +62,7 @@ def _document_text(session: Session, event: Event) -> str:
     filing_ids: list[str] = []
     if event.source_filing_id:
         filing_ids.append(event.source_filing_id)
-    for link in session.scalars(
-        select(EventFiling).where(EventFiling.event_id == event.id)
-    ).all():
+    for link in session.scalars(select(EventFiling).where(EventFiling.event_id == event.id)).all():
         if link.filing_id not in filing_ids:
             filing_ids.append(link.filing_id)
     chunks: list[str] = []
@@ -328,16 +326,12 @@ async def _run(*, max_cost_usd: float) -> int:
                 event = session.get(Event, exp.event_id) if exp.event_id else None
                 if event is None and exp.sources:
                     # Fall back: match replay_key on Event.
-                    event = session.scalar(
-                        select(Event).where(Event.replay_key == exp.key)
-                    )
+                    event = session.scalar(select(Event).where(Event.replay_key == exp.key))
                 issuer = None
                 if event and event.issuer_id:
                     issuer = session.get(Issuer, event.issuer_id)
                 if issuer is None and exp.issuer_key:
-                    issuer = session.scalar(
-                        select(Issuer).where(Issuer.key == exp.issuer_key)
-                    )
+                    issuer = session.scalar(select(Issuer).where(Issuer.key == exp.issuer_key))
                 issuer_name = (issuer.name if issuer else None) or exp.issuer_key or "the issuer"
                 available = exp.available_from or exp.event_date or date.today()
                 document = _document_text(session, event) if event else ""

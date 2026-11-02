@@ -273,9 +273,7 @@ def accession_url(cik: str | None, accession: str | None) -> str | None:
         return None
     cik_num = str(cik).lstrip("0") or "0"
     accn = accession.replace("-", "")
-    return (
-        f"https://www.sec.gov/Archives/edgar/data/{cik_num}/{accn}/{accession}-index.htm"
-    )
+    return f"https://www.sec.gov/Archives/edgar/data/{cik_num}/{accn}/{accession}-index.htm"
 
 
 def _duration_days(pt: dict[str, Any]) -> int | None:

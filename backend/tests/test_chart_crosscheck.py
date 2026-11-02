@@ -130,9 +130,7 @@ def test_amazon_net_sales_vs_xbrl_fixture(db_session: Session) -> None:
     Fixture carries multiple durations for the same fp; crosscheck prefers ~90-day
     points. Using the printed chart-style $B quarterly figure.
     """
-    iss, filing = _seed_issuer(
-        db_session, key="amazon", cik="0001018724", name="Amazon.com, Inc."
-    )
+    iss, filing = _seed_issuer(db_session, key="amazon", cik="0001018724", name="Amazon.com, Inc.")
     facts = fixture_companyfacts(iss.cik)
     assert facts is not None
     # Find a Q3 2026 quarterly (~90d) revenue point for the hand-check.
@@ -141,11 +139,10 @@ def test_amazon_net_sales_vs_xbrl_fixture(db_session: Session) -> None:
     q3 = [
         p
         for p in pts
-        if p.get("fp") == "Q3"
-        and str(p.get("end", "")).startswith("2026-09")
-        and p.get("start")
+        if p.get("fp") == "Q3" and str(p.get("end", "")).startswith("2026-09") and p.get("start")
     ]
     assert q3, "fixture missing Q3 2026 revenue"
+
     # Prefer short duration
     def dur(p):
         from datetime import date as d
@@ -186,9 +183,7 @@ def test_amazon_net_sales_vs_xbrl_fixture(db_session: Session) -> None:
 
 
 def test_disagree_is_surfaced(db_session: Session) -> None:
-    iss, filing = _seed_issuer(
-        db_session, key="boeing2", cik="0000012927", name="Boeing"
-    )
+    iss, filing = _seed_issuer(db_session, key="boeing2", cik="0000012927", name="Boeing")
     db_session.add(
         CreditMetric(
             issuer_id=iss.id,
@@ -227,9 +222,7 @@ def test_disagree_is_surfaced(db_session: Session) -> None:
 
 
 def test_period_unclear_not_comparable(db_session: Session) -> None:
-    iss, filing = _seed_issuer(
-        db_session, key="amzn2", cik="0001018724", name="Amazon"
-    )
+    iss, filing = _seed_issuer(db_session, key="amzn2", cik="0001018724", name="Amazon")
     chart = ChartReading(
         issuer_id=iss.id,
         filing_id=filing.id,

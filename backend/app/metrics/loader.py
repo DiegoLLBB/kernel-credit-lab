@@ -9,6 +9,7 @@ the inputs changed; corrections arrive as updated rows, never duplicates.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Iterable
 from datetime import date
 from decimal import Decimal
@@ -17,7 +18,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.metrics.compute import MetricRow, compute_issuer
-from app.metrics.config import MetricsConfig, load_metric_config
+from app.metrics.config import MetricsConfig, load_metric_config, merge_db_configs
 from app.models.credit import CreditMetric, Issuer, MaturitySchedule
 
 FetchFacts = Callable[[str], dict[str, Any]]
@@ -121,6 +122,9 @@ def load_metrics(
     the replay refresh for a single issuer).
     """
     cfg = config or load_metric_config(config_path)
+    if config is None:
+        with contextlib.suppress(Exception):
+            cfg = merge_db_configs(session, cfg)
     cutoff = as_of or date.today()
     stats = {"issuers": 0, "rows_created": 0, "rows_updated": 0, "skipped": 0}
     wanted = set(issuer_keys) if issuer_keys is not None else None

@@ -96,6 +96,11 @@ def _watchlist_issuers(session: Session) -> list[Issuer]:
     return list(roots)
 
 
+def _monitor_from(session: Session, issuer: Issuer) -> date | None:
+    row = session.scalars(select(Watchlist).where(Watchlist.issuer_id == issuer.id)).first()
+    return row.monitor_from if row is not None else None
+
+
 def _replay_key_for_identity(identity: str) -> str:
     if re.fullmatch(r"\d{10}-\d{2}-\d{6}", identity):
         return f"live:edgar:{identity}"
@@ -285,12 +290,20 @@ def poll_all(
     since: date,
     until: date | None = None,
 ) -> list[LiveDocument]:
-    """Poll every watchlist root issuer; return documents seen (new + known)."""
+    """Poll every watchlist root issuer; return documents seen (new + known).
+
+    Ticker-onboarded issuers set ``Watchlist.monitor_from`` so their first live
+    poll only sees filings on/after onboard day (no agent backfill of history).
+    """
     until = until or date.today()
     docs: list[LiveDocument] = []
     for issuer in _watchlist_issuers(session):
-        docs.extend(poll_edgar_for_issuer(session, edgar, issuer, since=since, until=until))
-        docs.extend(poll_newsroom_for_issuer(session, newsroom, issuer, since=since, until=until))
+        floor = _monitor_from(session, issuer)
+        issuer_since = max(since, floor) if floor is not None else since
+        docs.extend(poll_edgar_for_issuer(session, edgar, issuer, since=issuer_since, until=until))
+        docs.extend(
+            poll_newsroom_for_issuer(session, newsroom, issuer, since=issuer_since, until=until)
+        )
     session.flush()
     return docs
 

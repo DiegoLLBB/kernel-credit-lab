@@ -30,9 +30,7 @@ def main(argv: list[str] | None = None) -> int:
         f"rescore: Kernel caught with right year and amount: "
         f"{agent['accurate_caught']} of {agent['accurate_total']}"
     )
-    print(
-        f"rescore: Kernel wall/end-state: {agent['wall_passed']} of {agent['wall_total']}"
-    )
+    print(f"rescore: Kernel wall/end-state: {agent['wall_passed']} of {agent['wall_total']}")
     print(
         f"rescore: baseline caught with right year and amount: "
         f"{baseline['accurate_caught']} of {baseline['accurate_total']}"
