@@ -325,3 +325,15 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     near-wall tranches were already in stored diffs). Still inaccurate: `duk_parent_tl_repaid`
     (no `mark_repaid`) and `dep_term_loan` (wrote the 2029 convertible instead). Agent tree
     still frozen at `f997487c2fbf` / `event_v10`.
+35. **P0 live-site follow-through (Mon 2 Nov evening):** `kernel-insight` re-ran without
+    `--wait` (`kernel-insight-mkjc9`, ~11m); Verizon snapshot prose now matches tiles
+    ($166.2bn debt, ~0.7× cash cover) instead of the old $161.0bn / 0.17× statistics dump.
+    Periods: cash-cover numerator/denominator share one `period_end`; FY-only due /
+    liquidity tiles carry `source_note` "from the FY{year} 10-K"; insight_v5 drops
+    sentences that mix TTM with FY figures. `kernel-seed` refreshed metric details so
+    those notes appear live. Agent tree still frozen at `f997487c2fbf` / `event_v10`.
+36. **Maturity wall + applied changes (Mon 2 Nov 21:19):** `app/tools/maturity.py` (used by
+    the agent's `get_issuer_debt` tool) was updated in commit `7d0b8be` at 21:19 to apply
+    recorded `StateChange` rows correctly via `instrument_state_at`, so walls no longer
+    ignore tenders/redemptions after a seed clobber. Live agent runs after that timestamp
+    see the corrected walls; the frozen agent image itself remains `f997487c2fbf`.
