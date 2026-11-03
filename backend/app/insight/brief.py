@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 
 from app.api.alerts import impact_for_alert
 from app.config import get_settings
-from app.ingest.live import live_stats
+from app.ingest.live import form_words, live_stats
 from app.insight.check import (
     PROMPT_VERSION as CHECK_PROMPT_VERSION,
 )
@@ -272,7 +272,9 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
             {
                 "issuer_key": doc.get("issuer_key"),
                 "issuer_name": doc.get("issuer_name"),
-                "form": doc.get("form"),
+                # Plain words, not form codes: a code like "424B2" reads as an
+                # unsupported number to the brief's number gate.
+                "form": form_words(doc.get("form")),
                 "event_date": doc.get("event_date"),
                 "outcome": doc.get("outcome"),
                 "reason": doc.get("reason"),
@@ -444,7 +446,7 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
     paused_docs = [d for d in docs if d.get("outcome") == "paused"]
     analyst_docs = sorted(
         [d for d in docs if d.get("outcome") == "needs an analyst"],
-        key=lambda d: 0 if str(d.get("form") or "").upper().startswith("424B") else 1,
+        key=lambda d: 0 if "prospectus" in str(d.get("form") or "") else 1,
     )
     live_bits: list[str] = []
     if reviewed:
@@ -464,16 +466,15 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
         live_bits.append(f"Kernel reviewed {word} {noun} with no alert")
     for d in paused_docs[:1]:
         short = issuer_short_name(d.get("issuer_key"), d.get("issuer_name"))
-        form = (d.get("form") or "").upper()
-        label = "10-Q" if form.startswith("10-Q") else (d.get("form") or "filing")
+        label = str(d.get("form") or "filing")
         live_bits.append(f"{short}'s {label} is paused at its turn limit")
     analyst_names: list[str] = []
     for d in analyst_docs[:3]:
         short = issuer_short_name(d.get("issuer_key"), d.get("issuer_name"))
-        form = (d.get("form") or "").upper()
-        if form.startswith("424B"):
+        form = str(d.get("form") or "")
+        if form.startswith("prospectus"):
             doc = f"{short}'s prospectus supplement"
-        elif form.startswith("10-Q"):
+        elif form.startswith("quarterly report"):
             doc = f"{short}'s quarterly report"
         else:
             doc = f"{short}'s filing"

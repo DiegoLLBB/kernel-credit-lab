@@ -364,3 +364,49 @@ def test_bank_structured_notes_are_not_monitored_and_stats_cover_all_events():
 
     db.close()
     engine.dispose()
+
+
+def test_brief_facts_name_live_forms_in_words(monkeypatch):
+    """Form codes such as 424B2 must not reach the brief writer: its number gate reads
+    them as unsupported numbers and drops the sentence."""
+    from datetime import date as date_cls
+
+    import app.insight.brief as brief
+
+    fake = {
+        "go_live_at": "2026-11-02T12:00:00+00:00",
+        "alerted": 0,
+        "logged": 1,
+        "refused": 0,
+        "paused": 1,
+        "failed": 0,
+        "documents_read": 2,
+        "documents": [
+            {
+                "issuer_key": "jpm",
+                "issuer_name": "JPMorgan",
+                "form": "424B2",
+                "event_date": "2026-11-03",
+                "outcome": "reviewed, no alert",
+            },
+            {
+                "issuer_key": "boeing",
+                "issuer_name": "Boeing",
+                "form": "10-Q",
+                "event_date": "2026-10-28",
+                "outcome": "paused",
+            },
+        ],
+    }
+    monkeypatch.setattr(brief, "live_stats", lambda session: fake)
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    facts = brief.build_brief_facts(db, date_cls(2026, 11, 3))
+    forms = [d["form"] for d in facts["live"]["documents"]]
+    assert forms == ["prospectus supplement (bond offering)", "quarterly report"]
+    assert "424B" not in str(facts)
+    db.close()
+    engine.dispose()
