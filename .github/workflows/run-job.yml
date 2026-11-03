@@ -19,6 +19,7 @@ on:
           - baseline
           - onboard
           - metric-alerts
+          - refresh-sectors
       args:
         description: >-
           Replace the job's default arguments entirely (the python module is added
@@ -71,6 +72,7 @@ jobs:
             baseline) BASE="-m,scripts.run_baseline" ;;
             onboard) BASE="-m,scripts.onboard_job" ;;
             metric-alerts) BASE="-m,scripts.metric_alerts_job" ;;
+            refresh-sectors) BASE="-m,scripts.refresh_sectors_job" ;;
           esac
           WAIT=""
           if [ "${{ inputs.wait }}" = "true" ]; then WAIT="--wait"; fi

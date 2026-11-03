@@ -15,7 +15,7 @@ from app.metrics.config import IssuerMetricConfig, MetricsConfig, entry_to_issue
 from app.metrics.loader import load_metrics, wall_for_issuer
 from app.models import Issuer, MaturitySchedule, Watchlist
 from app.onboard.maturity import WALL_NOTE, build_maturity_buckets
-from app.onboard.sic import sector_from_sic
+from app.onboard.sectors import resolve_sector
 from app.onboard.tags import build_xbrl_config
 from app.onboard.tickers import TickerClient
 from app.sources.xbrl import XbrlClient
@@ -139,7 +139,7 @@ async def onboard_ticker(
         submissions = {}
     sic = submissions.get("sic")
     sic_desc = submissions.get("sicDescription")
-    sector = sector_from_sic(sic, sic_desc)
+    sector, _sector_source = resolve_sector(match.ticker, sic, sic_desc)
 
     try:
         facts = xbrl.company_facts(match.cik)

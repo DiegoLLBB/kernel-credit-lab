@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
         session.commit()
     print(
         f"metric_alerts: issuers={stats['issuers']} created={stats['created']} "
-        f"skipped={stats['skipped']}"
+        f"skipped={stats['skipped']} purged={stats.get('purged', 0)}"
     )
     return 0
 

@@ -1,0 +1,36 @@
+# Explicit GICS-style sector map for watchlist / peer medians.
+# Source: GICS (Global Industry Classification Standard) sector names,
+# assigned per equity ticker. SIC is only a fallback for tickers not listed
+# here; those sectors are labelled "(SIC)" on the issuer.
+#
+# Keep keys uppercase tickers. Values must match threshold by_sector keys
+# where overrides exist (Utilities, Communication Services).
+
+source: "GICS sector names; per-ticker map maintained in-repo"
+
+tickers:
+  # Consumer Staples
+  PG: Consumer Staples
+  WMT: Consumer Staples
+  # Energy
+  XOM: Energy
+  # Consumer Discretionary
+  GM: Consumer Discretionary
+  AMZN: Consumer Discretionary
+  # Health Care
+  JNJ: Health Care
+  # Financials
+  JPM: Financials
+  # Industrials
+  CAT: Industrials
+  BA: Industrials
+  # Utilities
+  NEE: Utilities
+  DUK: Utilities
+  # Communication Services
+  VZ: Communication Services
+  T: Communication Services
+  # Information Technology
+  MSFT: Information Technology
+  ORCL: Information Technology
+  INTC: Information Technology

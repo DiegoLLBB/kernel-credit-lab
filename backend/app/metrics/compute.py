@@ -20,7 +20,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from app.metrics.config import IssuerMetricConfig
+from app.metrics.config import IssuerMetricConfig, TagValue
 from app.metrics.select import (
     Datapoint,
     full_year_ends,
@@ -104,11 +104,11 @@ def _flow_missing_reason(
     cfg: IssuerMetricConfig, field_name: str, flow: FlowValue, *, is_quarter: bool
 ) -> str:
     """Why a flow input is missing: unconfigured tag vs no quarterly datapoint yet."""
-    tag = cfg.tag(field_name)
-    if not tag:
+    tags = cfg.tag_list(field_name)
+    if not tags:
         return _reason(cfg, field_name)
     if is_quarter:
-        return f"{tag} has no quarterly datapoint filed yet"
+        return f"{'+'.join(tags)} has no quarterly datapoint filed yet"
     return _reason(cfg, field_name)
 
 
@@ -127,7 +127,8 @@ def compute_issuer(
     """
     if not cfg.usable:
         return []
-    anchor = cfg.tag("debt_total") or cfg.tag("debt_current")
+    anchor_raw = cfg.tag("debt_total") or cfg.tag("debt_current")
+    anchor = anchor_raw if isinstance(anchor_raw, str) else (anchor_raw[0] if anchor_raw else None)
     if anchor is None:
         return []
     periods = full_year_ends(doc, anchor, as_of=as_of, limit=cfg.history_years)
@@ -176,15 +177,17 @@ def _compute_fy_period(
         label=label,
         wall=wall,
         debt=debt,
-        cash_dp=_point(doc, cfg.tag("cash"), as_of=as_of, end=end),
-        stinv_dp=_point(doc, cfg.tag("st_investments"), as_of=as_of, end=end),
-        mat12_dp=_point(doc, cfg.tag("mat_next12"), as_of=as_of, end=end),
-        mat2_dp=_point(doc, cfg.tag("mat_year2"), as_of=as_of, end=end),
+        cash_dp=_point(doc, (cfg.tag_list("cash") or [None])[0], as_of=as_of, end=end),
+        stinv_dp=_point(doc, (cfg.tag_list("st_investments") or [None])[0], as_of=as_of, end=end),
+        mat12_dp=_point(doc, (cfg.tag_list("mat_next12") or [None])[0], as_of=as_of, end=end),
+        mat2_dp=_point(doc, (cfg.tag_list("mat_year2") or [None])[0], as_of=as_of, end=end),
         opinc=_fy_flow(doc, cfg.tag("opinc"), as_of=as_of, end=end),
+        pretax=_fy_flow(doc, cfg.tag("pretax"), as_of=as_of, end=end),
         dep=_fy_flow(doc, cfg.tag("depreciation"), as_of=as_of, end=end),
         interest=_fy_flow(doc, cfg.tag("interest"), as_of=as_of, end=end),
         ocf=_fy_flow(doc, cfg.tag("ocf"), as_of=as_of, end=end),
         capex=_fy_flow(doc, cfg.tag("capex"), as_of=as_of, end=end),
+        ebitda_compose=cfg.ebitda_compose,
     )
 
 
@@ -204,6 +207,7 @@ def _compute_quarter(
     flows = {}
     for name, field_name in (
         ("opinc", "opinc"),
+        ("pretax", "pretax"),
         ("dep", "depreciation"),
         ("interest", "interest"),
         ("ocf", "ocf"),
@@ -213,25 +217,35 @@ def _compute_quarter(
         flows[name] = (value, rep)
         has_ttm = has_ttm or value is not None
     label = f"TTM {quarter_label}" if has_ttm else quarter_label
+    cash_tag = cfg.tag_list("cash")
+    stinv_tag = cfg.tag_list("st_investments")
+    mat12_tag = cfg.tag_list("mat_next12")
+    mat2_tag = cfg.tag_list("mat_year2")
     return _assemble(
         cfg,
         period_end=period_end,
         label=label,
         wall=wall,
         debt=_total_debt_latest(doc, cfg, as_of=as_of, period_end=period_end),
-        cash_dp=select_instant(doc, cfg.tag("cash") or "", as_of=as_of, period_end=period_end),
-        stinv_dp=select_instant(
-            doc, cfg.tag("st_investments") or "", as_of=as_of, period_end=period_end
-        ),
-        mat12_dp=select_instant(
-            doc, cfg.tag("mat_next12") or "", as_of=as_of, period_end=period_end
-        ),
-        mat2_dp=select_instant(doc, cfg.tag("mat_year2") or "", as_of=as_of, period_end=period_end),
+        cash_dp=select_instant(doc, cash_tag[0], as_of=as_of, period_end=period_end)
+        if cash_tag
+        else None,
+        stinv_dp=select_instant(doc, stinv_tag[0], as_of=as_of, period_end=period_end)
+        if stinv_tag
+        else None,
+        mat12_dp=select_instant(doc, mat12_tag[0], as_of=as_of, period_end=period_end)
+        if mat12_tag
+        else None,
+        mat2_dp=select_instant(doc, mat2_tag[0], as_of=as_of, period_end=period_end)
+        if mat2_tag
+        else None,
         opinc=flows["opinc"],
+        pretax=flows["pretax"],
         dep=flows["dep"],
         interest=flows["interest"],
         ocf=flows["ocf"],
         capex=flows["capex"],
+        ebitda_compose=cfg.ebitda_compose,
         is_quarter=True,
     )
 
@@ -239,10 +253,10 @@ def _compute_quarter(
 def _latest_point_ends(doc: dict[str, Any], cfg: IssuerMetricConfig, *, as_of: date) -> list[date]:
     ends = []
     for field_name in ("debt_total", "debt_current", "cash", "mat_next12"):
-        tag = cfg.tag(field_name)
-        if not tag:
+        tags = cfg.tag_list(field_name)
+        if not tags:
             continue
-        dp = select_instant(doc, tag, as_of=as_of)
+        dp = select_instant(doc, tags[0], as_of=as_of)
         if dp is not None:
             ends.append(dp.end)
     return ends
@@ -255,10 +269,10 @@ def _quarter_label(
     # (Oracle's August quarter is fp=Q1). Fall back to the calendar quarter.
     # Label is fp + calendar year of the period end ("Q1 2026" for Aug 2026).
     for field_name in ("debt_total", "debt_current", "cash", "mat_next12"):
-        tag = cfg.tag(field_name)
-        if not tag:
+        tags = cfg.tag_list(field_name)
+        if not tags:
             continue
-        dp = select_instant(doc, tag, as_of=as_of, period_end=period_end)
+        dp = select_instant(doc, tags[0], as_of=as_of, period_end=period_end)
         if dp is not None and dp.fp in ("Q1", "Q2", "Q3", "Q4"):
             return f"{dp.fp} {period_end.year}"
     return f"Q{(period_end.month - 1) // 3 + 1} {period_end.year}"
@@ -267,34 +281,93 @@ def _quarter_label(
 FlowValue = tuple[Decimal | None, Datapoint | None]
 
 
-def _fy_flow(doc: dict[str, Any], tag: str | None, *, as_of: date, end: date) -> FlowValue:
-    if not tag:
-        return None, None
-    dp = select_full_year(doc, tag, as_of=as_of, period_end=end)
-    return (dp.value, dp) if dp else (None, None)
+def _tag_names(tag: TagValue) -> list[str]:
+    if tag is None:
+        return []
+    if isinstance(tag, str):
+        return [tag] if tag else []
+    return [t for t in tag if t]
 
 
-def _ttm_flow(doc: dict[str, Any], tag: str | None, *, as_of: date) -> FlowValue:
-    if not tag:
+def _fy_flow(doc: dict[str, Any], tag: TagValue, *, as_of: date, end: date) -> FlowValue:
+    names = _tag_names(tag)
+    if not names:
         return None, None
-    ttm = trailing_twelve_months(doc, tag, as_of=as_of)
-    if ttm is None or ttm.is_full_year_only:
+    dps: list[Datapoint] = []
+    for name in names:
+        dp = select_full_year(doc, name, as_of=as_of, period_end=end)
+        if dp is None:
+            return None, None
+        dps.append(dp)
+    total = sum((d.value for d in dps), Decimal(0))
+    # Representative datapoint: latest-filed; tag string joined in _latest_inputs.
+    best = max(dps, key=lambda d: d.filed)
+    if len(dps) == 1:
+        return total, best
+    # Synthetic combined tag label for source_tag join.
+    combined = Datapoint(
+        tag="+".join(names),
+        value=total,
+        end=best.end,
+        start=best.start,
+        filed=best.filed,
+        accession=best.accession,
+        fy=best.fy,
+        fp=best.fp,
+        form=best.form,
+        unit=best.unit,
+    )
+    return total, combined
+
+
+def _ttm_flow(doc: dict[str, Any], tag: TagValue, *, as_of: date) -> FlowValue:
+    names = _tag_names(tag)
+    if not names:
         return None, None
-    return ttm.value, ttm.ytd or ttm.full_year
+    values: list[Decimal] = []
+    reps: list[Datapoint] = []
+    for name in names:
+        ttm = trailing_twelve_months(doc, name, as_of=as_of)
+        if ttm is None or ttm.is_full_year_only:
+            return None, None
+        values.append(ttm.value)
+        rep = ttm.ytd or ttm.full_year
+        if rep is not None:
+            reps.append(rep)
+    if not reps:
+        return None, None
+    total = sum(values, Decimal(0))
+    best = max(reps, key=lambda d: d.filed)
+    if len(names) == 1:
+        return total, best
+    combined = Datapoint(
+        tag="+".join(names),
+        value=total,
+        end=best.end,
+        start=best.start,
+        filed=best.filed,
+        accession=best.accession,
+        fy=best.fy,
+        fp=best.fp,
+        form=best.form,
+        unit=best.unit,
+    )
+    return total, combined
 
 
 def _total_debt_fy(
     doc: dict[str, Any], cfg: IssuerMetricConfig, *, as_of: date, end: date
 ) -> tuple[Decimal | None, list[Datapoint]]:
-    if cfg.tag("debt_total"):
-        parts = [_point(doc, cfg.tag("debt_total"), as_of=as_of, end=end)]
+    debt_total = cfg.tag_list("debt_total")
+    if debt_total:
+        parts = [_point(doc, debt_total[0], as_of=as_of, end=end)]
         parts.extend(_point(doc, extra, as_of=as_of, end=end) for extra in cfg.debt_extra)
         if any(p is None for p in parts):
             return None, []
         dps = [p for p in parts if p is not None]
         return sum((p.value for p in dps), Decimal(0)), dps
-    cur = _point(doc, cfg.tag("debt_current"), as_of=as_of, end=end)
-    non = _point(doc, cfg.tag("debt_noncurrent"), as_of=as_of, end=end)
+    cur = _point(doc, (cfg.tag_list("debt_current") or [None])[0], as_of=as_of, end=end)
+    non = _point(doc, (cfg.tag_list("debt_noncurrent") or [None])[0], as_of=as_of, end=end)
     if cur is None or non is None:
         return None, []
     return cur.value + non.value, [cur, non]
@@ -317,8 +390,9 @@ def _total_debt_latest(
     doc: dict[str, Any], cfg: IssuerMetricConfig, *, as_of: date, period_end: date | None = None
 ) -> tuple[Decimal | None, list[Datapoint]]:
     """Latest total debt; current + noncurrent must share the same period end."""
-    if cfg.tag("debt_total"):
-        primary = cfg.tag("debt_total") or ""
+    debt_total = cfg.tag_list("debt_total")
+    if debt_total:
+        primary = debt_total[0]
         main = (
             select_instant(doc, primary, as_of=as_of, period_end=period_end)
             if period_end is not None
@@ -341,8 +415,11 @@ def _total_debt_latest(
                 return None, []
             dps.append(dp)
         return sum((d.value for d in dps), Decimal(0)), dps
-    cur_tag = cfg.tag("debt_current") or ""
-    non_tag = cfg.tag("debt_noncurrent") or ""
+    cur_tags = cfg.tag_list("debt_current")
+    non_tags = cfg.tag_list("debt_noncurrent")
+    if not cur_tags or not non_tags:
+        return None, []
+    cur_tag, non_tag = cur_tags[0], non_tags[0]
     if period_end is not None:
         cur = select_instant(doc, cur_tag, as_of=as_of, period_end=period_end)
         non = select_instant(doc, non_tag, as_of=as_of, period_end=period_end)
@@ -369,10 +446,12 @@ def _assemble(
     mat12_dp: Datapoint | None,
     mat2_dp: Datapoint | None,
     opinc: FlowValue,
+    pretax: FlowValue,
     dep: FlowValue,
     interest: FlowValue,
     ocf: FlowValue,
     capex: FlowValue,
+    ebitda_compose: str | None = None,
     is_quarter: bool = False,
 ) -> list[MetricRow]:
     rows: list[MetricRow] = []
@@ -434,19 +513,43 @@ def _assemble(
 
     ebitda: Decimal | None = None
     ebitda_dps: list[Datapoint] = []
+    ebitda_note: str | None = None
+    compose = ebitda_compose or cfg.ebitda_compose
     if opinc[0] is not None and dep[0] is not None:
         ebitda = opinc[0] + dep[0]
         ebitda_dps = [d for d in (opinc[1], dep[1]) if d is not None]
+        ebitda_note = "EBITDA from operating income + D&A"
+    elif (
+        compose == "pretax_plus_interest_plus_da"
+        and pretax[0] is not None
+        and interest[0] is not None
+        and dep[0] is not None
+    ):
+        # Pre-tax income is after interest; add interest back ≈ EBIT, then + D&A.
+        ebitda = pretax[0] + interest[0] + dep[0]
+        ebitda_dps = [d for d in (pretax[1], interest[1], dep[1]) if d is not None]
+        ebitda_note = "EBITDA from pre-tax income + interest + D&A"
+    elif pretax[0] is not None and interest[0] is not None and dep[0] is not None:
+        ebitda = pretax[0] + interest[0] + dep[0]
+        ebitda_dps = [d for d in (pretax[1], interest[1], dep[1]) if d is not None]
+        ebitda_note = "EBITDA from pre-tax income + interest + D&A"
     if ebitda is None:
-        missing = (
-            _flow_missing_reason(cfg, "opinc", opinc, is_quarter=is_quarter)
-            if opinc[0] is None
-            else _flow_missing_reason(cfg, "depreciation", dep, is_quarter=is_quarter)
-        )
+        if opinc[0] is None and pretax[0] is None:
+            missing = _flow_missing_reason(cfg, "opinc", opinc, is_quarter=is_quarter)
+        elif dep[0] is None:
+            missing = _flow_missing_reason(cfg, "depreciation", dep, is_quarter=is_quarter)
+        else:
+            missing = _flow_missing_reason(cfg, "interest", interest, is_quarter=is_quarter)
         rows.append(_missing("ebitda", period_end, label, missing))
     else:
         tags, accn, filed = _latest_inputs(ebitda_dps)
-        rows.append(MetricRow("ebitda", period_end, label, ebitda, _MONEY, tags, accn, filed, {}))
+        detail: dict[str, Any] = {}
+        if ebitda_note:
+            detail["source_note"] = ebitda_note
+            detail["ebitda_compose"] = ebitda_note
+        rows.append(
+            MetricRow("ebitda", period_end, label, ebitda, _MONEY, tags, accn, filed, detail)
+        )
 
     rows.append(
         _leverage_row(

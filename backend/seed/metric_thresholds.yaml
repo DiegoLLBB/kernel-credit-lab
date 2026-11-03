@@ -19,8 +19,12 @@ metrics:
       Utilities:
         green_max: 4.0 # regulated utilities carry denser balance sheets
         amber_max: 5.5
-      Telecommunications:
+      Communication Services:
         green_max: 3.5 # telecoms typically run with more leverage than tech
+        amber_max: 4.5
+      # Legacy alias (pre-GICS rename)
+      Telecommunications:
+        green_max: 3.5
         amber_max: 4.5
   net_leverage:
     label: "Net debt ÷ EBITDA"
@@ -31,6 +35,9 @@ metrics:
       Utilities:
         green_max: 3.5
         amber_max: 5.0
+      Communication Services:
+        green_max: 3.0
+        amber_max: 4.0
       Telecommunications:
         green_max: 3.0
         amber_max: 4.0

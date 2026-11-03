@@ -276,73 +276,94 @@ export function OverviewClient() {
             <h2 id="feed-heading" className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
               Material changes, newest first
             </h2>
-            {overview.feed.length === 0 ? (
-              <EmptyLine>No material changes found yet.</EmptyLine>
-            ) : (
-              <ul className="divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
-                {overview.feed.map((item) => {
-                  const change = item.before_after
-                    ? formatBeforeAfter(
-                        item.before_after.before,
-                        item.before_after.after,
-                        item.before_after.field,
-                        {
-                          before: item.before_after.before_display,
-                          after: item.before_after.after_display,
-                        },
-                      )
-                    : null;
-                  return (
-                    <li key={item.alert_id}>
-                      <Link
-                        href={`/alerts/${item.alert_id}`}
-                        className="block px-4 py-3 hover:bg-ink-soft/70 focus-visible:bg-ink-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
-                      >
-                        <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-slate-400">
-                          <span>{item.issuer.name}</span>
-                          <span className="text-slate-500">{formatDate(item.event_date)}</span>
-                          {item.kind === "metric" ? (
-                            <span className="rounded border border-sky-500/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-300">
-                              metric
-                            </span>
-                          ) : null}
-                          {item.live ? (
-                            <span className="rounded border border-accent/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
-                              live
-                            </span>
-                          ) : null}
-                          {item.kind === "metric" ? null : (
-                            <ReplayVerdictBadge
-                              verdict={item.replay_verdict}
-                              reason={item.replay_verdict_reason}
-                            />
-                          )}
-                        </div>
-                        <p className="mt-1 text-sm text-slate-200">
-                          {item.impact_sentence ?? item.title}
+            {(() => {
+              const agentItems = overview.feed.filter((i) => i.kind !== "metric");
+              const metricItems = overview.feed.filter((i) => i.kind === "metric");
+              const renderItem = (item: (typeof overview.feed)[number], quiet?: boolean) => {
+                const change = item.before_after
+                  ? formatBeforeAfter(
+                      item.before_after.before,
+                      item.before_after.after,
+                      item.before_after.field,
+                      {
+                        before: item.before_after.before_display,
+                        after: item.before_after.after_display,
+                      },
+                    )
+                  : null;
+                return (
+                  <li key={item.alert_id}>
+                    <Link
+                      href={`/alerts/${item.alert_id}`}
+                      className={
+                        quiet
+                          ? "block px-4 py-2.5 text-slate-400 hover:bg-ink-soft/50 focus-visible:bg-ink-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+                          : "block px-4 py-3 hover:bg-ink-soft/70 focus-visible:bg-ink-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+                      }
+                    >
+                      <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-slate-500">
+                        <span className={quiet ? undefined : "text-slate-400"}>{item.issuer.name}</span>
+                        <span>{formatDate(item.event_date)}</span>
+                        {item.kind === "metric" ? (
+                          <span className="rounded border border-slate-600/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500">
+                            metric
+                          </span>
+                        ) : null}
+                        {item.live ? (
+                          <span className="rounded border border-accent/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
+                            live
+                          </span>
+                        ) : null}
+                        {item.kind === "metric" ? null : (
+                          <ReplayVerdictBadge
+                            verdict={item.replay_verdict}
+                            reason={item.replay_verdict_reason}
+                          />
+                        )}
+                      </div>
+                      <p className={`mt-1 text-sm ${quiet ? "text-slate-400" : "text-slate-200"}`}>
+                        {item.impact_sentence ?? item.title}
+                      </p>
+                      {item.impact_pending ? (
+                        <p className="mt-1 text-xs text-slate-500">
+                          Analyst summary still being written.
                         </p>
-                        {item.impact_pending ? (
-                          <p className="mt-1 text-xs text-slate-500">
-                            Analyst summary still being written.
-                          </p>
-                        ) : null}
-                        {change ? (
-                          <p className="mt-1 font-mono text-xs text-slate-400">
-                            {item.before_after?.field ? `${item.before_after.field}: ` : null}
-                            {change}
-                          </p>
-                        ) : null}
-                        {item.kind === "metric" && item.filing_url ? (
-                          <p className="mt-1 font-mono text-[11px] text-sky-400/90">
-                            Filing linked
-                          </p>
-                        ) : null}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+                      ) : null}
+                      {change ? (
+                        <p className="mt-1 font-mono text-xs text-slate-500">
+                          {item.before_after?.field ? `${item.before_after.field}: ` : null}
+                          {change}
+                        </p>
+                      ) : null}
+                    </Link>
+                  </li>
+                );
+              };
+              if (agentItems.length === 0 && metricItems.length === 0) {
+                return <EmptyLine>No material changes found yet.</EmptyLine>;
+              }
+              return (
+                <>
+                  {agentItems.length > 0 ? (
+                    <ul className="divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
+                      {agentItems.map((item) => renderItem(item))}
+                    </ul>
+                  ) : (
+                    <EmptyLine>No agent alerts yet.</EmptyLine>
+                  )}
+                  {metricItems.length > 0 ? (
+                    <details className="mt-4 rounded-lg border border-slate-800/80 bg-ink-soft/20">
+                      <summary className="cursor-pointer px-4 py-2.5 font-mono text-[11px] uppercase tracking-wide text-slate-500">
+                        Metric changes ({metricItems.length})
+                      </summary>
+                      <ul className="divide-y divide-slate-800/80 border-t border-slate-800/80">
+                        {metricItems.map((item) => renderItem(item, true))}
+                      </ul>
+                    </details>
+                  ) : null}
+                </>
+              );
+            })()}
           </section>
 
           <section aria-labelledby="watchlist-heading" className="mb-10">

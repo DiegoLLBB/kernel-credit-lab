@@ -336,10 +336,10 @@ def _fields_for_metric(metric: str) -> tuple[str, ...]:
         "due_12m": ("mat_next12",),
         "due_24m": ("mat_next12", "mat_year2"),
         "liquidity_coverage": ("cash", "mat_next12"),
-        "ebitda": ("opinc", "depreciation"),
-        "leverage": ("opinc", "depreciation"),
-        "net_leverage": ("opinc", "depreciation", "cash"),
-        "interest_coverage": ("opinc", "depreciation", "interest"),
+        "ebitda": ("opinc", "pretax", "depreciation", "interest"),
+        "leverage": ("opinc", "pretax", "depreciation", "interest"),
+        "net_leverage": ("opinc", "pretax", "depreciation", "interest", "cash"),
+        "interest_coverage": ("opinc", "pretax", "depreciation", "interest"),
         "fcf": ("ocf", "capex"),
         "fcf_to_debt": ("ocf", "capex"),
     }.get(metric, ())
@@ -584,23 +584,29 @@ def _feed_item(session: Session, alert: Alert, *, live: bool) -> FeedItemOut | N
         ba = None
         if after.get("metric") and alert.before_metrics:
             before = alert.before_metrics if isinstance(alert.before_metrics, dict) else {}
-            from app.insight.display import format_usd_display
+            from app.insight.display import format_multiple_display, format_usd_display
 
             b, a = before.get("value"), after.get("value")
+            before_disp = before.get("display")
+            after_disp = after.get("display")
+            if not before_disp and b is not None:
+                before_disp = (
+                    format_usd_display(b)
+                    if after.get("metric") == "due_12m"
+                    else format_multiple_display(float(b))
+                )
+            if not after_disp and a is not None:
+                after_disp = (
+                    format_usd_display(a)
+                    if after.get("metric") == "due_12m"
+                    else format_multiple_display(float(a))
+                )
             ba = BeforeAfterOut(
                 field=str(after.get("period") or after.get("metric")),
                 before=b,
                 after=a,
-                before_display=(
-                    format_usd_display(b)
-                    if after.get("metric") == "due_12m" and b is not None
-                    else (f"{float(b):.2f}×" if b is not None else None)
-                ),
-                after_display=(
-                    format_usd_display(a)
-                    if after.get("metric") == "due_12m" and a is not None
-                    else (f"{float(a):.2f}×" if a is not None else None)
-                ),
+                before_display=before_disp,
+                after_display=after_disp,
             )
     else:
         sentence, pending, _ = impact_for_alert(session, alert)
@@ -692,7 +698,10 @@ def credit_overview(
         ),
         reverse=True,
     )
-    feed = feed_items[:limit]
+    # Agent alerts lead the feed; metric alerts follow (UI collapses them).
+    agent_feed = [i for i in feed_items if i.kind != "metric"]
+    metric_feed = [i for i in feed_items if i.kind == "metric"]
+    feed = agent_feed[:limit] + metric_feed[: max(limit, 40)]
     live_feed = [i for i in feed_items if i.live][:limit]
     stats = live_stats(session)
     live_section = None

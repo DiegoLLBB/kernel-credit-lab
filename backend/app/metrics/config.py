@@ -25,6 +25,7 @@ TAG_FIELDS = (
     "cash",
     "st_investments",
     "opinc",
+    "pretax",
     "depreciation",
     "interest",
     "ocf",
@@ -32,6 +33,8 @@ TAG_FIELDS = (
     "mat_next12",
     "mat_year2",
 )
+
+TagValue = str | tuple[str, ...] | None
 
 
 @dataclass(frozen=True)
@@ -42,14 +45,24 @@ class IssuerMetricConfig:
     cik: str
     usable: bool
     unusable_reason: str | None = None
-    tags: dict[str, str | None] = field(default_factory=dict)
+    tags: dict[str, TagValue] = field(default_factory=dict)
     debt_extra: tuple[str, ...] = ()
     reasons: dict[str, str] = field(default_factory=dict)
+    # opinc_plus_da | pretax_plus_interest_plus_da | None
+    ebitda_compose: str | None = None
     history_years: int = 3
     wall_tolerance_pct: float = 2.0
 
-    def tag(self, field_name: str) -> str | None:
+    def tag(self, field_name: str) -> TagValue:
         return self.tags.get(field_name)
+
+    def tag_list(self, field_name: str) -> list[str]:
+        raw = self.tag(field_name)
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            return [raw] if raw else []
+        return [t for t in raw if t]
 
     def reason(self, field_name: str) -> str | None:
         return self.reasons.get(field_name)
@@ -83,7 +96,19 @@ _KNOWN_ENTRY_KEYS = set(TAG_FIELDS) | {
     "debt_extra",
     "revolver",
     "revolver_reason",
+    "ebitda_compose",
 }
+
+
+def _normalize_tag(value: Any) -> TagValue:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, (list, tuple)):
+        parts = tuple(str(v) for v in value if v)
+        return parts or None
+    return str(value)
 
 
 def entry_to_issuer_config(
@@ -101,11 +126,18 @@ def entry_to_issuer_config(
     if unknown:
         raise ValueError(f"xbrl config {key}: unknown keys {sorted(unknown)}")
     usable = bool(entry.get("xbrl", True))
-    tags = {f: entry.get(f) for f in TAG_FIELDS}
+    tags = {f: _normalize_tag(entry.get(f)) for f in TAG_FIELDS}
     reasons = {f: entry[f"{f}_reason"] for f in TAG_FIELDS if entry.get(f"{f}_reason")}
+    # pretax is an onboard fallback field; seed issuers omit it — record why.
+    if tags.get("pretax") is None and "pretax" not in reasons:
+        if tags.get("opinc"):
+            reasons["pretax"] = "Not used; operating income tag is configured."
+        else:
+            reasons["pretax"] = "No pretax tag configured."
     if entry.get("revolver_reason"):
         reasons["revolver"] = entry["revolver_reason"]
     debt_extra = tuple(entry.get("debt_extra") or ())
+    compose = entry.get("ebitda_compose")
     return IssuerMetricConfig(
         issuer_key=key,
         cik=str(entry.get("cik") or ""),
@@ -114,6 +146,7 @@ def entry_to_issuer_config(
         tags=tags,
         debt_extra=debt_extra,
         reasons=reasons,
+        ebitda_compose=str(compose) if compose else None,
         history_years=history_years,
         wall_tolerance_pct=wall_tolerance_pct,
     )

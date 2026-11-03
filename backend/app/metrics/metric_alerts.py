@@ -1,4 +1,8 @@
-"""Code-side metric alerts (risk-band crosses and due_12m jumps) — not the agent."""
+"""Code-side metric alerts (risk-band crosses and due_12m jumps) — not the agent.
+
+Only filings dated on/after the monitoring window (1 Jan 2026) create alerts.
+Titles show before → after values (not percentages above 100%).
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.charts.crosscheck import accession_url
+from app.insight.display import format_multiple_display, format_usd_display
 from app.metrics.peers import BANK_NA_METRICS, is_bank_sector
 from app.metrics.periods import prior_same_period
 from app.models import Alert, CreditMetric, Issuer
@@ -20,6 +25,8 @@ _RATIO_BAND_METRICS = (
 )
 _DUE12_JUMP_PCT = 25.0
 _LOOKBACK_DAYS = 400  # ~4 quarters of filed updates
+# Live monitoring window: metric alerts only for filings on/after this date.
+MONITOR_FROM = date(2026, 1, 1)
 
 _METRIC_LABELS = {
     "leverage": "Debt ÷ EBITDA",
@@ -52,8 +59,38 @@ def _filing_link(issuer: Issuer, row: CreditMetric) -> str | None:
     return accession_url(issuer.cik, row.accession)
 
 
+def _fmt_ratio(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return format_multiple_display(value)
+
+
+def _fmt_usd(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return format_usd_display(value)
+
+
+def _purge_out_of_window(session: Session) -> int:
+    """Delete metric alerts whose after-filing date is before MONITOR_FROM."""
+    removed = 0
+    for alert in list(session.scalars(select(Alert).where(Alert.kind == "metric")).all()):
+        after = alert.after_metrics if isinstance(alert.after_metrics, dict) else {}
+        filed_raw = after.get("filed")
+        filed: date | None = None
+        if isinstance(filed_raw, str) and filed_raw:
+            try:
+                filed = date.fromisoformat(filed_raw[:10])
+            except ValueError:
+                filed = None
+        if filed is None or filed < MONITOR_FROM:
+            session.delete(alert)
+            removed += 1
+    return removed
+
+
 def _series(session: Session, issuer_id: str, metric: str, as_of: date) -> list[CreditMetric]:
-    since = as_of - timedelta(days=_LOOKBACK_DAYS)
+    since = max(as_of - timedelta(days=_LOOKBACK_DAYS), MONITOR_FROM)
     return list(
         session.scalars(
             select(CreditMetric)
@@ -90,11 +127,13 @@ def scan_metric_alerts(
 ) -> dict[str, int]:
     """Create metric alerts for band crosses and due_12m ≥25% YoY jumps.
 
-    Idempotent via materiality_reasons dedupe keys. Backfills from the last ~4
-    quarters of filed metric rows.
+    Idempotent via materiality_reasons dedupe keys. Only rows with
+    ``filed >= MONITOR_FROM`` (1 Jan 2026) create alerts; older metric alerts
+    are purged.
     """
     as_of = as_of or date.today()
-    stats = {"created": 0, "skipped": 0, "issuers": 0}
+    stats = {"created": 0, "skipped": 0, "issuers": 0, "purged": 0}
+    stats["purged"] = _purge_out_of_window(session)
     q = select(Issuer).where(Issuer.parent_id.is_(None))
     if issuer_keys:
         q = q.where(Issuer.key.in_(issuer_keys))
@@ -104,14 +143,13 @@ def scan_metric_alerts(
         existing = _existing_keys(session, issuer.id)
         bank = is_bank_sector(issuer.sector)
 
-        # Risk-band crosses for ratio metrics.
         for metric in _RATIO_BAND_METRICS:
             if bank and metric in BANK_NA_METRICS:
                 continue
             rows = _series(session, issuer.id, metric, as_of)
             full = _full_series(session, issuer.id, metric, as_of)
             for row in rows:
-                if row.value is None:
+                if row.value is None or row.filed is None or row.filed < MONITOR_FROM:
                     continue
                 prior = prior_same_period(full, row)
                 if prior is None or prior.value is None:
@@ -129,9 +167,13 @@ def scan_metric_alerts(
                     continue
                 label = _METRIC_LABELS.get(metric, metric)
                 link = _filing_link(issuer, row)
+                before_v = float(prior.value)
+                after_v = float(row.value)
+                before_disp = _fmt_ratio(before_v)
+                after_disp = _fmt_ratio(after_v)
                 summary = (
-                    f"{label} moved from {before_flag} to {after_flag} "
-                    f"({prior.fiscal_label}: {prior.value} → {row.fiscal_label}: {row.value})"
+                    f"{label}: {before_disp} → {after_disp} "
+                    f"({before_flag} → {after_flag}; {prior.fiscal_label} → {row.fiscal_label})"
                 )
                 if link:
                     summary = f"{summary}. Filing: {link}"
@@ -140,20 +182,22 @@ def scan_metric_alerts(
                         issuer_id=issuer.id,
                         kind="metric",
                         title=(
-                            f"{issuer.name}: {label} {before_flag} → {after_flag} "
+                            f"{issuer.name}: {label} {before_disp} → {after_disp} "
                             f"({row.fiscal_label})"
                         ),
                         summary=summary,
                         before_metrics={
                             "metric": metric,
-                            "value": float(prior.value),
+                            "value": before_v,
+                            "display": before_disp,
                             "flag": before_flag,
                             "period": prior.fiscal_label,
                             "period_end": prior.period_end.isoformat(),
                         },
                         after_metrics={
                             "metric": metric,
-                            "value": float(row.value),
+                            "value": after_v,
+                            "display": after_disp,
                             "flag": after_flag,
                             "period": row.fiscal_label,
                             "period_end": row.period_end.isoformat(),
@@ -168,11 +212,10 @@ def scan_metric_alerts(
                 existing.add(key)
                 stats["created"] += 1
 
-        # due_12m up ≥25% YoY.
         due_rows = _series(session, issuer.id, "due_12m", as_of)
         due_full = _full_series(session, issuer.id, "due_12m", as_of)
         for row in due_rows:
-            if row.value is None:
+            if row.value is None or row.filed is None or row.filed < MONITOR_FROM:
                 continue
             prior = prior_same_period(due_full, row)
             if prior is None or prior.value is None:
@@ -188,9 +231,13 @@ def scan_metric_alerts(
                 stats["skipped"] += 1
                 continue
             link = _filing_link(issuer, row)
+            before_v = float(prior.value)
+            after_v = float(row.value)
+            before_disp = _fmt_usd(before_v)
+            after_disp = _fmt_usd(after_v)
             summary = (
-                f"Debt due in 12 months rose {pct:.1f}% "
-                f"({prior.fiscal_label}: {prior.value} → {row.fiscal_label}: {row.value})"
+                f"Debt due in 12 months: {before_disp} → {after_disp} "
+                f"({prior.fiscal_label} → {row.fiscal_label})"
             )
             if link:
                 summary = f"{summary}. Filing: {link}"
@@ -199,18 +246,21 @@ def scan_metric_alerts(
                     issuer_id=issuer.id,
                     kind="metric",
                     title=(
-                        f"{issuer.name}: debt due in 12 months up {pct:.1f}% ({row.fiscal_label})"
+                        f"{issuer.name}: debt due in 12 months "
+                        f"{before_disp} → {after_disp} ({row.fiscal_label})"
                     ),
                     summary=summary,
                     before_metrics={
                         "metric": "due_12m",
-                        "value": float(prior.value),
+                        "value": before_v,
+                        "display": before_disp,
                         "period": prior.fiscal_label,
                         "period_end": prior.period_end.isoformat(),
                     },
                     after_metrics={
                         "metric": "due_12m",
-                        "value": float(row.value),
+                        "value": after_v,
+                        "display": after_disp,
                         "period": row.fiscal_label,
                         "period_end": row.period_end.isoformat(),
                         "change_pct": pct,

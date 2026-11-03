@@ -171,6 +171,15 @@ jobs:
             --cpu=1 --memory=1Gi --task-timeout=600 --max-retries=0 \
             --command=python --args="-m,scripts.metric_alerts_job"
 
+      - name: Deploy refresh-sectors job
+        run: |
+          # Re-stamp GICS sectors from seed/issuer_sectors.yaml + rescan metric alerts.
+          gcloud run jobs deploy kernel-refresh-sectors --region="$REGION" --image="$REGISTRY/api:$SHA" \
+            --service-account="$RUNTIME_SA" --set-cloudsql-instances="$SQL_INSTANCE" \
+            --set-secrets="$JOB_SECRETS" --set-env-vars="$JOB_ENV_VARS" \
+            --cpu=1 --memory=1Gi --task-timeout=600 --max-retries=0 \
+            --command=python --args="-m,scripts.refresh_sectors_job"
+
       - name: Ensure live scheduler
         run: |
           # Idempotent: 07:00 and 19:00 Europe/Madrid → kernel-live.

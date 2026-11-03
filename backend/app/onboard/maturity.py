@@ -48,8 +48,14 @@ def build_maturity_buckets(
     as_of (balance-sheet date). Missing year tags are omitted — never estimated.
     """
     cutoff = as_of or date.today()
-    next12_tag = MATURITY_WALL_TAGS[0][1]
-    anchor = _fy_instant(doc, next12_tag, as_of=cutoff)
+    from app.onboard.tags import CANDIDATES
+
+    next12_candidates = CANDIDATES.get("mat_next12") or (MATURITY_WALL_TAGS[0][1],)
+    anchor = None
+    for tag in next12_candidates:
+        anchor = _fy_instant(doc, tag, as_of=cutoff)
+        if anchor is not None:
+            break
     if anchor is None:
         for key, tag in MATURITY_WALL_TAGS[1:]:
             if key == "thereafter":

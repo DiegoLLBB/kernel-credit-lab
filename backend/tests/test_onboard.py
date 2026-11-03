@@ -69,10 +69,23 @@ def db_session():
 
 
 def test_sector_from_sic():
-    assert sector_from_sic(7372, "Services-Prepackaged Software") == "Technology"
-    assert sector_from_sic(4813, "Telephone Communications") == "Telecommunications"
+    assert sector_from_sic(7372, "Services-Prepackaged Software") == "Information Technology"
+    assert sector_from_sic(4813, "Telephone Communications") == "Communication Services"
     assert sector_from_sic(4911, "Electric Services") == "Utilities"
     assert sector_from_sic(3721, "Aircraft") == "Industrials"
+
+
+def test_resolve_sector_gics_map():
+    from app.onboard.sectors import resolve_sector
+
+    sector, src = resolve_sector("PG")
+    assert sector == "Consumer Staples"
+    assert src == "gics_map"
+    sector, src = resolve_sector("XOM")
+    assert sector == "Energy"
+    sector, src = resolve_sector("ZZZZNOPE", 4911, "Electric Services")
+    assert sector == "Utilities (SIC)"
+    assert src == "sic"
 
 
 def test_resolve_ticker():
