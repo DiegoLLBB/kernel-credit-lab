@@ -391,7 +391,7 @@ def _template_lead_sentence(facts: dict[str, Any]) -> str | None:
         meaning = ", lifting near-term maturities"
     elif "convertible" in title:
         hook, meaning = " after convertible notes", ""
-    elif "redem" in title:
+    elif "redeem" in title or "redemption" in title:
         hook, meaning = " after the notes redemption", ""
     elif "tender" in title:
         hook, meaning = " after the tender", ""

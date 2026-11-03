@@ -322,8 +322,8 @@ def _impact_hook(facts: dict[str, Any]) -> str:
         return " after it closed a euro notes offering"
     if "convertible" in title:
         return " after convertible notes"
-    # "redem" matches redeem / redemption / redeemed (before bare "note").
-    if "redem" in title:
+    # Match redeem / redemption / redeemed before bare "note"/"notes".
+    if "redeem" in title or "redemption" in title:
         return " after the notes redemption"
     if "tender" in title:
         return " after the tender"
