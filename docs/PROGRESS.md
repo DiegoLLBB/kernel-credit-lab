@@ -352,5 +352,8 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
       only on that track; later hardening left `web/` and agent frozen.
     - **Hardening:** secret scan (no real keys), MIT license, `scripts/diagnostics/`, fresh-clone
       `make seed` tolerates missing FRED key, logged-run summary on snapshot timeline, Cloud
-      Monitoring `/health` uptime + email, confirm min-instances=1 and live schedulers, DEPLOY
-      notes SQL trial ≈27 Jan 2027 and $20 budget already present.
+      Monitoring `/health` uptime + email to diegolobo020@gmail.com, confirm min-instances=1 and
+      live schedulers, DEPLOY notes SQL trial ≈27 Jan 2027 and $20 budget already present.
+    - **Muse Wonder coding credits** ran out the afternoon of **3 Nov 2026**; later commits use
+      other tools (no `(Muse Wonder)` trailer). Runtime product models (Spark / Spark Open /
+      Wonder brief / SAM) unchanged.
