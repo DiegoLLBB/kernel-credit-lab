@@ -231,3 +231,15 @@ export function wallAmount(v: string | number | null | undefined): number {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : 0;
 }
+
+/**
+ * A maturity schedule older than ~18 months before the page date can't stand for today's
+ * debt profile (e.g. a schedule last tagged in a 2012 10-K). Callers say so instead of drawing it.
+ */
+export function isStaleSchedule(scheduleAsOf: string | null | undefined, asOf: string | null | undefined): boolean {
+  if (!scheduleAsOf) return false;
+  const s = Date.parse(scheduleAsOf);
+  const ref = asOf ? Date.parse(asOf) : Date.now();
+  if (!Number.isFinite(s) || !Number.isFinite(ref)) return false;
+  return ref - s > 548 * 24 * 60 * 60 * 1000;
+}

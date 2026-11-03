@@ -5,7 +5,8 @@ export function ReplayVerdictBadge({
   verdict: string | null | undefined;
   reason?: string | null;
 }) {
-  if (!verdict) return null;
+  // Live alerts are never scored against the replay test set; "not yet scored" only confuses.
+  if (!verdict || verdict === "not yet scored") return null;
   const styles: Record<string, string> = {
     correct: "border-memo-reduced/50 bg-[#E7F0EB] text-memo-reduced",
     "caught, numbers wrong": "border-memo-watch/50 bg-[#F4EEDF] text-memo-watch",

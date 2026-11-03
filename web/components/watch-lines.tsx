@@ -1,5 +1,5 @@
 import type { MaturityWall, MetricTile } from "@/lib/api";
-import { formatUsdDisplay, wallAmount } from "@/lib/format";
+import { formatUsdDisplay, isStaleSchedule, wallAmount } from "@/lib/format";
 
 /**
  * "What to watch": a few plain sentences computed in code from figures already on the page.
@@ -29,33 +29,30 @@ function toneFromFlag(flag: MetricTile["flag"]): WatchTone {
 }
 
 export function watchLines(metrics: MetricTile[], wall: MaturityWall | null | undefined): WatchLine[] {
+  if (wall && isStaleSchedule(wall.schedule_as_of, wall.as_of)) wall = null;
   const by = new Map(metrics.map((m) => [m.metric, m]));
   const out: WatchLine[] = [];
 
-  // 1. Can it pay what comes due? Cash plus undrawn lines against the next 24 months.
-  const due24 = num(by.get("due_24m")?.value);
-  const cash = num(by.get("cash")?.value);
-  const undrawn = num(by.get("undrawn_facilities")?.value);
+  // 1. Can it pay what comes due? Uses the cover ratio and the 24-month amount only when
+  //    both come from the same period, so the sentence never mixes a 10-K with a later 10-Q.
+  const dueT = by.get("due_24m");
+  const due24 = num(dueT?.value);
   const totalT = by.get("liquidity_coverage_total");
-  const cover = num(totalT?.value);
-  if (due24 !== null && due24 > 0 && cash !== null) {
-    if (undrawn !== null && cover !== null) {
-      const avail = cash + undrawn;
-      out.push({
-        text:
-          cover < 1
-            ? `${formatUsdDisplay(due24)} falls due in the next 24 months, more than its ${formatUsdDisplay(avail)} of cash and undrawn credit lines (${cover.toFixed(2)}× cover).`
-            : `${formatUsdDisplay(due24)} falls due in the next 24 months against ${formatUsdDisplay(avail)} of cash and undrawn credit lines (${cover.toFixed(2)}× cover).`,
-        tone: cover < 1 ? "risk" : toneFromFlag(totalT?.flag ?? null),
-        anchor: "metric-liquidity_coverage_total",
-      });
-    } else {
-      out.push({
-        text: `${formatUsdDisplay(due24)} falls due in the next 24 months against ${formatUsdDisplay(cash)} of cash; its undrawn credit lines aren't reported in a form Kernel can read.`,
-        tone: cash < due24 ? "watch" : "ok",
-        anchor: "metric-due_24m",
-      });
-    }
+  const cashT = by.get("liquidity_coverage");
+  const coverT = num(totalT?.value) !== null ? totalT : num(cashT?.value) !== null ? cashT : undefined;
+  const cover = num(coverT?.value);
+  if (due24 !== null && due24 > 0 && cover !== null && coverT && coverT.period_end === dueT?.period_end) {
+    const period = coverT.fiscal_label ?? "the latest filing";
+    const withLines = coverT === totalT;
+    const what = withLines ? "cash and undrawn credit lines" : "cash alone";
+    out.push({
+      text:
+        `At ${period}, ${what} covered the ${formatUsdDisplay(due24)} due over the next 24 months ` +
+        `${cover.toFixed(2)}×${cover < 1 ? ", less than the amount coming due" : ""}.` +
+        (withLines ? "" : " Its undrawn credit lines aren't in a form Kernel can read."),
+      tone: cover < 1 ? "risk" : withLines ? toneFromFlag(totalT?.flag ?? null) : cover < 1.5 ? "watch" : "ok",
+      anchor: withLines ? "metric-liquidity_coverage_total" : "metric-liquidity_coverage",
+    });
   }
 
   // 2. Leverage over the year.

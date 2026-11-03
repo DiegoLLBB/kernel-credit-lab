@@ -38,6 +38,18 @@ LIVE_EDGAR_FORMS = (
 
 _424B_RE = re.compile(r"^424B", re.I)
 
+# Banks file pricing supplements for structured notes they sell to customers under
+# 424B2/424B3 many times a day. They don't change the bank's own debt profile, and
+# reading each one would spend the live budget, so live mode skips them for banks.
+_BANK_NOTE_FORMS = frozenset({"424B2", "424B3"})
+
+
+def is_bank_structured_note(sector: str | None, form: str | None) -> bool:
+    """True for a bank's structured-note pricing supplement (not monitored live)."""
+    from app.metrics.peers import is_bank_sector
+
+    return is_bank_sector(sector) and (form or "").upper().replace(" ", "") in _BANK_NOTE_FORMS
+
 
 @dataclass(frozen=True)
 class LiveDocument:
@@ -205,6 +217,7 @@ def poll_edgar_for_issuer(
         if r.accession not in {x.accession for x in refs}
     ]
     refs = list(refs) + extra
+    refs = [r for r in refs if not is_bank_structured_note(issuer.sector, getattr(r, "form", None))]
     out: list[LiveDocument] = []
     for ref in refs:
         rows = edgar.upsert_filings(session, issuer, [ref])
@@ -347,7 +360,13 @@ def pending_live_events(session: Session) -> list[Event]:
         ).all()
     )
     out: list[Event] = []
+    sectors: dict[str, str | None] = {}
     for event in events:
+        if event.issuer_id not in sectors:
+            iss = session.get(Issuer, event.issuer_id) if event.issuer_id else None
+            sectors[event.issuer_id] = iss.sector if iss else None
+        if is_bank_structured_note(sectors[event.issuer_id], event.event_type):
+            continue
         run = session.get(AgentRun, event.run_id) if event.run_id else None
         if run is not None and run.status in _LIVE_TERMINAL_RUN:
             continue
@@ -520,12 +539,18 @@ def live_document_rows(session: Session) -> list[dict[str, Any]]:
             select(Event)
             .where(Event.source == "live")
             .order_by(Event.event_date.desc(), Event.detected_at.desc())
-            .limit(40)
+            .limit(400)
         ).all()
     )
     for event in events:
+        if len(rows) >= 40:
+            break
         run = session.get(AgentRun, event.run_id) if event.run_id else None
         status = (run.status if run else event.status) or "pending"
+        if status in {"pending", "processing"} and event.issuer_id:
+            iss = session.get(Issuer, event.issuer_id)
+            if iss is not None and is_bank_structured_note(iss.sector, event.event_type):
+                continue
         if status == "needs_input" or status == "refused":
             raw_outcome = "needs_input"
         elif status in {"alerted", "logged", "paused", "failed", "pending", "processing"}:
@@ -573,28 +598,58 @@ def live_document_rows(session: Session) -> list[dict[str, Any]]:
     return rows
 
 
+def _live_outcomes(session: Session) -> list[str]:
+    """Outcome label for every live event, in one query (the overview counts these)."""
+    from app.models import Alert
+    from app.models.trace import AgentRun
+
+    alerted_events = set(
+        session.scalars(select(Alert.event_id).where(Alert.event_id.is_not(None))).all()
+    )
+    rows = session.execute(
+        select(Event.id, Event.status, Event.event_type, AgentRun.status, Issuer.sector)
+        .outerjoin(AgentRun, AgentRun.id == Event.run_id)
+        .outerjoin(Issuer, Issuer.id == Event.issuer_id)
+        .where(Event.source == "live")
+    ).all()
+    out: list[str] = []
+    for event_id, event_status, event_type, run_status, sector in rows:
+        status = (run_status or event_status or "pending").lower()
+        if status in {"pending", "processing"} and is_bank_structured_note(sector, event_type):
+            continue
+        if status in {"needs_input", "refused"}:
+            raw = "needs_input"
+        elif status in {"alerted", "logged", "paused", "failed", "pending", "processing"}:
+            raw = status
+        elif event_id in alerted_events:
+            raw = "alerted"
+        elif (event_status or "") == "processed":
+            raw = "logged"
+        else:
+            raw = status
+        out.append(_normalize_live_outcome(raw))
+    return out
+
+
 def live_stats(session: Session) -> dict[str, Any]:
-    """Counts for the overview Live section (never mixed into replay score)."""
+    """Counts for the overview Live section (never mixed into replay score).
+
+    Counts cover every live event; ``documents`` is the newest slice for the list.
+    "Documents read" excludes documents still waiting to be read.
+    """
     documents = live_document_rows(session)
-    alerted = logged = refused = paused = failed = 0
-    for row in documents:
-        outcome = row["outcome"]
-        if outcome == _OUTCOME_RAISED:
-            alerted += 1
-        elif outcome == _OUTCOME_REVIEWED:
-            logged += 1
-        elif outcome == _OUTCOME_ANALYST:
-            refused += 1
-        elif outcome == _OUTCOME_PAUSED:
-            paused += 1
-        elif outcome == _OUTCOME_FAILED:
-            failed += 1
+    outcomes = _live_outcomes(session)
+    alerted = sum(1 for o in outcomes if o == _OUTCOME_RAISED)
+    logged = sum(1 for o in outcomes if o == _OUTCOME_REVIEWED)
+    refused = sum(1 for o in outcomes if o == _OUTCOME_ANALYST)
+    paused = sum(1 for o in outcomes if o == _OUTCOME_PAUSED)
+    failed = sum(1 for o in outcomes if o == _OUTCOME_FAILED)
     cfg = session.scalars(select(LiveConfig).limit(1)).first()
     return {
         "go_live_at": cfg.go_live_at.isoformat() if cfg else None,
         "git_sha": cfg.git_sha if cfg else None,
         "prompt_version": cfg.prompt_version if cfg else None,
-        "documents_read": len(documents),
+        "documents_read": alerted + logged + refused + paused + failed,
         "alerted": alerted,
         "logged": logged,
         "refused": refused,

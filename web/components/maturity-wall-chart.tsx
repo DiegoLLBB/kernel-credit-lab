@@ -1,7 +1,7 @@
 "use client";
 
 import type { MaturityWall } from "@/lib/api";
-import { formatUsdDisplay, wallAmount } from "@/lib/format";
+import { formatDate, formatUsdDisplay, isStaleSchedule, wallAmount } from "@/lib/format";
 
 const DISPLAY_LABELS = ["FY2026", "FY2027", "FY2028", "FY2029"];
 
@@ -36,6 +36,19 @@ export function MaturityWallChart({
       <div>
         <h4 className="mb-2 text-sm font-medium text-memo-muted">{title}</h4>
         <p className="text-sm text-memo-muted">No debt schedule for this date.</p>
+      </div>
+    );
+  }
+
+  if (isStaleSchedule(wall.schedule_as_of, wall.as_of)) {
+    return (
+      <div>
+        <h4 className="mb-2 text-sm font-medium text-memo-muted">{title}</h4>
+        <p className="max-w-[60ch] text-sm text-memo-muted">
+          The latest debt-maturity schedule in this company&apos;s SEC data is from{" "}
+          {formatDate(wall.schedule_as_of)}, too old to show as today&apos;s profile. Kernel leaves it
+          out rather than draw years that have already passed.
+        </p>
       </div>
     );
   }

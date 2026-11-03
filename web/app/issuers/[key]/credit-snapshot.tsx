@@ -119,7 +119,9 @@ export function CreditSnapshot({
         </div>
       ) : snapshot.insight_pending ? (
         <p className="mt-3 text-sm text-memo-muted">
-          The written summary covers the latest figures; move the date slider to today to read it.
+          {asOf && asOf < new Date().toISOString().slice(0, 10)
+            ? "Written summaries cover today's figures; move the date slider to today to read it. The figures below are for the date shown."
+            : "The written summary for these figures hasn't been generated yet. The figures below are final; the summary follows after the next scheduled update."}
         </p>
       ) : null}
 

@@ -288,3 +288,79 @@ def test_pending_live_events_one_resume_then_skip():
 
     db.close()
     engine.dispose()
+
+
+def test_bank_structured_notes_are_not_monitored_and_stats_cover_all_events():
+    """Bank 424B2/424B3 pricing supplements stay out of the queue, list and counts;
+    counts cover every live event, not just the newest slice."""
+    from datetime import date as date_cls
+
+    from app.ingest.live import (
+        is_bank_structured_note,
+        live_stats,
+        pending_live_events,
+    )
+    from app.models import Alert, Event, Issuer
+    from app.models.trace import AgentRun
+
+    assert is_bank_structured_note("Financials", "424B2")
+    assert is_bank_structured_note("Banks", "424b3")
+    assert not is_bank_structured_note("Financials", "10-Q")
+    assert not is_bank_structured_note("Information Technology", "424B2")
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    bank = Issuer(key="jpm", name="JPMorgan Chase & Co.", ticker="JPM", sector="Financials")
+    corp = Issuer(
+        key="amazon", name="Amazon.com, Inc.", ticker="AMZN", sector="Consumer Discretionary"
+    )
+    db.add_all([bank, corp])
+    db.flush()
+
+    def _event(issuer: Issuer, key: str, form: str, day: int, status: str = "pending") -> Event:
+        ev = Event(
+            issuer_id=issuer.id,
+            event_type=form,
+            event_date=date_cls(2026, 11, day),
+            source="live",
+            status=status,
+            replay_key=key,
+            summary=key,
+        )
+        db.add(ev)
+        db.flush()
+        return ev
+
+    # An older live alert that would fall outside a 40-row slice.
+    old = _event(corp, "live:amzn:10q", "10-Q", 1, status="processed")
+    run = AgentRun(event_id=old.id, question="q", workflow="event_monitor", status="alerted")
+    db.add(run)
+    db.flush()
+    old.run_id = run.id
+    db.add(
+        Alert(event_id=old.id, issuer_id=corp.id, run_id=run.id, title="Term loan", status="new")
+    )
+
+    notes = [_event(bank, f"live:jpm:note{i}", "424B2", 3) for i in range(45)]
+    bank_10q = _event(bank, "live:jpm:10q", "10-Q", 3)
+    corp_8k = _event(corp, "live:amzn:8k", "8-K", 2)
+    db.commit()
+
+    queued = {e.id for e in pending_live_events(db)}
+    assert not queued & {n.id for n in notes}
+    assert bank_10q.id in queued and corp_8k.id in queued
+
+    stats = live_stats(db)
+    assert stats["alerted"] == 1  # still counted although newer rows exceed the list cap
+    assert stats["documents_read"] == 1  # pending documents are not "read"
+    listed = {d["event_id"] for d in stats["documents"]}
+    assert not listed & {n.id for n in notes}
+    assert old.id in listed
+
+    db.close()
+    engine.dispose()
