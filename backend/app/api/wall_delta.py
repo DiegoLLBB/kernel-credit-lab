@@ -48,9 +48,7 @@ def recomputed_walls(
     return before, after, deltas
 
 
-def primary_wall_before_after(
-    session: Session, alert: Alert
-) -> dict[str, Any] | None:
+def primary_wall_before_after(session: Session, alert: Alert) -> dict[str, Any] | None:
     """Largest absolute wall move for feed/timeline cards."""
     _before, _after, deltas = recomputed_walls(session, alert)
     best: dict[str, Any] | None = None
