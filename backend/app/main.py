@@ -7,7 +7,18 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import alerts, charts, credit, documents, health, issuers, replay, runs
+from app.api import (
+    alerts,
+    charts,
+    credit,
+    documents,
+    exports,
+    health,
+    issuers,
+    maturities,
+    replay,
+    runs,
+)
 from app.config import get_settings
 from app.core.logging import configure_logging, request_id_var
 
@@ -57,8 +68,10 @@ async def request_context(request: Request, call_next):
 app.include_router(health.router)
 app.include_router(runs.router)
 app.include_router(alerts.router)
+app.include_router(exports.router)
 app.include_router(issuers.router)
 app.include_router(credit.router)
+app.include_router(maturities.router)
 app.include_router(documents.router)
 app.include_router(charts.router)
 app.include_router(replay.router)
