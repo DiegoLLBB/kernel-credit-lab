@@ -1,7 +1,7 @@
 """Probe Meta Model API /responses for function tools (OpenAI Responses-style).
 
 Usage (from backend/, with .env filled in):
-    python -m scripts.probe_tools
+    python -m scripts.diagnostics.probe_tools
 
 Sends one turn that must call get_weather(city), prints the raw ``output`` items,
 then submits a function_call_output follow-up and prints the final answer.

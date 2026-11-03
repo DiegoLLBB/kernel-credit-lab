@@ -1,8 +1,8 @@
 """Smoke-test every configured model provider.
 
 Usage (from backend/, with .env filled in):
-    python -m scripts.smoke_models                 # list models + ping all configured models
-    python -m scripts.smoke_models --image page.png  # also test the vision model on a page
+    python -m scripts.diagnostics.smoke_models                 # list models + ping all configured models
+    python -m scripts.diagnostics.smoke_models --image page.png  # also test the vision model on a page
 
 What it checks:
   1. Which model IDs the Meta Model API actually exposes (GET /models).

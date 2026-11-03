@@ -1,8 +1,10 @@
 # Kernel Credit Lab — Product, Hackathon & Build Context
 
-**Original plan (28 Oct). What was built: see [README](../README.md).**
+> **Historical plan (frozen 28 Oct).** This file is the original product/hackathon brief, not the
+> live feature list. **What shipped:** [README](../README.md). **Day-by-day decisions:**
+> [PROGRESS.md](PROGRESS.md). **Architecture snapshot:** [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md).
 
-*Living document — the single source of truth for the project. Last updated 28 Oct 2026 (day 2: product reframed as a proactive monitor). Supersedes the v1 and v2 PDFs. Dated changes and decisions are logged in [PROGRESS.md](PROGRESS.md).*
+*Last updated 28 Oct 2026 (day 2: product reframed as a proactive monitor). Supersedes the v1 and v2 PDFs.*
 
 > **28 Oct 2026 — direction change:** Kernel is a **proactive credit monitor**, not a question-driven research tool. It watches a watchlist of issuers, reacts to events (filings, redemptions, tenders, rate moves, approaching maturities), updates its data, recomputes, verifies and raises only material alerts. Questions remain as a secondary drill-down. The engine (state, tools, verifier, critic, trace) is unchanged; the trigger is. See §1, §3, §7–9, §14 and Part C.
 >

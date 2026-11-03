@@ -17,7 +17,7 @@ lint:
 	docker compose exec api ruff format --check .
 
 smoke:         ## Ping every configured model; IMAGE=path/to/page.png to test SAM 3.1
-	docker compose exec api python -m scripts.smoke_models $(if $(IMAGE),--image $(IMAGE),)
+	docker compose exec api python -m scripts.diagnostics.smoke_models $(if $(IMAGE),--image $(IMAGE),)
 
 migrate:
 	docker compose exec api alembic upgrade head

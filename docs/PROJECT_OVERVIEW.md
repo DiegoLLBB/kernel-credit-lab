@@ -71,7 +71,7 @@ Kernel's answer:
 |---|---|
 | Asset class | USD investment-grade corporate bonds |
 | Geography | United States |
-| Issuers | 9 entities (Duke Energy Corp holdco + 3 opcos, Oracle, Verizon, Boeing, Intel, Amazon) |
+| Issuers | Seed core: 9 entities (Duke Energy Corp holdco + 3 opcos, Oracle, Verizon, Boeing, Intel, Amazon). Live watchlist also includes later onboarded roots (e.g. MSFT, JPM, JNJ, CAT, NEE, PG, T, WMT) — see overview watchlist |
 | Instruments | ~33 instruments in seed (all 2026–2029 Duke debt + named bonds/loans for others), 21 bonds + 2 term loans originally curated, expanded for the wall |
 | Documents | Latest 10-K/10-Q, recent 8-Ks, earnings releases, selected 424B supplements, 5 investor decks (for charts) |
 | Events | Watched going forward; **replay window Jan–Oct 2026** for demo + eval (29 real events) |
@@ -321,7 +321,7 @@ Postgres 16 + pgvector  ◄── ARQ worker (ingestion, runs, replay) ◄──
 | `models/` | `credit.py`, `verification.py`, `trace.py` |
 | `core/logging.py`, `db.py`, `config.py`, `main.py`, `worker.py` | Structured JSON logs (request/run/step IDs); session management; settings (models, pricing, guardrails, SEC/FRED); FastAPI app; ARQ worker |
 | `seed/` | `snapshot_2025-12-31.json` (9 issuers, 33 instruments, 9 schedules, watchlist, sources), `replay_events_2026.json` (29 events + end-state checks), `decks.yaml`, `newsrooms.yaml` |
-| `scripts/` | `seed_job`, `run_replay`, `decks_job`/`fetch_decks`/`process_decks`/`dump_charts`, `run_one_event`, `load_seed`, `smoke_models`, `chart_demo` |
+| `scripts/` | Cloud jobs: `seed_job`, `run_replay`, `decks_job`/`fetch_decks`/`process_decks`, `run_one_event`, `load_seed`, `live_job`, `insight_job`, `onboard_job`, … One-offs live under `scripts/diagnostics/` (`smoke_*`, `chart_demo`, `rescore_eval`, …) |
 | `alembic/versions/` | 0001 run-trace → 0019 replay-evaluation (incl. verification tables, instrument key/currency/maturity-precision/effective-date, filing-url uniqueness, rate observations, replay expectations, agent runs, alert claims, chart readings) |
 
 ---

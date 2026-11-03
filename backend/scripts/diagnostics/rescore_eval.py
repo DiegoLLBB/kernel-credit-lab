@@ -1,7 +1,7 @@
 """Rescore agent + baseline ReplayEvaluation rows (no model calls).
 
 Usage (from backend/):
-    python -m scripts.rescore_eval
+    python -m scripts.diagnostics.rescore_eval
 """
 
 from __future__ import annotations

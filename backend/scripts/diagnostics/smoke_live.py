@@ -2,8 +2,8 @@
 
 Fails on any non-200 or empty required field. Used after deploy and locally:
 
-    python -m scripts.smoke_live
-    python -m scripts.smoke_live --base-url https://kernel-credit-lab.web.app
+    python -m scripts.diagnostics.smoke_live
+    python -m scripts.diagnostics.smoke_live --base-url https://kernel-credit-lab.web.app
 """
 
 from __future__ import annotations

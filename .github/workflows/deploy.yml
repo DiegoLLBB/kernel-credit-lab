@@ -226,5 +226,5 @@ jobs:
             sleep 10
           done
           # Full route + API smoke (fails deploy on non-200 / empty required fields).
-          docker run --rm --entrypoint python "$REGISTRY/api:$SHA" -m scripts.smoke_live --base-url "$SITE_URL"
+          docker run --rm --entrypoint python "$REGISTRY/api:$SHA" -m scripts.diagnostics.smoke_live --base-url "$SITE_URL"
           echo "live: $SITE_URL ($SHA)"

@@ -1,7 +1,7 @@
 """Read every bar chart in an image and verify the reading against bar geometry.
 
 Usage (from backend/):
-    python -m scripts.chart_demo slide.png
+    python -m scripts.diagnostics.chart_demo slide.png
 Writes <image>_annotated.png next to the input: charts in blue, verified bars in green,
 flagged bars in red.
 """
