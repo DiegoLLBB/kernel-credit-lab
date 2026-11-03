@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import logo from "./kernel-logo.png";
 
 const LINKS = [
   { href: "/", label: "Overview" },
@@ -14,12 +15,20 @@ export function Nav() {
 
   return (
     <header className="no-print border-b border-memo-rule bg-paper">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <div className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-10">
         <Link
           href="/"
-          className="text-base font-semibold text-memo-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          aria-label="Kernel, home"
+          className="inline-flex items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
         >
-          Kernel Credit Lab
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={logo.src}
+            width={logo.width}
+            height={logo.height}
+            alt="Kernel Terminal"
+            className="h-6 w-auto sm:h-7"
+          />
         </Link>
         <nav aria-label="Primary" className="flex flex-wrap gap-1">
           {LINKS.map(({ href, label }) => {
