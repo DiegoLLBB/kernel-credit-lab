@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
 import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
 import { AlertStatusChip } from "@/components/status-chip";
-import { DebtByYear, yearLabel } from "@/components/debt-by-year";
+import { DebtByYear, sourceLine, yearLabel } from "@/components/debt-by-year";
 import {
   getJson,
   postJson,
@@ -17,6 +17,7 @@ import {
 import {
   formatBeforeAfter,
   formatDate,
+  formatUsdDisplay,
   formatUsdMillions,
 } from "@/lib/format";
 
@@ -171,7 +172,11 @@ export function AlertDetailClient() {
             ) : null}
             {alert.materiality_reasons.length > 0 ? (
               <p className="mt-3 max-w-[70ch] text-sm text-memo-muted">
-                Why it matters: {alert.materiality_reasons.join("; ")}.
+                Why it matters:{" "}
+                {alert.materiality_reasons
+                  .map((r) => r.replace(/\$([\d,]{10,})/g, (_, n: string) => formatUsdDisplay(n)))
+                  .join("; ")}
+                .
               </p>
             ) : null}
           </header>
@@ -199,7 +204,7 @@ export function AlertDetailClient() {
                 {alert.agent_affected_buckets!.map((b, i) => (
                   <span key={`agent-${b.label}`}>
                     {i > 0 ? "; " : ""}
-                    {yearLabel(b.label)} {formatUsdMillions(b.before)} → {formatUsdMillions(b.after)}
+                    {yearLabel(b.label)} {formatUsdDisplay(b.before)} → {formatUsdDisplay(b.after)}
                   </span>
                 ))}
               </p>
@@ -232,7 +237,7 @@ export function AlertDetailClient() {
                           <span className="quote-mark">{c.exact_quote}</span>
                         </blockquote>
                         <p className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-memo-muted">
-                          <span>{[c.document_title, c.location].filter(Boolean).join(", ")}</span>
+                          <span>{sourceLine(c)}</span>
                           {c.filing_id ? (
                             <Link
                               href={`/documents/${c.filing_id}?fact=${c.id}${c.page != null ? `&page=${c.page}` : ""}`}

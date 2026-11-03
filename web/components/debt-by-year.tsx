@@ -2,9 +2,27 @@
 
 import Link from "next/link";
 import type { CitedFactOut, FindingOut, MaturityWall, WallBucketDelta } from "@/lib/api";
-import { formatUsdMillions, formatUsdMillionsDelta, wallAmount } from "@/lib/format";
+import { formatUsdDisplay, wallAmount } from "@/lib/format";
+
+const money = (v: number) => formatUsdDisplay(v);
+const delta = (before: number, after: number) => {
+  const d = after - before;
+  return `${d > 0 ? "+" : d < 0 ? "−" : ""}${formatUsdDisplay(Math.abs(d))}`;
+};
+/** Changes under $100M or 1% of the year are FX or rounding, not news. */
+const isNoise = (before: number, after: number) =>
+  Math.abs(after - before) < Math.max(100_000_000, 0.01 * Math.max(before, after));
+
+/** Readable source line: "amzn-20260930.htm, page 12" instead of raw offsets. */
+export function sourceLine(c: CitedFactOut): string {
+  const doc = (c.document_title ?? "").replace(/\.html?$/i, "");
+  const page = c.page != null ? `page ${c.page + 1}` : /page=(\d+)/.exec(c.location ?? "")?.[1];
+  const pageText = typeof page === "string" && /^\d+$/.test(page) ? `page ${Number(page) + 1}` : page;
+  return [doc, pageText].filter(Boolean).join(", ");
+}
 
 const ORDER = ["FY2026", "FY2027", "FY2028", "FY2029", "FY2030"];
+const SHOWN = new Set(ORDER);
 
 export function yearLabel(label: string): string {
   const m = /^after\s*FY(\d{4})$/i.exec(label.trim());
@@ -54,10 +72,8 @@ export function DebtByYear({
     ...Object.keys(beforeWall?.buckets ?? {}),
     ...affected.map((a) => a.label),
   ]);
-  const labels = [
-    ...ORDER.filter((l) => present.has(l)),
-    ...[...present].filter((l) => !ORDER.includes(l)).sort(),
-  ];
+  const labels = ORDER.filter((l) => present.has(l));
+  const later = [...present].filter((l) => !SHOWN.has(l));
   if (labels.length === 0) {
     return <p className="text-sm text-memo-muted">No debt-by-year figures on this alert.</p>;
   }
@@ -65,7 +81,11 @@ export function DebtByYear({
   // Changed years use the recomputed before/after; other years are unchanged by this alert.
   const bars: Bar[] = labels.map((label) => {
     const a = affectedMap.get(label);
-    if (a) return { label, before: wallAmount(a.before), after: wallAmount(a.after), changed: true };
+    if (a) {
+      const before = wallAmount(a.before);
+      const after = wallAmount(a.after);
+      return { label, before, after, changed: !isNoise(before, after) };
+    }
     const v = total(afterWall, label) || total(beforeWall, label);
     return { label, before: v, after: v, changed: false };
   });
@@ -90,7 +110,7 @@ export function DebtByYear({
           role="img"
           aria-label={
             main
-              ? `Debt due by year. ${yearLabel(main.label)} moves from ${formatUsdMillions(main.before)} to ${formatUsdMillions(main.after)}.`
+              ? `Debt due by year. ${yearLabel(main.label)} moves from ${money(main.before)} to ${money(main.after)}.`
               : "Debt due by year"
           }
           viewBox={`0 0 ${W} ${top + H + 34}`}
@@ -141,16 +161,16 @@ export function DebtByYear({
                     fontWeight={isMain ? 600 : 500}
                     fill={added ? "#B4472E" : "#2E6B57"}
                   >
-                    {formatUsdMillionsDelta(b.before, b.after)}
+                    {delta(b.before, b.after)}
                   </text>
                 ) : null}
                 <text x={x + barW / 2} y={top + H + 18} textAnchor="middle" fontSize={13} fill="#1C232B">
                   {yearLabel(b.label)}
                 </text>
                 <text x={x + barW / 2} y={top + H + 32} textAnchor="middle" fontSize={11} fill="#5E6A72">
-                  {formatUsdMillions(b.after)}
+                  {money(b.after)}
                 </text>
-                <title>{`${yearLabel(b.label)}: ${formatUsdMillions(b.before)} → ${formatUsdMillions(b.after)}`}</title>
+                <title>{`${yearLabel(b.label)}: ${money(b.before)} → ${money(b.after)}`}</title>
               </g>
             );
           })}
@@ -167,15 +187,28 @@ export function DebtByYear({
           <span className="inline-block h-2.5 w-2.5 border border-dashed border-memo-reduced" aria-hidden />{" "}
           removed by this change
         </span>
+        {later.length > 0 ? (
+          <span>
+            Not drawn: debt due after 2030,{" "}
+            {later
+              .map((l) => {
+                const a = affectedMap.get(l);
+                const v = a ? wallAmount(a.after) : total(afterWall, l) || total(beforeWall, l);
+                return money(v);
+              })
+              .join(", ")}
+            .
+          </span>
+        ) : null}
       </figcaption>
       {main && quote ? (
         <div
           className={`border-l-[3px] pl-4 ${main.after > main.before ? "border-memo-added" : "border-memo-reduced"}`}
         >
           <p className="text-sm font-semibold text-memo-ink">
-            {yearLabel(main.label)}: {formatUsdMillions(main.before)} → {formatUsdMillions(main.after)}{" "}
+            {yearLabel(main.label)}: {money(main.before)} → {money(main.after)}{" "}
             <span className={main.after > main.before ? "text-memo-added" : "text-memo-reduced"}>
-              ({formatUsdMillionsDelta(main.before, main.after)})
+              ({delta(main.before, main.after)})
             </span>
             . The filing says:
           </p>
@@ -183,7 +216,7 @@ export function DebtByYear({
             <span className="quote-mark">{quote.exact_quote}</span>
           </blockquote>
           <p className="mt-2 text-xs text-memo-muted">
-            {[quote.document_title, quote.location].filter(Boolean).join(", ")}
+            {sourceLine(quote)}
             {quote.filing_id ? (
               <>
                 {" "}
