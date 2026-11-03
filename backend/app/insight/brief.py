@@ -37,7 +37,7 @@ from app.models import Alert, CreditMetric, Event, Issuer
 from app.models.credit import DailyBrief
 from app.models.trace import ModelCall
 
-PROMPT_VERSION = "brief_v3"
+PROMPT_VERSION = "brief_v4"
 BRIEF_COST_CAP_USD = Decimal("0.50")
 BRIEF_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_brief.md").read_text()
 
@@ -234,30 +234,40 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
 
 
 def _template_lead_sentence(facts: dict[str, Any]) -> str | None:
-    """Deterministic first sentence from the largest wall move in the window."""
+    """Deterministic first sentence from the largest wall move in the window.
+
+    Prefer wall_deltas display strings (always gate-safe) over the cached impact
+    sentence, which may quote extra figures (e.g. a term-loan size) absent from
+    the brief facts JSON.
+    """
     lead = facts.get("lead_change") or {}
     if not lead:
         return None
     issuer = lead.get("issuer_name") or lead.get("issuer_key") or "This issuer"
-    impact = (lead.get("impact_sentence") or "").strip()
-    if impact:
-        return impact
     deltas = lead.get("wall_deltas") or []
-    if not deltas:
-        return None
-    ranked = sorted(deltas, key=lambda d: float(d.get("change_abs") or 0), reverse=True)
-    d = ranked[0]
-    before_d = d.get("before_display") or format_usd_display(d.get("before"))
-    after_d = d.get("after_display") or format_usd_display(d.get("after"))
-    bucket = d.get("bucket") or "the maturity wall"
-    if not before_d or not after_d:
-        return None
-    try:
-        rises = float(d.get("after") or 0) >= float(d.get("before") or 0)
-    except (TypeError, ValueError):
-        rises = True
-    verb = "rises" if rises else "falls"
-    return f"{issuer}: {bucket} {verb} from {before_d} to {after_d}."
+    if deltas:
+        ranked = sorted(deltas, key=lambda d: float(d.get("change_abs") or 0), reverse=True)
+        d = ranked[0]
+        before_d = d.get("before_display") or format_usd_display(d.get("before"))
+        after_d = d.get("after_display") or format_usd_display(d.get("after"))
+        bucket = d.get("bucket") or "the maturity wall"
+        if before_d and after_d:
+            try:
+                rises = float(d.get("after") or 0) >= float(d.get("before") or 0)
+            except (TypeError, ValueError):
+                rises = True
+            verb = "rises" if rises else "falls"
+            title = (lead.get("title") or "").strip()
+            # Mention term loan / material label lightly when the title names it.
+            extra = ""
+            lower = title.lower()
+            if "term loan" in lower:
+                extra = " after its term loan"
+            elif "convertible" in lower:
+                extra = " after convertible notes"
+            return f"{issuer}: {bucket} {verb} from {before_d} to {after_d}{extra}."
+    impact = (lead.get("impact_sentence") or "").strip()
+    return impact or None
 
 
 def _annotate_links(sentences: list[str], facts: dict[str, Any]) -> list[dict[str, Any]]:
