@@ -6,6 +6,13 @@ import { EmptyLine, LoadingLine } from "@/components/loading-error";
 import type { IssuerSnapshot } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
+/** "press_release filed 2026-10-27" → "press release filed 27 Oct 2026". */
+function tidyTitle(t: string | null | undefined): string {
+  return (t ?? "")
+    .replace(/_/g, " ")
+    .replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (m) => formatDate(m));
+}
+
 export function CreditSnapshot({
   snapshot,
   loading,
@@ -114,7 +121,7 @@ export function CreditSnapshot({
         </div>
       ) : snapshot.insight_pending ? (
         <p className="mt-3 text-sm text-slate-400">
-          Analyst summary still being written for this date.
+          The written summary covers the latest figures; move the date slider to today to read it.
         </p>
       ) : null}
 
@@ -156,9 +163,9 @@ export function CreditSnapshot({
               >
                 <span className="text-sm text-memo-muted">{formatDate(item.event_date)}</span>
                 <span>
-                  <span className="block text-base text-memo-ink">{item.effect ?? item.title}</span>
+                  <span className="block text-base text-memo-ink">{tidyTitle(item.effect ?? item.title)}</span>
                   {item.effect && item.title && item.effect !== item.title ? (
-                    <span className="block text-sm text-memo-muted">{item.title}</span>
+                    <span className="block text-sm text-memo-muted">{tidyTitle(item.title)}</span>
                   ) : null}
                   {item.alert_id ? (
                     <Link

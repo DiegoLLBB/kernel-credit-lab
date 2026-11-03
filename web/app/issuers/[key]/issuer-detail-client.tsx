@@ -19,9 +19,13 @@ import { formatBps, formatDate, formatUsdDisplay, formatUsdMillions } from "@/li
 import { CreditSnapshot } from "./credit-snapshot";
 
 const WINDOW_START = Date.UTC(2026, 0, 1);
-const WINDOW_END = Date.UTC(2026, 9, 31);
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const DEFAULT_AS_OF = "2026-10-31";
+// The slider runs from 1 Jan 2026 to today, so the page opens on the latest figures and snapshot.
+const TODAY_MS = (() => {
+  const n = new Date();
+  return Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate());
+})();
+const WINDOW_END = Math.max(Date.UTC(2026, 9, 31), TODAY_MS);
 
 function toIso(ms: number): string {
   const d = new Date(ms);
@@ -30,6 +34,8 @@ function toIso(ms: number): string {
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+const DEFAULT_AS_OF = toIso(WINDOW_END);
 
 function parseIso(iso: string): number {
   const [y, m, d] = iso.split("-").map(Number);
@@ -343,7 +349,7 @@ export function IssuerDetailClient() {
               <div className="flex justify-between text-xs text-memo-muted">
                 <span>1 Jan 2026</span>
                 <span>Filings that changed the profile are marked ▲</span>
-                <span>31 Oct 2026</span>
+                <span>{formatDate(toIso(WINDOW_END))}</span>
               </div>
             </div>
 
@@ -368,7 +374,9 @@ export function IssuerDetailClient() {
               <div className="mt-8">
                 <h4 className="text-sm font-medium text-memo-muted">What moved it this year</h4>
                 <ul className="mt-2 border-t border-memo-rule">
-                  {snapshot.wall.changes.map((c, i) => (
+                  {snapshot.wall.changes
+                    .filter((c) => /^FY20(2[6-9]|30)$/.test(c.label))
+                    .map((c, i) => (
                     <li key={`${c.label}-${i}`} className="border-b border-memo-rule py-2 text-sm">
                       <span className="font-medium text-memo-ink">
                         {c.label.replace(/^FY/, "").replace(/^after /, "after ")}:{" "}
@@ -392,7 +400,7 @@ export function IssuerDetailClient() {
               </div>
             ) : null}
 
-            <div className="mt-6 rounded border border-slate-700/60 p-4">
+            <div className="mt-10 border-t border-memo-rule pt-8">
               <p className="text-xs font-medium text-slate-500">
                 Refinancing shock
               </p>
