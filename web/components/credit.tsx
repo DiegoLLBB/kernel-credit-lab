@@ -31,7 +31,7 @@ export function FlagDot({ flag }: { flag: MetricTile["flag"] }) {
   const style = FLAG_STYLES[flag];
   if (!style) return null;
   return (
-    <span className="inline-flex items-center gap-1.5" title={`Risk band: ${style.word}`}>
+    <span className="relative inline-flex items-center gap-1.5" title={`Risk band: ${style.word}`}>
       <span aria-hidden="true" className={`inline-block h-2 w-2 rounded-full ${style.dot}`} />
       <span className="sr-only">Risk band: {style.word}</span>
     </span>
