@@ -22,6 +22,7 @@ _MONTHS = (
 
 
 def format_usd_display(value: float | Decimal | None) -> str | None:
+    """Prose style for model text: $30.4bn, $925M (no long decimals)."""
     if value is None:
         return None
     n = float(value)
@@ -39,6 +40,15 @@ def format_usd_display(value: float | Decimal | None) -> str | None:
     if abs_n >= 1_000:
         return f"${n:,.0f}"
     return f"${n:,.2f}"
+
+
+def format_usd_wall(value: float | Decimal | None) -> str | None:
+    """Wall / feed style: always $M with thousands separators ($11,889M)."""
+    if value is None:
+        return None
+    m = float(value) / 1_000_000
+    signed = "-" if m < 0 else ""
+    return f"{signed}${abs(m):,.0f}M"
 
 
 def format_multiple_display(value: float | Decimal | None) -> str | None:

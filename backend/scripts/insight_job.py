@@ -3,10 +3,11 @@
 For every configured issuer, generates the credit snapshot (headline + 3–4
 sentences) at --as-of, then fills in impact sentences for alerts that lack
 one. Results cache by input hash: re-running without new facts or alerts
-makes no model calls. Exits nonzero only when every generation fails.
+makes no model calls. Pass --force to regenerate everything. Exits nonzero
+only when every generation fails.
 
 Usage (from backend/):
-    python -m scripts.insight_job [--as-of YYYY-MM-DD] [--issuer KEY ...]
+    python -m scripts.insight_job [--as-of YYYY-MM-DD] [--issuer KEY ...] [--force]
 """
 
 from __future__ import annotations
@@ -31,10 +32,12 @@ from app.insight.generate import (
 )
 from app.metrics.config import load_metric_config, merge_db_configs
 from app.models import Alert, Issuer
-from app.models.credit import CreditInsight
+from app.models.credit import CreditInsight  # used for snapshot cache lookup
 
 
-async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
+async def _run(
+    as_of: date, issuer_keys: list[str] | None, *, force: bool = False
+) -> dict[str, int]:
     stats = {"snapshots": 0, "refinancing": 0, "impacts": 0, "briefs": 0, "errors": 0}
     with SessionLocal() as session:
         cfg = merge_db_configs(session, load_metric_config())
@@ -55,8 +58,8 @@ async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
                         CreditInsight.ref == "",
                     )
                 )
-                if cached is None or cached.input_hash != digest:
-                    row = await generate_snapshot(session, key, as_of)
+                if force or cached is None or cached.input_hash != digest:
+                    row = await generate_snapshot(session, key, as_of, force=force)
                 else:
                     row = cached
                 assert_snapshot_matches_metric_tiles(session, key, as_of, facts)
@@ -81,17 +84,9 @@ async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
                 issuer = session.get(Issuer, alert.issuer_id)
                 if issuer is None or issuer.key not in issuer_keys:
                     continue
-            exists = session.scalar(
-                select(CreditInsight).where(
-                    CreditInsight.scope == "impact", CreditInsight.ref == alert.id
-                )
-            )
-            # Retry empty/error rows: a prior attempt may have had incomplete
-            # facts (e.g. missing wall deltas) and cached a refusal.
-            if exists is not None and exists.status == "complete":
-                continue
+            # generate_impact no-ops when the facts hash still matches (unless --force).
             try:
-                row = await generate_impact(session, alert.id)
+                row = await generate_impact(session, alert.id, force=force)
                 print(f"insight: impact {alert.id[:8]} ({alert.title[:60]}): {row.status}")
                 stats["impacts"] += 1
                 if row.status == "empty":
@@ -107,7 +102,7 @@ async def _run(as_of: date, issuer_keys: list[str] | None) -> dict[str, int]:
             brief_days.add(last)
         for day in sorted(brief_days):
             try:
-                row = await generate_daily_brief(session, day)
+                row = await generate_daily_brief(session, day, force=force)
                 print(
                     f"insight: brief @ {day}: {row.status} "
                     f"kept={len(row.sentences or [])} refused={len(row.dropped or [])}"
@@ -124,8 +119,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate checked credit insight text.")
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     parser.add_argument("--issuer", action="append", default=None, dest="issuers")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenerate snapshots, impacts, and briefs even when the cache hash matches.",
+    )
     args = parser.parse_args(argv)
-    stats = asyncio.run(_run(args.as_of, args.issuers))
+    stats = asyncio.run(_run(args.as_of, args.issuers, force=args.force))
     print(
         f"insight: snapshots {stats['snapshots']}, refinancing {stats['refinancing']}, "
         f"impacts {stats['impacts']}, briefs {stats['briefs']}, errors {stats['errors']}"

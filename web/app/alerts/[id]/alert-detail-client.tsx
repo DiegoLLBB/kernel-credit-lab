@@ -217,6 +217,17 @@ export function AlertDetailClient() {
                 ))}
               </ul>
             ) : null}
+            {(alert.agent_affected_buckets?.length ?? 0) > 0 ? (
+              <p className="mt-3 font-mono text-[11px] text-slate-500">
+                {alert.agent_wall_note ?? "as computed by the agent at the time"}:{" "}
+                {alert.agent_affected_buckets!.map((b, i) => (
+                  <span key={`agent-${b.label}`}>
+                    {i > 0 ? "; " : ""}
+                    {b.label} {formatUsdMillions(b.before)} → {formatUsdMillions(b.after)}
+                  </span>
+                ))}
+              </p>
+            ) : null}
           </section>
 
           <section aria-labelledby="wall-heading" className="rounded-lg border border-slate-700/60 bg-ink-soft/50 p-5">

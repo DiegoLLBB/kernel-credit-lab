@@ -24,6 +24,7 @@ from app.api.schemas import (
     BriefSentenceOut,
     ChartCrosscheckSummaryOut,
     CreditOverviewOut,
+    BriefRefusedOut,
     DailyBriefOut,
     EvalComparisonOut,
     EvalComparisonRowOut,
@@ -267,10 +268,30 @@ def _fields_for_metric(metric: str) -> tuple[str, ...]:
 
 
 def _feed_before_after(session: Session, alert: Alert) -> BeforeAfterOut | None:
+    from app.api.wall_delta import primary_wall_before_after
+
+    primary = primary_wall_before_after(session, alert)
+    if primary is not None:
+        return BeforeAfterOut(
+            field=primary.get("field") or primary.get("bucket"),
+            before=primary.get("before"),
+            after=primary.get("after"),
+            before_display=primary.get("before_display"),
+            after_display=primary.get("after_display"),
+        )
     for change in _applied_changes(session, alert.run_id):
         if change.before is None and change.after is None:
             continue
-        return BeforeAfterOut(field=change.field, before=change.before, after=change.after)
+        from app.insight.display import format_usd_display
+
+        b, a = change.before, change.after
+        return BeforeAfterOut(
+            field=change.field,
+            before=b,
+            after=a,
+            before_display=format_usd_display(b) if isinstance(b, (int, float)) else None,
+            after_display=format_usd_display(a) if isinstance(a, (int, float)) else None,
+        )
     return None
 
 
@@ -338,7 +359,8 @@ def _comparison_out(session: Session) -> EvalComparisonOut | None:
         return None
     return EvalComparisonOut(
         rows=[EvalComparisonRowOut(**r) for r in data["rows"]],
-        note=data.get("note"),
+        # Walkthrough: table + footnote + chart line only — no prose that repeats the table.
+        note=None,
         chart_crosscheck=_chart_crosscheck_summary(session),
     )
 
@@ -366,7 +388,21 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
     check = row.check if isinstance(row.check, dict) else {}
     verifier = check.get("verifier_models") or []
     check_model = verifier[0] if verifier else "Muse Spark Open"
-    refused = len(row.dropped or [])
+    refused_rows: list[BriefRefusedOut] = []
+    for item in row.dropped or []:
+        if not isinstance(item, dict):
+            continue
+        sentence = item.get("sentence")
+        reason = item.get("reason") or item.get("problem")
+        if sentence is None and reason is None:
+            continue
+        refused_rows.append(
+            BriefRefusedOut(
+                sentence=str(sentence) if sentence else None,
+                reason=str(reason) if reason else None,
+            )
+        )
+    refused = len(refused_rows)
     from app.llm.pricing import (
         COST_UNKNOWN,
         TOTAL_EXCL_UNPRICED,
@@ -397,6 +433,7 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
         as_of=row.as_of,
         status=row.status,
         sentences=sentences,
+        refused=refused_rows,
         refused_count=refused,
         provider=row.provider,
         model=row.model,

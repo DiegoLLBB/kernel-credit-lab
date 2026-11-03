@@ -154,9 +154,32 @@ def _wall_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
     }
 
 
+def _wall_delta_entries(deltas: list[dict[str, str]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for delta in deltas:
+        b, a = _num(delta.get("before")), _num(delta.get("after"))
+        if b is None and a is None:
+            continue
+        diff = (a - b) if b is not None and a is not None else None
+        out.append(
+            {
+                "bucket": delta.get("label"),
+                "field": "total_outstanding",
+                "before": b,
+                "after": a,
+                "before_display": format_usd_display(b),
+                "after_display": format_usd_display(a),
+                "change": diff,
+                "change_abs": abs(diff) if diff is not None else None,
+                "change_display": format_usd_display(diff),
+            }
+        )
+    return out
+
+
 def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[str, Any]:
     from app.api.alerts import _applied_changes, _findings_out
-    from app.api.common import bucket_deltas
+    from app.api.wall_delta import agent_stored_deltas, recomputed_walls
 
     event = session.get(Event, alert.event_id) if alert.event_id else None
     findings = []
@@ -178,31 +201,11 @@ def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[s
                 "after_display": format_usd_display(after),
             }
         )
-    before = alert.before_metrics if isinstance(alert.before_metrics, dict) else None
-    after = alert.after_metrics if isinstance(alert.after_metrics, dict) else None
-    before_issuer = (before or {}).get("issuer") if before else None
-    after_issuer = (after or {}).get("issuer") if after else None
-    wall_before = before_issuer if isinstance(before_issuer, dict) else before
-    wall_after = after_issuer if isinstance(after_issuer, dict) else after
-    wall_deltas = []
-    for delta in bucket_deltas(wall_before, wall_after):
-        b, a = _num(delta.get("before")), _num(delta.get("after"))
-        if b is None and a is None:
-            continue
-        diff = (a - b) if b is not None and a is not None else None
-        entry = {
-            "bucket": delta.get("label"),
-            "field": "total_outstanding",
-            "before": b,
-            "after": a,
-            "before_display": format_usd_display(b),
-            "after_display": format_usd_display(a),
-            "change": diff,
-            "change_abs": abs(diff) if diff is not None else None,
-            "change_display": format_usd_display(diff),
-        }
-        before_after.append(entry)
-        wall_deltas.append(entry)
+    # Prefer walls recomputed from current records (day before vs after the change).
+    _wall_before, _wall_after, recomputed = recomputed_walls(session, alert)
+    wall_deltas = _wall_delta_entries(recomputed)
+    before_after.extend(wall_deltas)
+    agent_wall_deltas = _wall_delta_entries(agent_stored_deltas(alert))
     return {
         "alert_id": alert.id,
         "title": alert.title,
@@ -212,6 +215,8 @@ def _alert_facts(session: Any, alert: Alert, *, max_findings: int = 3) -> dict[s
         "event_type": event.event_type if event else None,
         "before_after": before_after,
         "wall_deltas": wall_deltas,
+        "agent_wall_deltas": agent_wall_deltas,
+        "agent_wall_note": "as computed by the agent at the time",
         "findings": findings,
     }
 

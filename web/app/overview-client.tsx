@@ -227,6 +227,30 @@ export function OverviewClient() {
                   </li>
                 ))}
               </ul>
+              {(overview.brief.refused?.length ?? 0) > 0 ? (
+                <details className="mt-4 text-xs text-slate-500">
+                  <summary className="cursor-pointer text-slate-400">
+                    {overview.brief.refused_count} sentence
+                    {overview.brief.refused_count === 1 ? "" : "s"} refused
+                  </summary>
+                  <ul className="mt-2 list-disc space-y-2 pl-5">
+                    {overview.brief.refused!.map((r, i) => (
+                      <li key={`refused-${i}`}>
+                        {r.sentence ? (
+                          <span className="text-slate-400 line-through">{r.sentence}</span>
+                        ) : (
+                          <span className="text-slate-500">(no sentence)</span>
+                        )}
+                        {r.reason ? (
+                          <span className="mt-0.5 block text-amber-200/70">
+                            Refused: {r.reason}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
               <p className="mt-4 font-mono text-[11px] text-slate-500">
                 {overview.brief.attribution}
                 {overview.brief.cost_label && !overview.brief.attribution.includes(overview.brief.cost_label)
@@ -262,6 +286,10 @@ export function OverviewClient() {
                         item.before_after.before,
                         item.before_after.after,
                         item.before_after.field,
+                        {
+                          before: item.before_after.before_display,
+                          after: item.before_after.after_display,
+                        },
                       )
                     : null;
                   return (
@@ -404,7 +432,7 @@ export function OverviewClient() {
                 alert
                 {overview.live.alerted === 1 ? "" : "s"} · {overview.live.logged} reviewed, no
                 alert · {overview.live.refused} need
-                {overview.live.refused === 1 ? "s" : ""} input
+                {overview.live.refused === 1 ? "s" : ""} an analyst
                 {overview.live.paused ? ` · ${overview.live.paused} paused` : ""}
                 {overview.live.failed ? ` · ${overview.live.failed} failed` : ""}
               </p>
@@ -420,8 +448,8 @@ export function OverviewClient() {
                     material change
                   </li>
                   <li>
-                    <span className="text-slate-300">needs input</span> — agent stopped for a
-                    missing fact or policy refuse
+                    <span className="text-slate-300">needs an analyst</span> — Kernel could not
+                    confirm the change; open the document
                   </li>
                   <li>
                     <span className="text-slate-300">paused</span> — hit a turn or cost limit;
@@ -432,27 +460,27 @@ export function OverviewClient() {
               {(overview.live.documents?.length ?? 0) > 0 ? (
                 <ul className="mb-4 divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
                   {overview.live.documents.map((doc) => {
+                    const outcome = liveOutcomeLabel(doc.outcome);
                     const body = (
                       <>
                         <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-slate-400">
                           <span>{doc.issuer_name ?? doc.issuer_key ?? "—"}</span>
                           <span className="text-slate-500">{formatDate(doc.event_date)}</span>
-                          <span className="text-slate-500">{doc.form}</span>
                           <span className="rounded border border-accent/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
                             live
                           </span>
                           <span
                             className={
-                              doc.outcome === "alerted"
+                              outcome === "raised alert"
                                 ? "text-emerald-400"
-                                : doc.outcome === "paused" || doc.outcome === "refused"
+                                : outcome === "paused" || outcome === "needs an analyst"
                                   ? "text-amber-400"
-                                  : doc.outcome === "failed"
+                                  : outcome === "failed"
                                     ? "text-rose-400"
                                     : "text-slate-400"
                             }
                           >
-                            {liveOutcomeLabel(doc.outcome)}
+                            {outcome}
                           </span>
                         </div>
                         <p className="mt-1 text-sm text-slate-200">{doc.title}</p>
@@ -549,11 +577,6 @@ export function OverviewClient() {
                 {overview.comparison.chart_crosscheck?.line ? (
                   <p className="mt-3 text-sm leading-relaxed text-slate-300">
                     {overview.comparison.chart_crosscheck.line}
-                  </p>
-                ) : null}
-                {overview.comparison.note ? (
-                  <p className="mt-4 text-sm leading-relaxed text-slate-400">
-                    {overview.comparison.note}
                   </p>
                 ) : null}
               </>

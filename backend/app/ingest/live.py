@@ -339,25 +339,119 @@ def live_since_date(session: Session) -> date | None:
     return row.go_live_at.date()
 
 
-def _outcome_reason(run: Any | None, status: str) -> str | None:
-    if run is None:
-        return None
-    detail = (getattr(run, "error", None) or "").strip()
-    if detail:
-        return detail
-    if status == "paused":
-        return "paused (cost or token limit)"
-    if status in {"needs_input", "refused"}:
-        return "needs input / refused"
-    return None
+# Live UI vocabulary (never surface raw run labels like needs_input).
+_OUTCOME_RAISED = "raised alert"
+_OUTCOME_REVIEWED = "reviewed, no alert"
+_OUTCOME_ANALYST = "needs an analyst"
+_OUTCOME_PAUSED = "paused"
+_OUTCOME_FAILED = "failed"
+_OUTCOME_PENDING = "pending"
+
+_FORM_WORDS: dict[str, str] = {
+    "10-Q": "quarterly report",
+    "10-Q/A": "quarterly report (amendment)",
+    "10-K": "annual report",
+    "10-K/A": "annual report (amendment)",
+    "8-K": "current report",
+    "8-K/A": "current report (amendment)",
+    "424B2": "prospectus supplement (bond offering)",
+    "424B3": "prospectus supplement (bond offering)",
+    "424B4": "prospectus supplement (bond offering)",
+    "424B5": "prospectus supplement (bond offering)",
+    "424B7": "prospectus supplement (bond offering)",
+    "press_release": "press release",
+    "debt_details": "debt details",
+}
 
 
-def _needs_input_question(session: Session, run: Any | None) -> str | None:
+def form_words(form: str | None) -> str:
+    """Human label for a filing form code."""
+    if not form:
+        return "document"
+    key = form.strip()
+    if key in _FORM_WORDS:
+        return _FORM_WORDS[key]
+    upper = key.upper().replace(" ", "")
+    if upper.startswith("424B"):
+        return "prospectus supplement (bond offering)"
+    return _FORM_WORDS.get(upper, key.replace("_", " ").lower())
+
+
+def _normalize_live_outcome(status: str) -> str:
+    s = (status or "").strip().lower()
+    if s in {"alerted", "raised alert"}:
+        return _OUTCOME_RAISED
+    if s in {"logged", "reviewed, no alert", "processed"}:
+        return _OUTCOME_REVIEWED
+    if s in {"needs_input", "refused", "needs an analyst", "needs input"}:
+        return _OUTCOME_ANALYST
+    if s == "paused":
+        return _OUTCOME_PAUSED
+    if s == "failed":
+        return _OUTCOME_FAILED
+    if s in {"pending", "processing"}:
+        return _OUTCOME_PENDING
+    return s or _OUTCOME_PENDING
+
+
+def _analyst_line(session: Session, run: Any | None, status: str) -> str | None:
+    """Plain-English analyst line for the live feed (technical detail stays on the trace)."""
     if run is None:
         return None
+    raw = (getattr(run, "error", None) or "").strip()
     from app.replay.runner import _needs_input_detail
 
-    return _needs_input_detail(session, run)
+    detail = _needs_input_detail(session, run) or raw
+    outcome = _normalize_live_outcome(status)
+    if outcome == _OUTCOME_PAUSED:
+        return "Kernel paused on this document after hitting a turn or cost limit."
+    if outcome == _OUTCOME_FAILED:
+        return "Kernel failed while reading this document."
+    if outcome != _OUTCOME_ANALYST:
+        return None
+    lower = (detail or "").lower()
+    if any(
+        token in lower
+        for token in ("claims", "unsupported", "ground", "checker", "verify", "summary")
+    ):
+        return (
+            "Kernel could not confirm what this document changes: the independent "
+            "check rejected its summary. Open the document."
+        )
+    if detail:
+        # Keep the feed readable — one short sentence; full text lives on the run.
+        clipped = detail.strip()
+        if len(clipped) > 160:
+            clipped = clipped[:157].rstrip() + "…"
+        return f"Kernel needs an analyst: {clipped}"
+    return (
+        "Kernel could not confirm what this document changes: the independent "
+        "check rejected its summary. Open the document."
+    )
+
+
+def _document_title(
+    *,
+    form: str | None,
+    filing_title: str | None,
+    event_summary: str | None,
+    alert_title: str | None,
+) -> str:
+    """Form name in words, plus the agent's one-line summary when present."""
+    words = form_words(form or filing_title)
+    summary = (event_summary or alert_title or "").strip()
+    # Drop summaries that are just the form code / filing title noise.
+    if not summary:
+        return words[0].upper() + words[1:] if words else "Document"
+    if summary.upper().replace(" ", "") in {
+        (form or "").upper().replace(" ", ""),
+        words.upper().replace(" ", ""),
+    }:
+        return words[0].upper() + words[1:]
+    # Avoid "Quarterly report: quarterly report…"
+    if summary.lower().startswith(words.lower()):
+        return summary[0].upper() + summary[1:]
+    return f"{words[0].upper() + words[1:]}: {summary}"
 
 
 def live_document_rows(session: Session) -> list[dict[str, Any]]:
@@ -376,37 +470,44 @@ def live_document_rows(session: Session) -> list[dict[str, Any]]:
     for event in events:
         run = session.get(AgentRun, event.run_id) if event.run_id else None
         status = (run.status if run else event.status) or "pending"
-        if status == "needs_input":
-            outcome = "needs_input"
+        if status == "needs_input" or status == "refused":
+            raw_outcome = "needs_input"
         elif status in {"alerted", "logged", "paused", "failed", "pending", "processing"}:
-            outcome = status
+            raw_outcome = status
         elif session.scalars(select(Alert).where(Alert.event_id == event.id)).first():
-            outcome = "alerted"
+            raw_outcome = "alerted"
         elif event.status == "processed":
-            outcome = "logged"
+            raw_outcome = "logged"
         else:
-            outcome = status
+            raw_outcome = status
+        outcome = _normalize_live_outcome(raw_outcome)
         issuer = session.get(Issuer, event.issuer_id) if event.issuer_id else None
         alert = session.scalars(select(Alert).where(Alert.event_id == event.id)).first()
-        reason = _outcome_reason(run, status)
-        if status == "needs_input":
-            question = _needs_input_question(session, run)
-            if question:
-                reason = f"Kernel needs an analyst: {question}"
+        reason = _analyst_line(session, run, raw_outcome)
         doc_url: str | None = None
+        filing_form: str | None = event.event_type
+        filing_title: str | None = None
         if event.source_filing_id:
             filing = session.get(Filing, event.source_filing_id)
             if filing is not None:
                 doc_url = filing.url
+                filing_form = filing.form_type or filing_form
+                filing_title = filing.title
+        title = _document_title(
+            form=filing_form,
+            filing_title=filing_title,
+            event_summary=event.summary,
+            alert_title=alert.title if alert else None,
+        )
         rows.append(
             {
                 "event_id": event.id,
                 "alert_id": alert.id if alert else None,
                 "issuer_key": issuer.key if issuer else None,
                 "issuer_name": issuer.name if issuer else None,
-                "form": event.event_type,
+                "form": filing_form,
                 "event_date": event.event_date.isoformat() if event.event_date else None,
-                "title": event.summary or (alert.title if alert else event.event_type),
+                "title": title,
                 "outcome": outcome,
                 "reason": reason,
                 "cost_usd": float(run.total_cost_usd or 0) if run else None,
@@ -422,15 +523,15 @@ def live_stats(session: Session) -> dict[str, Any]:
     alerted = logged = refused = paused = failed = 0
     for row in documents:
         outcome = row["outcome"]
-        if outcome == "alerted":
+        if outcome == _OUTCOME_RAISED:
             alerted += 1
-        elif outcome == "logged":
+        elif outcome == _OUTCOME_REVIEWED:
             logged += 1
-        elif outcome in {"refused", "needs_input"}:
+        elif outcome == _OUTCOME_ANALYST:
             refused += 1
-        elif outcome == "paused":
+        elif outcome == _OUTCOME_PAUSED:
             paused += 1
-        elif outcome == "failed":
+        elif outcome == _OUTCOME_FAILED:
             failed += 1
     cfg = session.scalars(select(LiveConfig).limit(1)).first()
     return {

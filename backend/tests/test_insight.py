@@ -461,8 +461,9 @@ def test_template_impact_uses_wall_deltas_only():
     )
     assert sentence is not None
     assert "FY2028" in sentence
-    assert "13,032 million" in sentence
-    assert "11,782 million" in sentence
+    assert "$13.0bn" in sentence
+    assert "$11.8bn" in sentence
+    assert "falls from" in sentence
     from app.insight.numbers import collect_numbers, find_violations
 
     facts = {
@@ -472,6 +473,8 @@ def test_template_impact_uses_wall_deltas_only():
                 "bucket": "FY2028",
                 "before": 13_032_000_000.0,
                 "after": 11_782_000_000.0,
+                "before_display": "$13.0bn",
+                "after_display": "$11.8bn",
                 "change": -1_250_000_000.0,
                 "change_abs": 1_250_000_000.0,
             }

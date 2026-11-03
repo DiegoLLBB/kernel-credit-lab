@@ -26,6 +26,7 @@ from app.insight.check import (
     check_text,
     verify_sentences,
 )
+from app.insight.display import format_date_display, format_multiple_display, format_usd_display
 from app.insight.facts import _alert_facts, _change_pct, _num
 from app.llm.client import LLMClient, LLMError, Provider, StructuredOutputError
 from app.llm.recorder import db_recorder
@@ -36,7 +37,7 @@ from app.models import Alert, CreditMetric, Event, Issuer
 from app.models.credit import DailyBrief
 from app.models.trace import ModelCall
 
-PROMPT_VERSION = "brief_v1"
+PROMPT_VERSION = "brief_v2"
 BRIEF_COST_CAP_USD = Decimal("0.50")
 BRIEF_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_brief.md").read_text()
 
@@ -94,21 +95,32 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
         for finding in detail.get("findings") or []:
             for quote in finding.get("quotes") or []:
                 evidence.append(str(quote)[:400])
+        wall_deltas = detail.get("wall_deltas") or []
+        material_abs = 0.0
+        for d in wall_deltas:
+            try:
+                material_abs = max(material_abs, float(d.get("change_abs") or 0))
+            except (TypeError, ValueError):
+                continue
         alerts_out.append(
             {
                 "alert_id": alert.id,
                 "issuer_key": issuer.key if issuer else None,
                 "issuer_name": issuer.name if issuer else None,
                 "event_date": event_day.isoformat() if event_day else None,
+                "event_date_display": detail.get("event_date_display"),
                 "title": alert.title,
                 "impact_sentence": sentence,
                 "impact_pending": pending,
                 "live": bool(event and event.source == "live"),
                 "before_after": detail.get("before_after") or [],
-                "wall_deltas": detail.get("wall_deltas") or [],
+                "wall_deltas": wall_deltas,
+                "material_change_abs": material_abs,
                 "evidence_quotes": evidence[:3],
             }
         )
+    alerts_out.sort(key=lambda a: float(a.get("material_change_abs") or 0), reverse=True)
+    lead = alerts_out[0] if alerts_out else None
 
     cfg = load_metric_config()
     watchlist: list[dict[str, Any]] = []
@@ -136,11 +148,23 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
             prior = prior_same_period(rows, latest)
             now_val = _num(latest.value)
             then_val = _num(prior.value) if prior else None
+            unit = latest.unit
+            if unit == "USD":
+                now_disp = format_usd_display(now_val)
+                then_disp = format_usd_display(then_val)
+            elif unit in {"x", "multiple", "ratio"}:
+                now_disp = format_multiple_display(now_val)
+                then_disp = format_multiple_display(then_val)
+            else:
+                now_disp = str(now_val) if now_val is not None else None
+                then_disp = str(then_val) if then_val is not None else None
             metrics[metric] = {
                 "value": now_val,
-                "unit": latest.unit,
+                "value_display": now_disp,
+                "unit": unit,
                 "period": latest.fiscal_label,
                 "previous_value": then_val,
+                "previous_value_display": then_disp,
                 "previous_period": prior.fiscal_label if prior else None,
                 "change_pct": _change_pct(now_val, then_val),
                 "change_pct_abs": abs(_change_pct(now_val, then_val) or 0)
@@ -172,18 +196,36 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
 
     return {
         "as_of": as_of.isoformat(),
+        "as_of_display": format_date_display(as_of),
         "previous_brief_as_of": prev.as_of.isoformat() if prev else None,
         "window_since": since.isoformat(),
+        "lead_change": (
+            {
+                "alert_id": lead.get("alert_id"),
+                "issuer_key": lead.get("issuer_key"),
+                "issuer_name": lead.get("issuer_name"),
+                "title": lead.get("title"),
+                "impact_sentence": lead.get("impact_sentence"),
+                "wall_deltas": lead.get("wall_deltas") or [],
+                "material_change_abs": lead.get("material_change_abs"),
+            }
+            if lead
+            else None
+        ),
         "alerts": alerts_out,
         "watchlist": watchlist,
         "live": {
             "go_live_at": stats.get("go_live_at"),
             "documents_read": int(stats.get("documents_read") or 0),
+            "raised_alert": int(stats.get("alerted") or 0),
+            "reviewed_no_alert": int(stats.get("logged") or 0),
+            "needs_an_analyst": int(stats.get("refused") or 0),
+            "paused": int(stats.get("paused") or 0),
+            "failed": int(stats.get("failed") or 0),
+            # Keep legacy keys for older readers / tests.
             "alerted": int(stats.get("alerted") or 0),
             "logged": int(stats.get("logged") or 0),
-            "paused": int(stats.get("paused") or 0),
             "refused": int(stats.get("refused") or 0),
-            "failed": int(stats.get("failed") or 0),
             "documents": live_docs,
         },
         "alert_count": len(alerts_out),

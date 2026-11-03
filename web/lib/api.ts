@@ -135,6 +135,8 @@ export type AlertDetailOut = {
   affected_buckets: WallBucketDelta[];
   before_wall: MaturityWall | null;
   after_wall: MaturityWall | null;
+  agent_affected_buckets?: WallBucketDelta[];
+  agent_wall_note?: string | null;
   claims_check: ClaimsCheckOut | null;
   created_at: string | null;
   review_writes_enabled?: boolean;
@@ -478,6 +480,8 @@ export type BeforeAfter = {
   field: string | null;
   before: unknown;
   after: unknown;
+  before_display?: string | null;
+  after_display?: string | null;
 };
 
 export type FeedItem = {
@@ -558,10 +562,16 @@ export type BriefSentence = {
   refs: { href: string; kind?: string; match?: string }[];
 };
 
+export type BriefRefused = {
+  sentence: string | null;
+  reason: string | null;
+};
+
 export type DailyBrief = {
   as_of: string;
   status: string;
   sentences: BriefSentence[];
+  refused?: BriefRefused[];
   refused_count: number;
   provider: string | null;
   model: string | null;

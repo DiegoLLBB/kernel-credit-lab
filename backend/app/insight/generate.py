@@ -39,7 +39,7 @@ from app.llm.recorder import db_recorder
 from app.models import Alert, Event, Issuer
 from app.models.credit import CreditInsight
 
-PROMPT_VERSION = "insight_v5"
+PROMPT_VERSION = "insight_v6"
 
 SNAPSHOT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_snapshot.md").read_text()
 IMPACT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_impact.md").read_text()
@@ -225,6 +225,7 @@ async def generate_snapshot(
     as_of: date,
     *,
     client: Any | None = None,
+    force: bool = False,
 ) -> CreditInsight:
     """Headline + snapshot sentences for an issuer at a date (cached)."""
     issuer = session.scalars(select(Issuer).where(Issuer.key == issuer_key)).first()
@@ -232,9 +233,10 @@ async def generate_snapshot(
         raise ValueError(f"unknown issuer: {issuer_key}")
     facts = build_snapshot_facts(session, issuer_key, as_of)
     digest = input_hash("snapshot", "", facts)
-    hit = _cached(session, issuer.id, as_of, "snapshot", "", digest)
-    if hit is not None:
-        return hit
+    if not force:
+        hit = _cached(session, issuer.id, as_of, "snapshot", "", digest)
+        if hit is not None:
+            return hit
     text, provider, model, error = await _spark_text(
         SNAPSHOT_SYSTEM, facts, SnapshotTextModel, "insight_snapshot", client
     )
@@ -304,45 +306,41 @@ async def generate_snapshot(
     )
 
 
-def _format_usd_millions(value: float) -> str:
-    millions = value / 1_000_000
-    if abs(millions) >= 100_000:
-        return f"${millions / 1000:,.1f} billion"
-    if abs(millions) >= 1000:
-        return f"${millions:,.0f} million"
-    return f"${millions:,.1f} million"
-
-
 def _template_impact(facts: dict[str, Any]) -> str | None:
     """Deterministic impact sentence from wall_deltas / before_after numbers.
 
     Used when the model sentence is refused so the overview still has a
-    grounded line. Every figure comes from the facts JSON.
+    grounded line. Every figure comes from the facts JSON ``*_display`` strings.
     """
+    from app.insight.display import format_usd_display
+
     issuer = facts.get("issuer") or facts.get("issuer_key") or "This issuer"
     deltas = facts.get("wall_deltas") or []
     if deltas:
-        parts = []
-        for d in deltas:
-            label = d.get("bucket") or "the maturity wall"
-            before, after = d.get("before"), d.get("after")
-            if before is None or after is None:
-                continue
-            parts.append(
-                f"{label} from {_format_usd_millions(float(before))} to "
-                f"{_format_usd_millions(float(after))}"
-            )
-        if parts:
-            return f"{issuer}: debt due moved {'; '.join(parts)}."
-    for change in facts.get("before_after") or []:
-        before, after = change.get("before"), change.get("after")
-        if before is None or after is None:
-            continue
-        field = change.get("field") or change.get("bucket") or "the figure"
-        return (
-            f"{issuer}: {field} moved from {_format_usd_millions(float(before))} "
-            f"to {_format_usd_millions(float(after))}."
+        # Lead with the largest absolute move (most material).
+        ranked = sorted(
+            deltas,
+            key=lambda d: float(d.get("change_abs") or 0),
+            reverse=True,
         )
+        d = ranked[0]
+        label = d.get("bucket") or "the maturity wall"
+        before_d = d.get("before_display") or format_usd_display(d.get("before"))
+        after_d = d.get("after_display") or format_usd_display(d.get("after"))
+        if before_d and after_d:
+            try:
+                rises = float(d.get("after") or 0) >= float(d.get("before") or 0)
+            except (TypeError, ValueError):
+                rises = True
+            verb = "rises" if rises else "falls"
+            return f"{issuer}: {label} {verb} from {before_d} to {after_d}."
+    for change in facts.get("before_after") or []:
+        before_d = change.get("before_display") or format_usd_display(change.get("before"))
+        after_d = change.get("after_display") or format_usd_display(change.get("after"))
+        if not before_d or not after_d:
+            continue
+        field = change.get("bucket") or change.get("field") or "the figure"
+        return f"{issuer}: {field} moves from {before_d} to {after_d}."
     return None
 
 
@@ -351,6 +349,7 @@ async def generate_impact(
     alert_id: str,
     *,
     client: Any | None = None,
+    force: bool = False,
 ) -> CreditInsight:
     """One impact sentence for an alert (cached by alert + facts hash)."""
     alert = session.get(Alert, alert_id)
@@ -360,9 +359,10 @@ async def generate_impact(
     as_of = event.event_date if event and event.event_date else date.today()
     facts = build_impact_facts(session, alert_id)
     digest = input_hash("impact", alert_id, facts)
-    hit = _cached(session, alert.issuer_id, as_of, "impact", alert_id, digest)
-    if hit is not None:
-        return hit
+    if not force:
+        hit = _cached(session, alert.issuer_id, as_of, "impact", alert_id, digest)
+        if hit is not None:
+            return hit
     text, provider, model, error = await _spark_text(
         IMPACT_SYSTEM, facts, ImpactTextModel, "insight_impact", client
     )
@@ -413,15 +413,20 @@ async def generate_impact(
 
 def _template_refinancing(facts: dict[str, Any]) -> str | None:
     """Deterministic +0bp sentence from panel numbers."""
+    from app.insight.display import format_usd_display
+
     total = facts.get("base_incremental_annual_interest")
     tenor = facts.get("tenor_years")
     spread = facts.get("spread_pct")
     if total is None or tenor is None or spread is None:
         return None
+    amount = facts.get("base_incremental_annual_interest_display") or format_usd_display(
+        float(total)
+    )
     return (
         f"Refinancing 2026–2029 debt at the {tenor}-year Treasury plus the issuer's "
         f"{spread:.2f}% spread would raise annual interest by about "
-        f"{_format_usd_millions(float(total))} (illustrative)."
+        f"{amount}/yr (illustrative)."
     )
 
 

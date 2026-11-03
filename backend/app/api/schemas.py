@@ -109,6 +109,8 @@ class AlertDetailOut(BaseModel):
     affected_buckets: list[WallBucketDelta] = Field(default_factory=list)
     before_wall: dict[str, Any] | None = None
     after_wall: dict[str, Any] | None = None
+    agent_affected_buckets: list[WallBucketDelta] = Field(default_factory=list)
+    agent_wall_note: str | None = None
     claims_check: ClaimsCheckOut | None = None
     created_at: datetime | None = None
     review_writes_enabled: bool = True
@@ -511,6 +513,8 @@ class BeforeAfterOut(BaseModel):
     field: str | None = None
     before: Any = None
     after: Any = None
+    before_display: str | None = None
+    after_display: str | None = None
 
 
 class FeedItemOut(BaseModel):
@@ -579,10 +583,16 @@ class BriefSentenceOut(BaseModel):
     refs: list[dict[str, str]] = Field(default_factory=list)
 
 
+class BriefRefusedOut(BaseModel):
+    sentence: str | None = None
+    reason: str | None = None
+
+
 class DailyBriefOut(BaseModel):
     as_of: date
     status: str
     sentences: list[BriefSentenceOut] = Field(default_factory=list)
+    refused: list[BriefRefusedOut] = Field(default_factory=list)
     refused_count: int = 0
     provider: str | None = None
     model: str | None = None

@@ -13,7 +13,6 @@ from app.agent.normalize import find_quote_offset
 from app.agent.text import PAGE_CHARS
 from app.api.common import (
     HIDDEN_RUN_STATUSES,
-    bucket_deltas,
     clamp_limit,
     fact_page_index,
 )
@@ -245,14 +244,11 @@ def get_alert(
         raise HTTPException(status_code=500, detail="alert issuer missing")
     event = session.get(Event, alert.event_id) if alert.event_id else None
 
-    before = alert.before_metrics
-    after = alert.after_metrics
-    # Prefer nested issuer walls when present.
-    before_issuer = (before or {}).get("issuer") if isinstance(before, dict) else None
-    after_issuer = (after or {}).get("issuer") if isinstance(after, dict) else None
-    wall_before = before_issuer if isinstance(before_issuer, dict) else before
-    wall_after = after_issuer if isinstance(after_issuer, dict) else after
-    deltas = [WallBucketDelta(**d) for d in bucket_deltas(wall_before, wall_after)]
+    from app.api.wall_delta import agent_stored_deltas, recomputed_walls
+
+    wall_before, wall_after, recomputed = recomputed_walls(session, alert)
+    deltas = [WallBucketDelta(**d) for d in recomputed]
+    agent_deltas = [WallBucketDelta(**d) for d in agent_stored_deltas(alert)]
     sentence, _, impact_status = impact_for_alert(session, alert)
     verdict, verdict_reason = replay_verdict_for_alert(session, alert)
     from app.config import get_settings
@@ -275,6 +271,8 @@ def get_alert(
         affected_buckets=deltas,
         before_wall=wall_before if isinstance(wall_before, dict) else None,
         after_wall=wall_after if isinstance(wall_after, dict) else None,
+        agent_affected_buckets=agent_deltas,
+        agent_wall_note="as computed by the agent at the time" if agent_deltas else None,
         claims_check=_claims_out(
             alert.claims_check if isinstance(alert.claims_check, dict) else None
         ),

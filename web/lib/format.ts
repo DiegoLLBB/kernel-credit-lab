@@ -1,6 +1,6 @@
 /**
- * Absolute currency units → millions. Wall totals are USD dollars as strings
- * (e.g. "2752000000" → "$2,752M"). Optional billions above $10,000M for USD.
+ * Absolute currency units → millions for walls/tiles.
+ * e.g. "11889000000" → "$11,889M". Billions only above $100,000M.
  */
 export function formatUsdMillions(
   raw: string | number | null | undefined,
@@ -12,10 +12,9 @@ export function formatUsdMillions(
   const millions = n / 1_000_000;
   const abs = Math.abs(millions);
   const signed = millions < 0 ? "-" : "";
-  // Prefer $M for credit walls (e.g. $13,032M). Billions only for very large totals.
   if (currency === "USD" || !currency) {
     if (abs >= 100_000) {
-      return `${signed}$${formatThousands(Math.abs(millions) / 1_000, 1)}B`;
+      return `${signed}$${formatThousands(Math.abs(millions) / 1_000, 1)}bn`;
     }
     return `${signed}$${formatThousands(Math.round(abs), 0)}M`;
   }
@@ -85,12 +84,16 @@ export function formatNumber(n: string | number | null | undefined): string {
   return v.toLocaleString("en-US");
 }
 
-/** Format a before→after pair for feed/alert change lines (always $M for large USD). */
+/** Format a before→after pair for feed/alert change lines. Prefer pre-formatted displays. */
 export function formatBeforeAfter(
   before: unknown,
   after: unknown,
   field?: string | null,
+  displays?: { before?: string | null; after?: string | null },
 ): string | null {
+  if (displays?.before && displays?.after) {
+    return `${displays.before} → ${displays.after}`;
+  }
   if (before === null || before === undefined || after === null || after === undefined) {
     return null;
   }
@@ -122,26 +125,36 @@ export function formatBeforeAfter(
     Math.abs(an) >= 1000 ||
     f.includes("amount") ||
     f.includes("outstanding") ||
-    f.includes("debt")
+    f.includes("debt") ||
+    /^fy\d{4}$/i.test(f) ||
+    f.includes("total")
   ) {
     return `${formatUsdMillions(bn)} → ${formatUsdMillions(an)}`;
   }
   return `${String(before)} → ${String(after)}`;
 }
 
-/** Live document outcome → short analyst label. */
+/** Live document outcome → short analyst label (one vocabulary everywhere). */
 export function liveOutcomeLabel(outcome: string | null | undefined): string {
   switch ((outcome || "").toLowerCase()) {
     case "alerted":
+    case "raised alert":
       return "raised alert";
     case "logged":
+    case "reviewed, no alert":
       return "reviewed, no alert";
     case "paused":
       return "paused";
     case "refused":
-      return "needs input";
+    case "needs_input":
+    case "needs input":
+    case "needs an analyst":
+      return "needs an analyst";
     case "failed":
       return "failed";
+    case "pending":
+    case "processing":
+      return "pending";
     default:
       return outcome || "—";
   }
