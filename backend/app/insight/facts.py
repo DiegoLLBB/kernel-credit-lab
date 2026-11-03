@@ -18,7 +18,12 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.insight.display import format_date_display, format_multiple_display, format_usd_display
+from app.insight.display import (
+    format_date_display,
+    format_multiple_display,
+    format_usd_display,
+    issuer_short_name,
+)
 from app.metrics.compute import METRIC_IDS
 from app.models import Alert, CreditMetric, Event, Issuer
 
@@ -250,6 +255,36 @@ def build_snapshot_facts(session: Any, issuer_key: str, as_of: date) -> dict[str
     }
 
 
+def _borrowing_amount_from_title(title: str | None) -> float | None:
+    """Pull a dollar amount out of an alert title ('$17.5bn' → 17500000000)."""
+    import re
+
+    if not title:
+        return None
+    match = re.search(
+        r"\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*(bn|billion|m|million)?",
+        title,
+        re.I,
+    )
+    if not match:
+        return None
+    raw = float(match.group(1).replace(",", ""))
+    unit = (match.group(2) or "").lower()
+    if unit in {"bn", "billion"}:
+        return raw * 1_000_000_000
+    if unit in {"m", "million"}:
+        return raw * 1_000_000
+    if raw >= 1_000_000:
+        return raw
+    return raw
+
+
+def _borrowing_display_from_title(title: str | None) -> str | None:
+    """Pull '$17.5bn' / '$1.25bn' style sizes out of an alert title for hooks."""
+    dollars = _borrowing_amount_from_title(title)
+    return format_usd_display(dollars) if dollars is not None else None
+
+
 def build_impact_facts(session: Any, alert_id: str) -> dict[str, Any]:
     """Facts JSON for one alert's impact sentence."""
     alert = session.get(Alert, alert_id)
@@ -259,6 +294,20 @@ def build_impact_facts(session: Any, alert_id: str) -> dict[str, Any]:
     facts = _alert_facts(session, alert, max_findings=5)
     facts["issuer"] = issuer.name if issuer else None
     facts["issuer_key"] = issuer.key if issuer else None
+    facts["issuer_short"] = issuer_short_name(
+        issuer.key if issuer else None, issuer.name if issuer else None
+    )
+    amount = _borrowing_amount_from_title(alert.title) or _borrowing_amount_from_title(
+        alert.summary
+    )
+    if amount is not None:
+        sized = format_usd_display(amount)
+        title_l = (alert.title or "").lower()
+        if "term loan" in title_l:
+            facts["term_loan_display"] = sized
+            facts["term_loan_amount"] = amount
+        facts["new_borrowing_display"] = sized
+        facts["new_borrowing_amount"] = amount
     return facts
 
 

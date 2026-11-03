@@ -1,6 +1,29 @@
+/** Half-up to ``sig`` significant figures (11.25 → 11.3). Matches backend. */
+export function roundSigHalfUp(n: number, sig = 3): number {
+  if (!Number.isFinite(n) || n === 0) return 0;
+  const abs = Math.abs(n);
+  const order = Math.floor(Math.log10(abs));
+  const factor = 10 ** (sig - 1 - order);
+  const rounded = Math.round(abs * factor + Number.EPSILON) / factor;
+  // Math.round is half-up for positive numbers.
+  return n < 0 ? -rounded : rounded;
+}
+
+function formatSigNumber(n: number, sig = 3): string {
+  if (n === 0) return "0";
+  const abs = Math.abs(n);
+  const order = Math.floor(Math.log10(abs));
+  const decimals = Math.max(0, sig - 1 - order);
+  if (decimals === 0) return Math.round(n).toLocaleString("en-US");
+  return n.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
 /**
  * Absolute currency units → millions for walls/tiles.
- * e.g. "11889000000" → "$11,889M". Billions only above $100,000M.
+ * e.g. "11889000000" → "$11,889M". Prose $bn uses 3 sig figs half-up.
  */
 export function formatUsdMillions(
   raw: string | number | null | undefined,
@@ -13,12 +36,48 @@ export function formatUsdMillions(
   const abs = Math.abs(millions);
   const signed = millions < 0 ? "-" : "";
   if (currency === "USD" || !currency) {
+    // Prefer $bn for ≥ $1bn when callers want prose; walls stay in $M below $100bn.
     if (abs >= 100_000) {
-      return `${signed}$${formatThousands(Math.abs(millions) / 1_000, 1)}bn`;
+      const bn = roundSigHalfUp(Math.abs(millions) / 1_000, 3);
+      return `${signed}$${formatSigNumber(bn)}bn`;
     }
     return `${signed}$${formatThousands(Math.round(abs), 0)}M`;
   }
   return `${signed}${formatThousands(Math.round(abs), 0)}M ${currency}`;
+}
+
+/** Prose $bn/$M matching backend format_usd_display (3 sig figs half-up for $bn). */
+export function formatUsdDisplay(raw: string | number | null | undefined): string {
+  if (raw === null || raw === undefined || raw === "") return "—";
+  const n = typeof raw === "number" ? raw : Number(String(raw).replace(/,/g, ""));
+  if (!Number.isFinite(n)) return String(raw);
+  const abs = Math.abs(n);
+  const signed = n < 0 ? "-" : "";
+  if (abs >= 1_000_000_000) {
+    const bn = roundSigHalfUp(abs / 1_000_000_000, 3);
+    return `${signed}$${formatSigNumber(bn)}bn`;
+  }
+  if (abs >= 1_000_000) {
+    const m = abs / 1_000_000;
+    if (m >= 100) return `${signed}$${formatThousands(Math.round(m), 0)}M`;
+    return `${signed}$${formatSigNumber(roundSigHalfUp(m, 3))}M`;
+  }
+  if (abs >= 1_000) return `${signed}$${formatThousands(Math.round(abs), 0)}`;
+  return `${signed}$${abs.toFixed(2)}`;
+}
+
+/** 428536 → "7 min 9 s" */
+export function formatDurationMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return "—";
+  const total = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const parts: string[] = [];
+  if (hours) parts.push(`${hours} h`);
+  if (minutes || hours) parts.push(`${minutes} min`);
+  parts.push(`${seconds} s`);
+  return parts.join(" ");
 }
 
 export function formatUsdMillionsDelta(before: string | number, after: string | number): string {

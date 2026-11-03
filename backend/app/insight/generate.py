@@ -39,7 +39,7 @@ from app.llm.recorder import db_recorder
 from app.models import Alert, Event, Issuer
 from app.models.credit import CreditInsight
 
-PROMPT_VERSION = "insight_v6"
+PROMPT_VERSION = "insight_v7"
 
 SNAPSHOT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_snapshot.md").read_text()
 IMPACT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_impact.md").read_text()
@@ -306,42 +306,90 @@ async def generate_snapshot(
     )
 
 
+def _impact_hook(facts: dict[str, Any]) -> str:
+    """Short trailing clause from the alert title (term loan, notes, …)."""
+    title = (facts.get("title") or facts.get("summary") or "").lower()
+    if "term loan" in title:
+        # Prefer a sized term-loan figure when present in facts.
+        for key in ("term_loan_display", "new_borrowing_display"):
+            sized = facts.get(key)
+            if sized:
+                return f" after it drew a {sized} term loan"
+        return " after it drew a term loan"
+    if "gbp" in title and "note" in title:
+        return " after it closed a GBP notes offering"
+    if "eur" in title and "note" in title:
+        return " after it closed a euro notes offering"
+    if "convertible" in title:
+        return " after convertible notes"
+    if "redeem" in title:
+        return " after the notes redemption"
+    if "tender" in title:
+        return " after the tender"
+    if "note" in title:
+        return " after the notes offering"
+    return ""
+
+
 def _template_impact(facts: dict[str, Any]) -> str | None:
     """Deterministic impact sentence from wall_deltas / before_after numbers.
 
-    Used when the model sentence is refused so the overview still has a
-    grounded line. Every figure comes from the facts JSON ``*_display`` strings.
+    Lists every changed bucket (2026–2029 first, after 2030 last) with short
+    company names. Every figure comes from the facts JSON ``*_display`` strings.
     """
-    from app.insight.display import format_usd_display
+    from app.insight.display import (
+        bucket_sort_key,
+        bucket_year_label,
+        format_usd_display,
+        issuer_short_name,
+    )
 
-    issuer = facts.get("issuer") or facts.get("issuer_key") or "This issuer"
-    deltas = facts.get("wall_deltas") or []
+    issuer = facts.get("issuer_short") or issuer_short_name(
+        facts.get("issuer_key"), facts.get("issuer")
+    )
+    deltas = list(facts.get("wall_deltas") or [])
+    parts: list[str] = []
     if deltas:
-        # Lead with the largest absolute move (most material).
-        ranked = sorted(
-            deltas,
-            key=lambda d: float(d.get("change_abs") or 0),
-            reverse=True,
-        )
-        d = ranked[0]
-        label = d.get("bucket") or "the maturity wall"
-        before_d = d.get("before_display") or format_usd_display(d.get("before"))
-        after_d = d.get("after_display") or format_usd_display(d.get("after"))
-        if before_d and after_d:
+        ordered = sorted(deltas, key=lambda d: bucket_sort_key(d.get("bucket")))
+        for d in ordered:
+            before_d = d.get("before_display") or format_usd_display(d.get("before"))
+            after_d = d.get("after_display") or format_usd_display(d.get("after"))
+            if not before_d or not after_d:
+                continue
             try:
                 rises = float(d.get("after") or 0) >= float(d.get("before") or 0)
             except (TypeError, ValueError):
                 rises = True
             verb = "rises" if rises else "falls"
-            return f"{issuer}: {label} {verb} from {before_d} to {after_d}."
-    for change in facts.get("before_after") or []:
-        before_d = change.get("before_display") or format_usd_display(change.get("before"))
-        after_d = change.get("after_display") or format_usd_display(change.get("after"))
-        if not before_d or not after_d:
-            continue
-        field = change.get("bucket") or change.get("field") or "the figure"
-        return f"{issuer}: {field} moves from {before_d} to {after_d}."
-    return None
+            year = bucket_year_label(d.get("bucket"))
+            if year.startswith("after"):
+                parts.append(f"{year} {verb} from {before_d} to {after_d}")
+            else:
+                parts.append(f"debt due in {year} {verb} from {before_d} to {after_d}")
+    if not parts:
+        for change in facts.get("before_after") or []:
+            before_d = change.get("before_display") or format_usd_display(change.get("before"))
+            after_d = change.get("after_display") or format_usd_display(change.get("after"))
+            if not before_d or not after_d:
+                continue
+            field = change.get("bucket") or change.get("field") or "the figure"
+            year = bucket_year_label(str(field))
+            parts.append(f"debt due in {year} moves from {before_d} to {after_d}")
+            break
+    if not parts:
+        return None
+    if len(parts) == 1:
+        body = parts[0]
+    elif len(parts) == 2:
+        body = f"{parts[0]}, and {parts[1]}"
+    else:
+        body = ", ".join(parts[:-1]) + f", and {parts[-1]}"
+    hook = _impact_hook(facts)
+    # Possessive for natural English ("Amazon's debt due…").
+    who = issuer if issuer.endswith("s") else f"{issuer}'s"
+    if body.startswith("debt due") or body.startswith("after"):
+        return f"{who} {body}{hook}."
+    return f"{who} {body}{hook}."
 
 
 async def generate_impact(

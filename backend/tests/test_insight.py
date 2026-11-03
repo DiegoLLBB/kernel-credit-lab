@@ -460,7 +460,7 @@ def test_template_impact_uses_wall_deltas_only():
         }
     )
     assert sentence is not None
-    assert "FY2028" in sentence
+    assert "2028" in sentence
     assert "$13.0bn" in sentence
     assert "$11.8bn" in sentence
     assert "falls from" in sentence
@@ -468,6 +468,7 @@ def test_template_impact_uses_wall_deltas_only():
 
     facts = {
         "issuer": "Verizon Communications Inc.",
+        "issuer_short": "Verizon",
         "wall_deltas": [
             {
                 "bucket": "FY2028",
