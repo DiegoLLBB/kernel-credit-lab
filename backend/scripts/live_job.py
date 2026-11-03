@@ -24,7 +24,10 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.ingest.live import (
     DEFAULT_LIVE_SINCE,
+    MAX_LIVE_RESUMES,
     ensure_live_config,
+    live_resume_attempts,
+    mark_live_resume_attempt,
     pending_live_events,
     poll_all,
 )
@@ -32,6 +35,7 @@ from app.insight.brief import generate_daily_brief
 from app.insight.generate import generate_impact, generate_snapshot
 from app.llm import LLMClient
 from app.models import Alert, Event, Issuer
+from app.models.trace import AgentRun
 from app.replay.runner import process_one_event
 from app.sources.edgar import EdgarClient
 from app.sources.fred import FredError
@@ -139,6 +143,23 @@ async def _run(
             pending = filtered
             print(f"live: filtered to issuers {sorted(want)} → {len(pending)} events")
 
+        # Log paused live runs left alone after their single resume attempt.
+        for event in session.scalars(
+            select(Event).where(Event.source == "live").order_by(Event.event_date.asc())
+        ).all():
+            if not event.run_id:
+                continue
+            run = session.get(AgentRun, event.run_id)
+            if run is None or run.status != "paused":
+                continue
+            if live_resume_attempts(run) < MAX_LIVE_RESUMES:
+                continue
+            issuer = session.get(Issuer, event.issuer_id) if event.issuer_id else None
+            print(
+                f"live: skip {issuer.key if issuer else '?'}\t{event.event_type}\t"
+                f"paused (resume already used)"
+            )
+
         spent = 0.0
         for event in pending:
             if spent >= max_cost_usd:
@@ -149,17 +170,31 @@ async def _run(
             issuer = session.get(Issuer, event.issuer_id) if event.issuer_id else None
             form = event.event_type
             try:
+                run_before = session.get(AgentRun, event.run_id) if event.run_id else None
+                prior_cost = float(run_before.total_cost_usd or 0) if run_before else 0.0
+                if run_before is not None and run_before.status == "paused":
+                    n = mark_live_resume_attempt(run_before)
+                    session.commit()
+                    print(
+                        f"live: resume {issuer.key if issuer else '?'}\t{form}\t"
+                        f"attempt {n}/{MAX_LIVE_RESUMES}"
+                    )
                 outcome = await process_one_event(session, event, llm, limits=limits)
                 session.commit()
-                spent += float(outcome.cost_usd or 0)
+                # Charge only new spend (run.total_cost_usd is cumulative across resumes).
+                new_total = float(outcome.cost_usd or 0)
+                incremental = max(0.0, new_total - prior_cost)
+                spent += incremental
                 label = _outcome_label(outcome.status, outcome.material)
                 reason = (outcome.detail or "").replace("\t", " ").strip()
                 print(
                     f"live: {issuer.key if issuer else '?'}\t{form}\t{label}\t"
-                    f"{outcome.cost_usd:.4f}" + (f"\t{reason}" if reason else "")
+                    f"{incremental:.4f}" + (f"\t{reason}" if reason else "")
                 )
-                await _insights_for_event(session, event)
-                session.commit()
+                # Don't re-pay for snapshot prose on paused / needs-an-analyst exits.
+                if outcome.status in {"alerted", "logged"}:
+                    await _insights_for_event(session, event)
+                    session.commit()
                 processed += 1
             except Exception as exc:
                 errors += 1

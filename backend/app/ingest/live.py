@@ -308,8 +308,35 @@ def poll_all(
     return docs
 
 
+# Live schedule: at most one resume of a paused run, then leave it paused.
+MAX_LIVE_RESUMES = 1
+# Runs that must never be re-queued by the live job (needs-an-analyst included).
+_LIVE_TERMINAL_RUN = frozenset({"alerted", "logged", "needs_input"})
+
+
+def live_resume_attempts(run: Any) -> int:
+    """How many times this paused run has already been resumed.
+
+    Prefers an explicit ``live_resume_attempts`` counter written by the live job;
+    otherwise derives from agent ``sessions`` (first session = initial run).
+    """
+    meta = run.result if isinstance(getattr(run, "result", None), dict) else {}
+    explicit = meta.get("live_resume_attempts")
+    if isinstance(explicit, int) and explicit >= 0:
+        return explicit
+    sessions = meta.get("sessions") or []
+    if isinstance(sessions, list) and sessions:
+        return max(0, len(sessions) - 1)
+    return 0
+
+
 def pending_live_events(session: Session) -> list[Event]:
-    """Pending/failed live events plus any whose latest run is paused (resumable)."""
+    """Live events the schedule should still run.
+
+    Includes pending/failed with no terminal run, and paused runs that have not
+    yet used their single resume attempt. Never re-queues ``needs_input`` /
+    alerted / logged, and never resumes a paused run a second time.
+    """
     from app.models.trace import AgentRun
 
     events = list(
@@ -321,15 +348,26 @@ def pending_live_events(session: Session) -> list[Event]:
     )
     out: list[Event] = []
     for event in events:
+        run = session.get(AgentRun, event.run_id) if event.run_id else None
+        if run is not None and run.status in _LIVE_TERMINAL_RUN:
+            continue
+        if run is not None and run.status == "paused":
+            if live_resume_attempts(run) >= MAX_LIVE_RESUMES:
+                continue
+            out.append(event)
+            continue
         if event.status in {"pending", "failed"}:
             out.append(event)
-            continue
-        if not event.run_id:
-            continue
-        run = session.get(AgentRun, event.run_id)
-        if run is not None and run.status == "paused":
-            out.append(event)
     return out
+
+
+def mark_live_resume_attempt(run: Any) -> int:
+    """Record that the live job is about to resume ``run``. Returns the new count."""
+    meta = dict(run.result or {}) if isinstance(getattr(run, "result", None), dict) else {}
+    nxt = live_resume_attempts(run) + 1
+    meta["live_resume_attempts"] = nxt
+    run.result = meta
+    return nxt
 
 
 def live_since_date(session: Session) -> date | None:

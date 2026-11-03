@@ -186,3 +186,105 @@ def test_review_writes_setting_can_disable(monkeypatch):
     get_settings.cache_clear()
     assert get_settings().review_writes_enabled is False
     get_settings.cache_clear()
+
+
+def test_pending_live_events_one_resume_then_skip():
+    """Paused runs get one resume; needs_input / exhausted pauses stay out."""
+    from datetime import date as date_cls
+
+    from app.ingest.live import (
+        live_resume_attempts,
+        mark_live_resume_attempt,
+        pending_live_events,
+    )
+    from app.models import Event, Issuer
+    from app.models.trace import AgentRun
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    issuer = Issuer(key="boeing", name="Boeing", ticker="BA")
+    db.add(issuer)
+    db.flush()
+
+    def _event(key: str, status: str = "processing") -> Event:
+        ev = Event(
+            issuer_id=issuer.id,
+            event_type="10-Q",
+            event_date=date_cls(2026, 10, 27),
+            source="live",
+            status=status,
+            replay_key=key,
+            summary=key,
+        )
+        db.add(ev)
+        db.flush()
+        return ev
+
+    # Fresh pause: one session → still resumable.
+    e1 = _event("live:edgar:pause1")
+    r1 = AgentRun(
+        event_id=e1.id,
+        question="q",
+        workflow="event_monitor",
+        status="paused",
+        result={"sessions": [{"started_at": "t0", "ended_at": "t1"}]},
+    )
+    db.add(r1)
+    db.flush()
+    e1.run_id = r1.id
+
+    # Already resumed once (2 sessions) → skip.
+    e2 = _event("live:edgar:pause2")
+    r2 = AgentRun(
+        event_id=e2.id,
+        question="q",
+        workflow="event_monitor",
+        status="paused",
+        result={
+            "sessions": [
+                {"started_at": "t0", "ended_at": "t1"},
+                {"started_at": "t2", "ended_at": "t3"},
+            ]
+        },
+    )
+    db.add(r2)
+    db.flush()
+    e2.run_id = r2.id
+
+    # needs_input must never re-queue.
+    e3 = _event("live:edgar:needs")
+    r3 = AgentRun(
+        event_id=e3.id,
+        question="q",
+        workflow="event_monitor",
+        status="needs_input",
+        result={"status": "needs_input"},
+    )
+    db.add(r3)
+    db.flush()
+    e3.run_id = r3.id
+
+    # Pending with no run → include.
+    e4 = _event("live:edgar:pending", status="pending")
+
+    db.commit()
+
+    pending_ids = {e.id for e in pending_live_events(db)}
+    assert e1.id in pending_ids
+    assert e2.id not in pending_ids
+    assert e3.id not in pending_ids
+    assert e4.id in pending_ids
+
+    assert live_resume_attempts(r1) == 0
+    assert live_resume_attempts(r2) == 1
+    assert mark_live_resume_attempt(r1) == 1
+    db.commit()
+    assert e1.id not in {e.id for e in pending_live_events(db)}
+
+    db.close()
+    engine.dispose()
