@@ -392,6 +392,9 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
     for item in row.dropped or []:
         if not isinstance(item, dict):
             continue
+        # Attribution-only notes (superseded drafts) are not "refused" claims.
+        if item.get("reason") == "superseded by template pack":
+            continue
         sentence = item.get("sentence")
         reason = item.get("reason") or item.get("problem")
         if sentence is None and reason is None:
@@ -429,6 +432,28 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
         cost_usd = None
         cost_label = COST_UNKNOWN if is_unpriced_model(row.model) else None
     cost_bit = f" · {cost_label}" if cost_label else ""
+    wonder_n = int(check.get("wonder_count") or 0)
+    template_n = int(check.get("template_count") or 0)
+    if wonder_n or template_n:
+        bits: list[str] = []
+        if wonder_n and template_n:
+            bits.append(
+                f"{wonder_n} sentence{'s' if wonder_n != 1 else ''} by Muse Wonder, "
+                f"{template_n} from templates"
+            )
+        elif wonder_n:
+            bits.append(f"{wonder_n} sentence{'s' if wonder_n != 1 else ''} by Muse Wonder")
+        else:
+            bits.append(f"{template_n} sentence{'s' if template_n != 1 else ''} from templates")
+        bits.append("all checked by Muse Spark Open")
+        if refused:
+            bits.append(f"{refused} sentence{'s' if refused != 1 else ''} refused")
+        attribution = " · ".join(bits) + cost_bit
+    else:
+        attribution = (
+            f"Written by Muse Wonder · checked by Muse Spark Open · "
+            f"{refused} sentence{'s' if refused != 1 else ''} refused{cost_bit}"
+        )
     return DailyBriefOut(
         as_of=row.as_of,
         status=row.status,
@@ -441,10 +466,7 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
         cost_usd=cost_usd,
         cost_label=cost_label,
         model_calls=int(row.model_calls or 0),
-        attribution=(
-            f"Written by Muse Wonder · checked by Muse Spark Open · "
-            f"{refused} sentence{'s' if refused != 1 else ''} refused{cost_bit}"
-        ),
+        attribution=attribution,
     )
 
 

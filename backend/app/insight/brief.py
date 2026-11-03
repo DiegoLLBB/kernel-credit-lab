@@ -49,16 +49,27 @@ from app.models import Alert, CreditMetric, Event, Issuer
 from app.models.credit import DailyBrief
 from app.models.trace import ModelCall
 
-PROMPT_VERSION = "brief_v6"
+PROMPT_VERSION = "brief_v7"
 BRIEF_COST_CAP_USD = Decimal("0.50")
 BRIEF_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_brief.md").read_text()
 
 _WATCH_METRICS = (
     "total_debt",
+    "due_12m",
     "due_24m",
     "liquidity_coverage",
     "leverage",
     "interest_coverage",
+)
+
+# Prefer near-term maturities / risk-band ratios over plain debt growth.
+_WATCH_METRIC_PRIORITY: tuple[tuple[str, str, int], ...] = (
+    ("due_12m", "debt due within 12 months", 100),
+    ("due_24m", "debt due within 24 months", 90),
+    ("leverage", "leverage", 70),
+    ("interest_coverage", "interest coverage", 70),
+    ("liquidity_coverage", "liquidity coverage", 60),
+    ("total_debt", "total debt", 10),
 )
 
 
@@ -215,25 +226,12 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
             if not rows:
                 metrics[metric] = {"value": None, "missing": "no data yet"}
                 continue
+            # Always the latest filed row so brief figures match issuer tiles.
             latest = rows[-1]
             prior = prior_same_period(rows, latest)
-            # Prefer a fiscal-year row with YoY when the latest is TTM-only —
-            # better "what to watch" copy (Oracle FY2026 vs FY2025, etc.).
-            pick = latest
-            if prior is None:
-                fy_rows = [
-                    r
-                    for r in rows
-                    if not str(getattr(r, "fiscal_label", "") or "").upper().startswith("TTM")
-                ]
-                if fy_rows:
-                    fy_latest = fy_rows[-1]
-                    fy_prior = prior_same_period(rows, fy_latest)
-                    if fy_prior is not None:
-                        pick, prior = fy_latest, fy_prior
-            now_val = _num(pick.value)
+            now_val = _num(latest.value)
             then_val = _num(prior.value) if prior else None
-            unit = pick.unit
+            unit = latest.unit
             if unit == "USD":
                 now_disp = format_usd_display(now_val)
                 then_disp = format_usd_display(then_val)
@@ -247,7 +245,7 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
                 "value": now_val,
                 "value_display": now_disp,
                 "unit": unit,
-                "period": pick.fiscal_label,
+                "period": latest.fiscal_label,
                 "previous_value": then_val,
                 "previous_value_display": then_disp,
                 "previous_period": prior.fiscal_label if prior else None,
@@ -494,34 +492,7 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
         else:
             live_line = live_bits[0] + "; " + "; ".join(live_bits[1:]) + "."
 
-    watch: list[str] = []
-    # Prefer FY movers first (Oracle etc.), then one TTM name — never mix in one line.
-    fy_rows: list[dict[str, Any]] = []
-    ttm_rows: list[dict[str, Any]] = []
-    for row in facts.get("watchlist") or []:
-        td = (row.get("metrics") or {}).get("total_debt") or {}
-        if not isinstance(td, dict) or not td.get("value_display") or not td.get("period"):
-            continue
-        period = str(td.get("period") or "")
-        (ttm_rows if period.upper().startswith("TTM") else fy_rows).append(row)
-    for row in fy_rows + ttm_rows:
-        short = row.get("issuer_short") or issuer_short_name(
-            row.get("issuer_key"), row.get("issuer_name")
-        )
-        td = (row.get("metrics") or {}).get("total_debt") or {}
-        now_d = td.get("value_display")
-        then_d = td.get("previous_value_display")
-        period = td.get("period")
-        prior_period = td.get("previous_period")
-        if then_d and prior_period and not str(period).upper().startswith("TTM"):
-            watch.append(
-                f"What to watch: {short}'s total debt is {now_d} in {period}, "
-                f"up from {then_d} in {prior_period}."
-            )
-        else:
-            watch.append(f"What to watch: {short}'s total debt is {now_d} in {period}.")
-        if len(watch) >= 2:
-            break
+    watch = _watch_sentences(facts)
 
     return {
         "lead": lead,
@@ -529,6 +500,83 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
         "live": live_line,
         "watch": watch,
     }
+
+
+def _watch_line(short: str, label: str, detail: dict[str, Any]) -> str | None:
+    now_d = detail.get("value_display")
+    period = detail.get("period")
+    if not now_d or not period:
+        return None
+    then_d = detail.get("previous_value_display")
+    prior_period = detail.get("previous_period")
+    change = detail.get("change_pct")
+    who = short if short.endswith("s") else f"{short}'s"
+    if then_d and prior_period and change is not None:
+        direction = "up" if float(change) >= 0 else "down"
+        return (
+            f"What to watch: {who} {label} is {now_d} in {period}, "
+            f"{direction} from {then_d} in {prior_period}."
+        )
+    if then_d and prior_period:
+        return (
+            f"What to watch: {who} {label} is {now_d} in {period}, from {then_d} in {prior_period}."
+        )
+    return f"What to watch: {who} {label} is {now_d} in {period}."
+
+
+def _watch_sentences(facts: dict[str, Any]) -> list[str]:
+    """Latest-period watch lines; prefer near-term maturities / risk ratios."""
+    scored: list[tuple[float, str, str]] = []  # (score, issuer_key, sentence)
+    for row in facts.get("watchlist") or []:
+        short = row.get("issuer_short") or issuer_short_name(
+            row.get("issuer_key"), row.get("issuer_name")
+        )
+        key = str(row.get("issuer_key") or short)
+        metrics = row.get("metrics") or {}
+        for metric_id, label, base in _WATCH_METRIC_PRIORITY:
+            detail = metrics.get(metric_id)
+            if not isinstance(detail, dict):
+                continue
+            line = _watch_line(short, label, detail)
+            if not line:
+                continue
+            score = float(base)
+            change_abs = detail.get("change_pct_abs")
+            if isinstance(change_abs, (int, float)):
+                score += min(80.0, float(change_abs))
+            # Ratios without YoY still beat plain debt when near a risk band.
+            value = detail.get("value")
+            if metric_id == "leverage" and isinstance(value, (int, float)):
+                if value >= 4.0:
+                    score += 40
+                elif value >= 2.5:
+                    score += 20
+            if metric_id == "interest_coverage" and isinstance(value, (int, float)):
+                if value < 3.0:
+                    score += 40
+                elif value < 6.0:
+                    score += 20
+            if (
+                metric_id == "liquidity_coverage"
+                and isinstance(value, (int, float))
+                and value < 0.5
+            ):
+                score += 30
+            scored.append((score, key, line))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    watch: list[str] = []
+    seen_issuers: set[str] = set()
+    for _score, key, line in scored:
+        if key in seen_issuers:
+            continue
+        # One reporting family per sentence (no TTM+FY mix inside a line).
+        if "TTM" in line.upper() and "FY" in line.upper():
+            continue
+        watch.append(line)
+        seen_issuers.add(key)
+        if len(watch) >= 2:
+            break
+    return watch
 
 
 def _template_brief_sentences(facts: dict[str, Any]) -> list[str]:
@@ -719,13 +767,13 @@ async def generate_daily_brief(
         # Soft stop: still store whatever we have, but mark the overage.
         pass
 
-    kept: list[str] = []
     dropped: list[dict[str, Any]] = []
     summary: dict[str, Any] = {
         "status": "checked",
         "check_prompt": CHECK_PROMPT_VERSION,
         "cost_cap_usd": float(BRIEF_COST_CAP_USD),
     }
+    wonder_raw: list[str] = []
     if text is None:
         dropped.append({"sentence": None, "reason": "generation failed", "problem": error})
         summary["status"] = "error"
@@ -733,18 +781,27 @@ async def generate_daily_brief(
         raw = [s.strip() for s in text.brief if s and s.strip()]
         if len(raw) < 4 or len(raw) > 5:
             summary["sentence_count_note"] = f"model wrote {len(raw)} sentences (want 4-5)"
-        kept, dropped, gate_summary = await _gate_sentences(raw, facts, client)
-        summary.update(gate_summary)
-        calls2, cost2, unpriced2 = _cost_since(session, started)
-        calls, cost, has_unpriced = calls2, cost2, unpriced2
+        # Deterministic gate only here; every final sentence is claims-checked below.
+        for sentence in raw:
+            gate = check_text(sentence, facts)
+            if not gate.get("numbers_ok") or not gate.get("advice_ok"):
+                dropped.append(
+                    {
+                        "sentence": sentence,
+                        "reason": "deterministic gate",
+                        "number_violations": gate.get("number_violations"),
+                        "advice_hits": gate.get("advice_hits"),
+                    }
+                )
+            else:
+                wonder_raw.append(sentence)
 
-    # Prefer gate-safe template pack (lead → other → live → watch), then unique model lines.
     templates = _template_brief_sentences(facts)
-    template_kept: list[str] = []
+    template_ok: list[str] = []
     for sentence in templates:
         gate = check_text(sentence, facts)
         if gate.get("numbers_ok") and gate.get("advice_ok"):
-            template_kept.append(sentence)
+            template_ok.append(sentence)
         else:
             dropped.append(
                 {
@@ -758,15 +815,14 @@ async def generate_daily_brief(
     def _money_tokens(sentence: str) -> set[str]:
         return {t for t in sentence.replace(",", "").split() if t.startswith("$")}
 
-    model_survivors = list(kept)
-    # When the template pack already covers the brief structure, use it as-is —
-    # model lines only fill gaps (avoids partial briefs when Wonder under-writes).
-    if len(template_kept) >= 4:
-        kept = template_kept[:5]
+    # Build candidate list with origin tags (template | wonder).
+    candidates: list[tuple[str, str]] = []
+    if len(template_ok) >= 4:
         summary["lead"] = "material_wall_move"
-        summary["source"] = "template"
-        for sentence in model_survivors:
-            if sentence and sentence not in kept:
+        for sentence in template_ok[:5]:
+            candidates.append((sentence, "template"))
+        for sentence in wonder_raw:
+            if sentence and sentence not in {c[0] for c in candidates}:
                 dropped.append(
                     {
                         "sentence": sentence,
@@ -774,27 +830,76 @@ async def generate_daily_brief(
                     }
                 )
     else:
-        merged: list[str] = []
-        if template_kept:
-            merged.append(template_kept[0])
+        if template_ok:
+            candidates.append((template_ok[0], "template"))
             summary["lead"] = "material_wall_move"
-        for sentence in template_kept[1:] + model_survivors:
+        for sentence in template_ok[1:]:
             s = sentence.strip()
-            if not s or s in merged:
+            if not s or s in {c[0] for c in candidates}:
                 continue
             tokens = _money_tokens(s)
             if tokens and any(
                 tokens.issubset(_money_tokens(m)) or _money_tokens(m).issubset(tokens)
-                for m in merged
+                for m, _src in candidates
+            ):
+                continue
+            candidates.append((s, "template"))
+            if len(candidates) >= 5:
+                break
+        for sentence in wonder_raw:
+            s = sentence.strip()
+            if not s or s in {c[0] for c in candidates}:
+                continue
+            tokens = _money_tokens(s)
+            if tokens and any(
+                tokens.issubset(_money_tokens(m)) or _money_tokens(m).issubset(tokens)
+                for m, _src in candidates
             ):
                 continue
             low = s.lower()
             if "largest debt" in low or "largest material" in low:
                 continue
-            merged.append(s)
-            if len(merged) >= 5:
+            candidates.append((s, "wonder"))
+            if len(candidates) >= 5:
                 break
-        kept = merged[:5]
+
+    # Every kept sentence goes through the independent claims check (Spark Open).
+    kept: list[str] = []
+    sources: list[dict[str, str]] = []
+    if candidates:
+        verdicts = await verify_sentences([c[0] for c in candidates], facts, client=client)
+        models_used: list[str] = []
+        for verdict, (sentence, source) in zip(verdicts, candidates, strict=True):
+            if verdict.get("model"):
+                models_used.append(str(verdict["model"]))
+            if verdict.get("status") == "supported":
+                kept.append(sentence)
+                sources.append({"sentence": sentence, "source": source})
+            else:
+                dropped.append(
+                    {
+                        "sentence": sentence,
+                        "reason": f"independent verifier: {verdict.get('status')}",
+                        "phrase": verdict.get("phrase"),
+                        "problem": verdict.get("problem"),
+                        "source": source,
+                    }
+                )
+        summary["verifier_models"] = sorted(set(models_used))
+    wonder_count = sum(1 for s in sources if s.get("source") == "wonder")
+    template_count = sum(1 for s in sources if s.get("source") == "template")
+    summary["sentence_sources"] = sources
+    summary["wonder_count"] = wonder_count
+    summary["template_count"] = template_count
+    if template_count and not wonder_count:
+        summary["source"] = "template"
+    elif wonder_count and not template_count:
+        summary["source"] = "wonder"
+    elif wonder_count and template_count:
+        summary["source"] = "mixed"
+
+    calls2, cost2, unpriced2 = _cost_since(session, started)
+    calls, cost, has_unpriced = calls2, cost2, unpriced2
 
     if cost is not None and cost > BRIEF_COST_CAP_USD:
         summary["cost_cap_exceeded"] = True

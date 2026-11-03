@@ -14,9 +14,10 @@ Write **4 or 5** short plain-English sentences, in this order:
    with no alert; Boeing's 10-Q is paused at its turn limit." Name documents
    that need an analyst (e.g. Oracle's prospectus supplement). Prefer
    `copy.live` when present.
-4. What to watch next, quoting `*_display` figures from **one** reporting
-   period only (never mix TTM/quarter with FY in the same sentence). Prefer
-   `copy.watch` lines.
+4. What to watch next, quoting `*_display` figures from the **latest** period
+   only (must match the issuer tiles; never mix TTM/quarter with FY in the
+   same sentence). Prefer near-term maturities or a ratio moving toward a
+   risk band over plain total-debt growth. Prefer `copy.watch` lines.
 
 Use short company names (`issuer_short` / Amazon, Verizon, Oracle). Use the
 plain outcome vocabulary: raised alert / reviewed, no alert / needs an
