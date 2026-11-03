@@ -76,8 +76,9 @@ export function MaturityWallChart({
         <svg
           role="img"
           aria-label={`${title}: ${series.map((s) => `${s.label.replace(/^FY/, "")} ${formatUsdDisplay(s.total)}`).join(", ")}`}
-          width={width}
-          height={top + chartH + 40}
+          width="100%"
+          preserveAspectRatio="xMinYMin meet"
+          style={{ maxWidth: width, height: "auto" }}
           viewBox={`0 0 ${width} ${top + chartH + 40}`}
         >
           <line x1={0} x2={width} y1={top + chartH} y2={top + chartH} stroke="#1C232B" />

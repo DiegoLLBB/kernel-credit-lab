@@ -114,9 +114,9 @@ export function DebtByYear({
               : "Debt due by year"
           }
           viewBox={`0 0 ${W} ${top + H + 34}`}
-          width={W}
-          height={top + H + 34}
-          className="min-w-full"
+          width="100%"
+          preserveAspectRatio="xMinYMin meet"
+          style={{ maxWidth: W, height: "auto" }}
         >
           <line x1={0} x2={W} y1={top + H} y2={top + H} stroke="#1C232B" strokeWidth={1} />
           {bars.map((b, i) => {
