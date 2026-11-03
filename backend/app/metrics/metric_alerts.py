@@ -71,8 +71,8 @@ def _fmt_usd(value: float | None) -> str:
     return format_usd_display(value)
 
 
-def _purge_out_of_window(session: Session) -> int:
-    """Delete metric alerts whose after-filing date is before MONITOR_FROM."""
+def _purge_stale_metric_alerts(session: Session) -> int:
+    """Delete metric alerts outside the window or with legacy %-in-title wording."""
     removed = 0
     for alert in list(session.scalars(select(Alert).where(Alert.kind == "metric")).all()):
         after = alert.after_metrics if isinstance(alert.after_metrics, dict) else {}
@@ -83,7 +83,9 @@ def _purge_out_of_window(session: Session) -> int:
                 filed = date.fromisoformat(filed_raw[:10])
             except ValueError:
                 filed = None
-        if filed is None or filed < MONITOR_FROM:
+        title = alert.title or ""
+        legacy_pct = " up " in title and "%" in title
+        if filed is None or filed < MONITOR_FROM or legacy_pct or "display" not in after:
             session.delete(alert)
             removed += 1
     return removed
