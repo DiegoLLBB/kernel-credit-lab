@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 from app.metrics.metric_alerts import _dedupe_key, scan_metric_alerts
-from app.metrics.peers import BANK_NA_REASON, is_bank_sector, peer_comparison
+from app.metrics.peers import BANK_NA_REASON, is_bank_sector, peer_comparison, watchlist_rank
 from app.models import Alert, CreditMetric, Issuer
 
 
@@ -91,6 +91,34 @@ def test_peer_comparison_rank(db_session: Session) -> None:
     assert raw["rank"] == 2
     assert raw["ordinal"] == "2nd"
     assert float(raw["median"]) == 5.0
+
+
+def test_watchlist_rank_always_works_with_two(db_session: Session) -> None:
+    a = Issuer(key="a", name="A", sector="Utilities", ticker="A")
+    b = Issuer(key="b", name="B", sector="Technology", ticker="B")
+    db_session.add_all([a, b])
+    db_session.flush()
+    for iss, val in ((a, "3.0"), (b, "5.0")):
+        db_session.add(
+            CreditMetric(
+                issuer_id=iss.id,
+                metric="leverage",
+                period_end=date(2025, 12, 31),
+                fiscal_label="FY2025",
+                filed=date(2026, 2, 1),
+                value=Decimal(val),
+                unit="x",
+            )
+        )
+    db_session.flush()
+    # Sector peer median unavailable (n<3), but watchlist rank still works.
+    sector = peer_comparison(db_session, a, "leverage", date(2026, 11, 1), value=Decimal("3.0"))
+    assert sector is not None and sector["median"] is None
+    wl = watchlist_rank(db_session, a, "leverage", date(2026, 11, 1), value=Decimal("3.0"))
+    assert wl is not None
+    assert wl["n"] == 2
+    assert wl["rank"] == 1
+    assert "lowest of 2" in wl["line"]
 
 
 def test_metric_alert_band_cross(db_session: Session) -> None:

@@ -125,6 +125,57 @@ def peer_comparison(
     }
 
 
+def watchlist_rank(
+    session: Session,
+    issuer: Issuer,
+    metric: str,
+    as_of: date,
+    *,
+    value: Decimal | None,
+) -> dict[str, Any] | None:
+    """Rank among all root (watchlist) issuers with a value — always when n ≥ 1.
+
+    Direction matches sector peers: leverage/due/debt rank 1 = lowest;
+    coverage ratios rank 1 = highest. Label as \"Nth lowest/highest of M\".
+    """
+    if value is None:
+        return None
+    roots = session.scalars(select(Issuer).where(Issuer.parent_id.is_(None))).all()
+    scored: list[tuple[str, Decimal]] = []
+    for peer in roots:
+        if not peer.id:
+            continue
+        if is_bank_sector(peer.sector) and metric in BANK_NA_METRICS:
+            continue
+        v = _latest_value(session, peer.id, metric, as_of)
+        if v is None:
+            continue
+        scored.append((peer.id, v))
+    n = len(scored)
+    if n == 0:
+        return None
+    ascending = metric in {
+        "leverage",
+        "net_leverage",
+        "due_12m",
+        "due_24m",
+        "total_debt",
+    }
+    ordered = sorted(scored, key=lambda t: float(t[1]), reverse=not ascending)
+    rank = next((i + 1 for i, (pid, _) in enumerate(ordered) if pid == issuer.id), None)
+    if rank is None:
+        return None
+    direction = "lowest" if ascending else "highest"
+    ordinal = _ordinal(rank)
+    return {
+        "n": n,
+        "rank": rank,
+        "ordinal": ordinal,
+        "direction": direction,
+        "line": f"{ordinal} {direction} of {n} watchlist companies",
+    }
+
+
 def sector_label_for_display(sector: str | None) -> str:
     if not sector:
         return "peers"

@@ -433,6 +433,11 @@ class MetricPeerOut(BaseModel):
     ordinal: str | None = None
     note: str | None = None
     line: str | None = None  # ready-to-show "5.2× · utilities median 5.6× · 2nd of 3"
+    # Always-on comparison across every root issuer Kernel watches.
+    watchlist_n: int | None = None
+    watchlist_rank: int | None = None
+    watchlist_ordinal: str | None = None
+    watchlist_line: str | None = None  # e.g. "6th lowest of 15 watchlist companies"
 
 
 class MetricTileOut(BaseModel):
