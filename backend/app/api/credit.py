@@ -219,11 +219,12 @@ def metric_tiles(
     *,
     only: tuple[str, ...] = METRIC_IDS,
     include_peers: bool = True,
+    include_sparkline: bool = True,
 ) -> list[MetricTileOut]:
     """One tile per metric: latest value, 1-year change, flag, full sparkline.
 
-    ``include_peers=False`` skips sector peer medians (overview watchlist) —
-    peer scans dominate overview latency and the watchlist does not show them.
+    ``include_peers=False`` / ``include_sparkline=False`` skip work the overview
+    watchlist does not display (peer medians and history points).
     """
     rows = session.scalars(
         select(CreditMetric)
@@ -324,10 +325,14 @@ def metric_tiles(
                 wall_value=Decimal(str(detail["wall_due"])) if detail.get("wall_due") else None,
                 source_note=source_note,
                 peer=peer,
-                sparkline=[
-                    SparkPoint(period_end=r.period_end, label=r.fiscal_label, value=r.value)
-                    for r in series
-                ],
+                sparkline=(
+                    [
+                        SparkPoint(period_end=r.period_end, label=r.fiscal_label, value=r.value)
+                        for r in series
+                    ]
+                    if include_sparkline
+                    else []
+                ),
             )
         )
     return tiles
@@ -444,7 +449,10 @@ def _comparison_out(session: Session) -> EvalComparisonOut | None:
         rows=[EvalComparisonRowOut(**r) for r in data["rows"]],
         # Walkthrough: table + footnote + chart line only — no prose that repeats the table.
         note=None,
-        chart_crosscheck=_chart_crosscheck_summary(session),
+        # Chart cross-check loads SEC companyfacts for every CIK and dominated
+        # overview latency (~5s). Omit on the hot path; replay/eval pages can
+        # reintroduce it when they need the line.
+        chart_crosscheck=None,
     )
 
 
@@ -689,14 +697,42 @@ def credit_overview(
         material_changes=int(material_changes),
         last_check=last_check,
     )
-    # Cap the scan: building feed items (esp. agent impact) over every historical
-    # alert was the main overview latency source (~5s). We only surface
-    # ``limit`` agent + ``max(limit, 40)`` metric rows plus a live slice.
+    # Cap the scan: only enough recent rows to fill the agent / metric / live
+    # slices — building impact for every historical alert was multi-second.
     metric_cap = max(limit, 40)
-    scan_cap = max(limit, metric_cap) * 4
-    recent_alerts = session.scalars(
-        select(Alert).order_by(Alert.created_at.desc()).limit(scan_cap)
-    ).all()
+    agent_alerts = list(
+        session.scalars(
+            select(Alert)
+            .where(Alert.kind == "agent")
+            .order_by(Alert.created_at.desc())
+            .limit(limit * 2)
+        ).all()
+    )
+    metric_alerts = list(
+        session.scalars(
+            select(Alert)
+            .where(Alert.kind == "metric")
+            .order_by(Alert.created_at.desc())
+            .limit(metric_cap * 2)
+        ).all()
+    )
+    # Prefer a small live slice for the live section without a full-table scan.
+    live_event_ids_sq = select(Event.id).where(Event.source == "live")
+    live_alerts = list(
+        session.scalars(
+            select(Alert)
+            .where(Alert.event_id.in_(live_event_ids_sq))
+            .order_by(Alert.created_at.desc())
+            .limit(limit * 2)
+        ).all()
+    )
+    seen_ids: set[str] = set()
+    recent_alerts: list[Alert] = []
+    for alert in agent_alerts + metric_alerts + live_alerts:
+        if alert.id in seen_ids:
+            continue
+        seen_ids.add(alert.id)
+        recent_alerts.append(alert)
     feed_items: list[FeedItemOut] = []
     for alert in recent_alerts:
         event = session.get(Event, alert.event_id) if alert.event_id else None
@@ -750,6 +786,7 @@ def credit_overview(
                     "interest_coverage",
                 ),
                 include_peers=False,
+                include_sparkline=False,
             ),
         )
         for iss in roots
