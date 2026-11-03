@@ -135,8 +135,7 @@ def _parse_curated_undrawn(raw: Any, *, issuer_key: str) -> CuratedUndrawn | Non
         filed = date.fromisoformat(str(raw["filed"]))
     except Exception as exc:  # noqa: BLE001 — surface as config error
         raise ValueError(
-            f"xbrl config {issuer_key}: undrawn_facilities_curated "
-            "value/period_end/filed invalid"
+            f"xbrl config {issuer_key}: undrawn_facilities_curated value/period_end/filed invalid"
         ) from exc
     return CuratedUndrawn(
         value=value,
