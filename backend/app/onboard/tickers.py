@@ -16,6 +16,14 @@ SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 MAX_RETRIES = 5
 RETRYABLE = {408, 425, 429, 500, 502, 503, 504}
 
+# SEC company_tickers.json sometimes remaps a household ticker to a thin
+# holding-company CIK. Prefer the operating issuer we can actually load.
+TICKER_CIK_OVERRIDES: dict[str, tuple[int, str]] = {
+    # XOM currently points at ExxonMobil Holdings Corp (2115436) with sparse
+    # XBRL; Exxon Mobil Corporation remains CIK 34088.
+    "XOM": (34088, "Exxon Mobil Corporation"),
+}
+
 
 @dataclass(frozen=True)
 class TickerMatch:
@@ -85,6 +93,15 @@ class TickerClient:
         wanted = (ticker or "").strip().upper()
         if not wanted:
             raise ValueError("ticker is required")
+        override = TICKER_CIK_OVERRIDES.get(wanted)
+        if override is not None:
+            cik_int, name = override
+            return TickerMatch(
+                ticker=wanted,
+                cik=pad_cik(cik_int),
+                name=name,
+                cik_int=cik_int,
+            )
         doc = self.company_tickers()
         for row in doc.values():
             if not isinstance(row, dict):

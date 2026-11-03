@@ -92,6 +92,24 @@ def test_resolve_ticker():
         client.resolve("NOPE")
 
 
+def test_resolve_xom_override():
+    # Override must win even when company_tickers maps XOM to a thin HoldCo.
+    tickers = {
+        "0": {
+            "cik_str": 2115436,
+            "ticker": "XOM",
+            "title": "ExxonMobil Holdings Corp",
+        },
+    }
+    client = TickerClient(
+        user_agent="Kernel Credit Lab test@kernelterminal.com",
+        transport=_transport_with_tickers(tickers),
+    )
+    match = client.resolve("xom")
+    assert match.cik == "0000034088"
+    assert match.name == "Exxon Mobil Corporation"
+
+
 def test_build_xbrl_config_missing_debt_refused():
     doc = {"cik": 1, "entityName": "Empty Co", "facts": {"us-gaap": {}}}
     with pytest.raises(ValueError, match="no us-gaap"):
