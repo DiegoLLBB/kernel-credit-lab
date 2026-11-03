@@ -148,6 +148,15 @@ def compute_issuer(
     return rows
 
 
+# Tried in order when the configured cash tag has no usable datapoint (P&G and
+# similar filers dropped CashAndCashEquivalentsAtCarryingValue for recent periods).
+_CASH_FALLBACK_TAGS = (
+    "CashAndCashEquivalentsAtCarryingValue",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    "Cash",
+)
+
+
 def _point(
     doc: dict[str, Any], tag: str | None, *, as_of: date, end: date | None
 ) -> Datapoint | None:
@@ -159,6 +168,33 @@ def _point(
     if not tag:
         return None
     return select_instant(doc, tag, as_of=as_of, period_end=end, fp="FY")
+
+
+def _instant_first(
+    doc: dict[str, Any],
+    tags: list[str] | tuple[str, ...],
+    *,
+    as_of: date,
+    end: date | None = None,
+    period_end: date | None = None,
+) -> Datapoint | None:
+    """First non-null instant among tags (configured first, then fallbacks)."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for tag in list(tags) + list(_CASH_FALLBACK_TAGS):
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        ordered.append(tag)
+    for tag in ordered:
+        dp = (
+            _point(doc, tag, as_of=as_of, end=end)
+            if end is not None
+            else select_instant(doc, tag, as_of=as_of, period_end=period_end)
+        )
+        if dp is not None and dp.value is not None:
+            return dp
+    return None
 
 
 def _compute_fy_period(
@@ -177,7 +213,7 @@ def _compute_fy_period(
         label=label,
         wall=wall,
         debt=debt,
-        cash_dp=_point(doc, (cfg.tag_list("cash") or [None])[0], as_of=as_of, end=end),
+        cash_dp=_instant_first(doc, cfg.tag_list("cash"), as_of=as_of, end=end),
         stinv_dp=_point(doc, (cfg.tag_list("st_investments") or [None])[0], as_of=as_of, end=end),
         mat12_dp=_point(doc, (cfg.tag_list("mat_next12") or [None])[0], as_of=as_of, end=end),
         mat2_dp=_point(doc, (cfg.tag_list("mat_year2") or [None])[0], as_of=as_of, end=end),
@@ -217,7 +253,6 @@ def _compute_quarter(
         flows[name] = (value, rep)
         has_ttm = has_ttm or value is not None
     label = f"TTM {quarter_label}" if has_ttm else quarter_label
-    cash_tag = cfg.tag_list("cash")
     stinv_tag = cfg.tag_list("st_investments")
     mat12_tag = cfg.tag_list("mat_next12")
     mat2_tag = cfg.tag_list("mat_year2")
@@ -227,9 +262,9 @@ def _compute_quarter(
         label=label,
         wall=wall,
         debt=_total_debt_latest(doc, cfg, as_of=as_of, period_end=period_end),
-        cash_dp=select_instant(doc, cash_tag[0], as_of=as_of, period_end=period_end)
-        if cash_tag
-        else None,
+        cash_dp=_instant_first(
+            doc, cfg.tag_list("cash"), as_of=as_of, period_end=period_end
+        ),
         stinv_dp=select_instant(doc, stinv_tag[0], as_of=as_of, period_end=period_end)
         if stinv_tag
         else None,
@@ -254,9 +289,12 @@ def _latest_point_ends(doc: dict[str, Any], cfg: IssuerMetricConfig, *, as_of: d
     ends = []
     for field_name in ("debt_total", "debt_current", "cash", "mat_next12"):
         tags = cfg.tag_list(field_name)
-        if not tags:
-            continue
-        dp = select_instant(doc, tags[0], as_of=as_of)
+        if field_name == "cash":
+            dp = _instant_first(doc, tags, as_of=as_of)
+        else:
+            if not tags:
+                continue
+            dp = select_instant(doc, tags[0], as_of=as_of)
         if dp is not None:
             ends.append(dp.end)
     return ends

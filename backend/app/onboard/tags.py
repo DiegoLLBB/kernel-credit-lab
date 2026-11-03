@@ -44,7 +44,13 @@ CANDIDATES: dict[str, tuple[str, ...]] = {
         "LongTermNotesPayable",
         "LongTermDebt",
     ),
-    "cash": ("CashAndCashEquivalentsAtCarryingValue", "Cash"),
+    "cash": (
+        "CashAndCashEquivalentsAtCarryingValue",
+        # Some filers (e.g. P&G) stopped tagging the carrying-value concept and
+        # only report the statement-of-cash-flows total that includes restricted cash.
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+        "Cash",
+    ),
     "st_investments": (
         "ShortTermInvestments",
         "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
