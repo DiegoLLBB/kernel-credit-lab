@@ -458,6 +458,9 @@ class MetricTileOut(BaseModel):
     wall_disagrees: bool = False
     wall_value: Decimal | None = None
     source_note: str | None = None
+    # Curated undrawn facilities from 10-K/10-Q prose (not XBRL).
+    exact_quote: str | None = None
+    filing_url: str | None = None
     sparkline: list[SparkPoint] = Field(default_factory=list)
     peer: MetricPeerOut | None = None
 

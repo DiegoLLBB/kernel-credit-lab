@@ -10,6 +10,8 @@ subsidiary's document restates parent comparatives, so every metric is missing).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,17 @@ TagValue = str | tuple[str, ...] | None
 
 
 @dataclass(frozen=True)
+class CuratedUndrawn:
+    """Hand-curated undrawn facility from 10-K/10-Q prose (no XBRL tag)."""
+
+    value: Decimal
+    period_end: date
+    filing_url: str
+    quote: str
+    form: str = "10-K"
+
+
+@dataclass(frozen=True)
 class IssuerMetricConfig:
     """Tag choices for one issuer; ``usable`` is False when xbrl is null."""
 
@@ -51,6 +64,7 @@ class IssuerMetricConfig:
     reasons: dict[str, str] = field(default_factory=dict)
     # opinc_plus_da | pretax_plus_interest_plus_da | None
     ebitda_compose: str | None = None
+    curated_undrawn: CuratedUndrawn | None = None
     history_years: int = 3
     wall_tolerance_pct: float = 2.0
 
@@ -99,7 +113,33 @@ _KNOWN_ENTRY_KEYS = set(TAG_FIELDS) | {
     "revolver",
     "revolver_reason",
     "ebitda_compose",
+    "undrawn_facilities_curated",
 }
+
+
+def _parse_curated_undrawn(raw: Any, *, issuer_key: str) -> CuratedUndrawn | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"xbrl config {issuer_key}: undrawn_facilities_curated must be a mapping")
+    required = ("value", "period_end", "filing_url", "quote")
+    missing = [k for k in required if not raw.get(k)]
+    if missing:
+        raise ValueError(f"xbrl config {issuer_key}: undrawn_facilities_curated missing {missing}")
+    try:
+        value = Decimal(str(raw["value"]))
+        period_end = date.fromisoformat(str(raw["period_end"]))
+    except Exception as exc:  # noqa: BLE001 — surface as config error
+        raise ValueError(
+            f"xbrl config {issuer_key}: undrawn_facilities_curated value/period_end invalid"
+        ) from exc
+    return CuratedUndrawn(
+        value=value,
+        period_end=period_end,
+        filing_url=str(raw["filing_url"]),
+        quote=str(raw["quote"]).strip(),
+        form=str(raw.get("form") or "10-K"),
+    )
 
 
 def _normalize_tag(value: Any) -> TagValue:
@@ -143,6 +183,7 @@ def entry_to_issuer_config(
             reasons["pretax"] = "No pretax tag configured."
     debt_extra = tuple(entry.get("debt_extra") or ())
     compose = entry.get("ebitda_compose")
+    curated = _parse_curated_undrawn(entry.get("undrawn_facilities_curated"), issuer_key=key)
     return IssuerMetricConfig(
         issuer_key=key,
         cik=str(entry.get("cik") or ""),
@@ -152,6 +193,7 @@ def entry_to_issuer_config(
         debt_extra=debt_extra,
         reasons=reasons,
         ebitda_compose=str(compose) if compose else None,
+        curated_undrawn=curated,
         history_years=history_years,
         wall_tolerance_pct=wall_tolerance_pct,
     )

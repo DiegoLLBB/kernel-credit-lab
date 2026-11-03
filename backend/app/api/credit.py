@@ -342,6 +342,8 @@ def metric_tiles(
                 wall_disagrees=detail.get("wall_agrees") is False,
                 wall_value=Decimal(str(detail["wall_due"])) if detail.get("wall_due") else None,
                 source_note=source_note,
+                exact_quote=detail.get("exact_quote"),
+                filing_url=detail.get("filing_url"),
                 peer=peer,
                 sparkline=(
                     [

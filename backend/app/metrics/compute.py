@@ -542,35 +542,10 @@ def _assemble(
             )
         )
 
-    if undrawn_dp is None:
-        rows.append(
-            _missing(
-                "undrawn_facilities",
-                period_end,
-                label,
-                cfg.reason("undrawn_facilities") or _reason(cfg, "undrawn_facilities"),
-            )
-        )
-    else:
-        undrawn_detail: dict[str, Any] = {
-            "method": "remaining borrowing capacity (XBRL)",
-        }
-        if label.startswith("FY"):
-            undrawn_detail["source_note"] = f"from the {label} 10-K"
-        tags, accn, filed = _latest_inputs([undrawn_dp])
-        rows.append(
-            MetricRow(
-                "undrawn_facilities",
-                period_end,
-                label,
-                undrawn_dp.value,
-                _MONEY,
-                tags,
-                accn,
-                filed,
-                undrawn_detail,
-            )
-        )
+    undrawn_row, undrawn_val, undrawn_end = _undrawn_row(
+        cfg, period_end=period_end, label=label, undrawn_dp=undrawn_dp
+    )
+    rows.append(undrawn_row)
 
     due12, due12_row = _due_row(
         "due_12m", period_end, label, mat12_dp, cfg, wall, tol, wall_index=0
@@ -580,18 +555,30 @@ def _assemble(
     rows.append(due24_row)
 
     cash_val = cash_dp.value if cash_dp else None
+    cash_end = cash_dp.end if cash_dp else None
     stinv_val = stinv_dp.value if stinv_dp else None
-    undrawn_val = undrawn_dp.value if undrawn_dp else None
+    stinv_end = stinv_dp.end if stinv_dp else None
+    due24_end = (
+        mat12_dp.end
+        if mat12_dp is not None and mat2_dp is not None and mat12_dp.end == mat2_dp.end
+        else None
+    )
+    xbrl_inputs = [d for d in (cash_dp, stinv_dp, undrawn_dp) if d]
     rows.append(
         _liquidity_total_row(
             period_end,
             label,
             cash_val,
+            cash_end,
             stinv_val,
+            stinv_end,
             undrawn_val,
+            undrawn_end,
             due24,
-            [d for d in (cash_dp, stinv_dp, undrawn_dp) if d],
+            due24_end,
+            xbrl_inputs,
             cfg,
+            is_quarter=is_quarter,
         )
     )
     rows.append(
@@ -599,11 +586,15 @@ def _assemble(
             period_end,
             label,
             cash_val,
+            cash_end,
             stinv_val,
+            stinv_end,
             due12,
             due24,
+            due24_end,
             [d for d in (cash_dp, stinv_dp) if d],
             cfg,
+            is_quarter=is_quarter,
         )
     )
 
@@ -801,15 +792,129 @@ def _due_24m_row(
     )
 
 
+def _undrawn_row(
+    cfg: IssuerMetricConfig,
+    *,
+    period_end: date,
+    label: str,
+    undrawn_dp: Datapoint | None,
+) -> tuple[MetricRow, Decimal | None, date | None]:
+    """XBRL remaining capacity, else curated 10-K/10-Q text for the same period."""
+    if undrawn_dp is not None and undrawn_dp.end == period_end:
+        detail: dict[str, Any] = {
+            "method": "remaining borrowing capacity (XBRL)",
+            "source_note": "remaining borrowing capacity (XBRL)",
+        }
+        if label.startswith("FY"):
+            detail["source_note"] = f"from the {label} 10-K"
+        tags, accn, filed = _latest_inputs([undrawn_dp])
+        return (
+            MetricRow(
+                "undrawn_facilities",
+                period_end,
+                label,
+                undrawn_dp.value,
+                _MONEY,
+                tags,
+                accn,
+                filed,
+                detail,
+            ),
+            undrawn_dp.value,
+            undrawn_dp.end,
+        )
+
+    curated = cfg.curated_undrawn
+    if curated is not None and curated.period_end == period_end:
+        form = curated.form or "10-K"
+        detail = {
+            "method": "committed facility available capacity from filing text",
+            "source_note": f"from the {form} text",
+            "exact_quote": curated.quote,
+            "filing_url": curated.filing_url,
+            "form": form,
+        }
+        return (
+            MetricRow(
+                "undrawn_facilities",
+                period_end,
+                label,
+                curated.value,
+                _MONEY,
+                "curated",
+                None,
+                None,
+                detail,
+            ),
+            curated.value,
+            curated.period_end,
+        )
+
+    if curated is not None:
+        reason = (
+            cfg.reason("undrawn_facilities")
+            or "Undrawn credit facilities are not tagged in XBRL for this period; "
+            f"curated {curated.form} figure is for {curated.period_end.isoformat()} only."
+        )
+    else:
+        reason = cfg.reason("undrawn_facilities") or _reason(cfg, "undrawn_facilities")
+    return _missing("undrawn_facilities", period_end, label, reason), None, None
+
+
+def _same_period_reason(
+    *,
+    period_end: date,
+    cash_end: date | None,
+    undrawn_end: date | None,
+    due24_end: date | None,
+    stinv_end: date | None = None,
+    require_undrawn: bool,
+    is_quarter: bool,
+) -> str | None:
+    """Refuse mixed-period liquidity maths; return a missing reason or None if aligned."""
+    ends = {
+        "cash": cash_end,
+        "due_24m": due24_end,
+    }
+    if require_undrawn:
+        ends["undrawn_facilities"] = undrawn_end
+    if stinv_end is not None:
+        ends["st_investments"] = stinv_end
+    present = {k: v for k, v in ends.items() if v is not None}
+    if require_undrawn and undrawn_end is None:
+        return None  # caller already handles missing undrawn
+    if due24_end is None:
+        if is_quarter:
+            return (
+                "debt due in 24 months is not tagged for this period "
+                "(annual 10-K maturity schedule only); refusing to mix with "
+                "quarterly cash/undrawn"
+            )
+        return None
+    mismatched = {k: v.isoformat() for k, v in present.items() if v != period_end}
+    if mismatched or (cash_end is not None and cash_end != due24_end):
+        labeled = {k: v.isoformat() for k, v in present.items()}
+        labeled["tile"] = period_end.isoformat()
+        parts = ", ".join(f"{k}@{v}" for k, v in sorted(labeled.items()))
+        return f"liquidity inputs are not the same period ({parts}); omitted, not mixed"
+    return None
+
+
 def _liquidity_total_row(
     period_end: date,
     label: str,
     cash_val: Decimal | None,
+    cash_end: date | None,
     stinv_val: Decimal | None,
+    stinv_end: date | None,
     undrawn_val: Decimal | None,
+    undrawn_end: date | None,
     due24: Decimal | None,
+    due24_end: date | None,
     inputs: list[Datapoint],
     cfg: IssuerMetricConfig,
+    *,
+    is_quarter: bool = False,
 ) -> MetricRow:
     """(cash + ST investments + undrawn facilities) ÷ debt due in 24 months."""
     if cash_val is None:
@@ -819,11 +924,39 @@ def _liquidity_total_row(
             "liquidity_coverage_total",
             period_end,
             label,
-            cfg.reason("undrawn_facilities") or _reason(cfg, "undrawn_facilities"),
+            cfg.reason("undrawn_facilities")
+            or (
+                cfg.curated_undrawn
+                and (
+                    "Undrawn credit facilities are not tagged in XBRL for this period; "
+                    f"curated {cfg.curated_undrawn.form} figure is for "
+                    f"{cfg.curated_undrawn.period_end.isoformat()} only."
+                )
+            )
+            or _reason(cfg, "undrawn_facilities"),
             cash_only=False,
         )
-    if due24 is None:
-        return _missing("liquidity_coverage_total", period_end, label, _due_reason(cfg))
+    if due24 is None or due24_end is None:
+        reason = _same_period_reason(
+            period_end=period_end,
+            cash_end=cash_end,
+            undrawn_end=undrawn_end,
+            due24_end=None,
+            require_undrawn=True,
+            is_quarter=is_quarter,
+        ) or _due_reason(cfg)
+        return _missing("liquidity_coverage_total", period_end, label, reason, cash_only=False)
+    mix = _same_period_reason(
+        period_end=period_end,
+        cash_end=cash_end,
+        undrawn_end=undrawn_end,
+        due24_end=due24_end,
+        stinv_end=stinv_end if stinv_val is not None else None,
+        require_undrawn=True,
+        is_quarter=is_quarter,
+    )
+    if mix:
+        return _missing("liquidity_coverage_total", period_end, label, mix, cash_only=False)
     if due24 == 0:
         return _missing(
             "liquidity_coverage_total",
@@ -833,6 +966,15 @@ def _liquidity_total_row(
         )
     cushion = cash_val + (stinv_val or Decimal(0)) + undrawn_val
     tags, accn, filed = _latest_inputs(inputs)
+    curated = cfg.curated_undrawn
+    undrawn_from_text = (
+        curated is not None
+        and curated.period_end == period_end
+        and undrawn_end == period_end
+        and not any(d.tag.startswith("LineOfCredit") for d in inputs)
+    )
+    if undrawn_from_text:
+        tags = "+".join(p for p in (tags, "curated") if p) if tags else "curated"
     detail: dict[str, Any] = {
         "cash_only": False,
         "method": "(cash + short-term investments + undrawn facilities) ÷ debt due in 24 months",
@@ -840,8 +982,13 @@ def _liquidity_total_row(
         "st_investments": str(stinv_val) if stinv_val is not None else None,
         "undrawn_facilities": str(undrawn_val),
         "due_24m": str(due24),
+        "period_end": period_end.isoformat(),
     }
-    if label.startswith("FY"):
+    if undrawn_from_text and curated is not None:
+        detail["source_note"] = f"from the {curated.form} text"
+        detail["exact_quote"] = curated.quote
+        detail["filing_url"] = curated.filing_url
+    elif label.startswith("FY"):
         detail["source_note"] = f"from the {label} 10-K"
     return MetricRow(
         "liquidity_coverage_total",
@@ -860,19 +1007,43 @@ def _liquidity_row(
     period_end: date,
     label: str,
     cash_val: Decimal | None,
+    cash_end: date | None,
     stinv_val: Decimal | None,
+    stinv_end: date | None,
     due12: Decimal | None,
     due24: Decimal | None,
+    due24_end: date | None,
     inputs: list[Datapoint],
     cfg: IssuerMetricConfig,
+    *,
+    is_quarter: bool = False,
 ) -> MetricRow:
     del due12
     if cash_val is None:
         return _missing("liquidity_coverage", period_end, label, _reason(cfg, "cash"))
-    if due24 is None:
+    if due24 is None or due24_end is None:
+        reason = _same_period_reason(
+            period_end=period_end,
+            cash_end=cash_end,
+            undrawn_end=None,
+            due24_end=None,
+            require_undrawn=False,
+            is_quarter=is_quarter,
+        ) or _due_reason(cfg)
         return _missing(
-            "liquidity_coverage", period_end, label, _due_reason(cfg), cash_only=stinv_val is None
+            "liquidity_coverage", period_end, label, reason, cash_only=stinv_val is None
         )
+    mix = _same_period_reason(
+        period_end=period_end,
+        cash_end=cash_end,
+        undrawn_end=None,
+        due24_end=due24_end,
+        stinv_end=stinv_end if stinv_val is not None else None,
+        require_undrawn=False,
+        is_quarter=is_quarter,
+    )
+    if mix:
+        return _missing("liquidity_coverage", period_end, label, mix, cash_only=stinv_val is None)
     if due24 == 0:
         return _missing(
             "liquidity_coverage", period_end, label, "no debt matures in the next 24 months"

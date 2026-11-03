@@ -259,9 +259,20 @@ def test_duke_fy2025_core_maths(metric_config):
     assert get("st_investments").value is None
     assert "cash-only" in (get("st_investments").missing_reason() or "")
     assert get("liquidity_coverage").detail["cash_only"] is True
-    assert get("undrawn_facilities").value is None
-    assert "not tagged" in (get("undrawn_facilities").missing_reason() or "").lower()
-    assert get("liquidity_coverage_total").value is None
+    undrawn = get("undrawn_facilities")
+    assert undrawn.value == Decimal("7768000000")
+    assert undrawn.source_tag == "curated"
+    assert undrawn.detail.get("source_note") == "from the 10-K text"
+    assert "7,768" in (undrawn.detail.get("exact_quote") or "")
+    assert "1326160" in (undrawn.detail.get("filing_url") or "")
+    total = get("liquidity_coverage_total")
+    assert total.value is not None
+    cash = get("cash")
+    due24 = get("due_24m")
+    assert cash.value is not None and due24.value is not None
+    expected = (cash.value + undrawn.value) / due24.value
+    assert total.value == expected.quantize(Decimal("0.0001"))
+    assert total.detail.get("source_note") == "from the 10-K text"
 
 
 def test_verizon_undrawn_and_total_liquidity(metric_config):
@@ -271,9 +282,14 @@ def test_verizon_undrawn_and_total_liquidity(metric_config):
     q = rows[("undrawn_facilities", date(2026, 9, 30))]
     assert q.value == Decimal("12014000000")
     assert "RemainingBorrowingCapacity" in (q.source_tag or "")
-    # Maturity ladder is annual-only → Q3 total cover is missing (not estimated).
-    assert rows[("liquidity_coverage_total", date(2026, 9, 30))].value is None
-    # FY2025 aligns cash + undrawn + due_24m.
+    # Maturity ladder is annual-only → Q3 total cover is missing (not mixed).
+    q_total = rows[("liquidity_coverage_total", date(2026, 9, 30))]
+    assert q_total.value is None
+    assert (
+        "same period" in (q_total.missing_reason() or "").lower()
+        or "annual" in (q_total.missing_reason() or "").lower()
+    )
+    # FY2025 aligns cash + undrawn + due_24m (not Q3 undrawn).
     end = date(2025, 12, 31)
     undrawn = rows[("undrawn_facilities", end)]
     cash = rows[("cash", end)]
@@ -284,6 +300,23 @@ def test_verizon_undrawn_and_total_liquidity(metric_config):
     expected = (cash.value + undrawn.value) / due24.value
     assert total.value == expected.quantize(Decimal("0.0001"))
     assert total.detail.get("method")
+    assert total.detail.get("undrawn_facilities") == str(undrawn.value)
+
+
+def test_amazon_curated_undrawn(metric_config):
+    rows = _fy_rows(metric_config, "amazon", "0001018724")
+    end = date(2025, 12, 31)
+    undrawn = rows[("undrawn_facilities", end)]
+    assert undrawn.value == Decimal("20000000000")
+    assert undrawn.detail.get("source_note") == "from the 10-K text"
+    assert "15.0 billion" in (undrawn.detail.get("exact_quote") or "")
+    total = rows[("liquidity_coverage_total", end)]
+    cash = rows[("cash", end)]
+    st = rows[("st_investments", end)]
+    due24 = rows[("due_24m", end)]
+    assert total.value is not None and cash.value is not None and due24.value is not None
+    cushion = cash.value + (st.value or Decimal(0)) + undrawn.value
+    assert total.value == (cushion / due24.value).quantize(Decimal("0.0001"))
 
 
 def test_intel_liquidity_not_cash_only(metric_config):
