@@ -21,10 +21,10 @@ from app.api.alerts import _applied_changes, _issuer_ref, impact_for_alert
 from app.api.common import clamp_limit
 from app.api.schemas import (
     BeforeAfterOut,
+    BriefRefusedOut,
     BriefSentenceOut,
     ChartCrosscheckSummaryOut,
     CreditOverviewOut,
-    BriefRefusedOut,
     DailyBriefOut,
     EvalComparisonOut,
     EvalComparisonRowOut,
