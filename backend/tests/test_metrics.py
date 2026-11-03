@@ -218,7 +218,7 @@ def _fy_rows(metric_config, key, cik, as_of=CUTOFF):
     return out
 
 
-def test_all_twelve_metrics_present_per_period(metric_config):
+def test_all_metrics_present_per_period(metric_config):
     rows = _fy_rows(metric_config, "intel", "0000050863")
     ends = sorted({pe for (_, pe) in rows})
     assert len(ends) >= 3  # history + latest quarter
@@ -259,6 +259,31 @@ def test_duke_fy2025_core_maths(metric_config):
     assert get("st_investments").value is None
     assert "cash-only" in (get("st_investments").missing_reason() or "")
     assert get("liquidity_coverage").detail["cash_only"] is True
+    assert get("undrawn_facilities").value is None
+    assert "not tagged" in (get("undrawn_facilities").missing_reason() or "").lower()
+    assert get("liquidity_coverage_total").value is None
+
+
+def test_verizon_undrawn_and_total_liquidity(metric_config):
+    """RemainingBorrowingCapacity feeds undrawn; total cover needs same-period due_24m."""
+    rows = _fy_rows(metric_config, "verizon", "0000732712")
+    # Latest 10-Q spot-check (period end 2026-09-30).
+    q = rows[("undrawn_facilities", date(2026, 9, 30))]
+    assert q.value == Decimal("12014000000")
+    assert "RemainingBorrowingCapacity" in (q.source_tag or "")
+    # Maturity ladder is annual-only → Q3 total cover is missing (not estimated).
+    assert rows[("liquidity_coverage_total", date(2026, 9, 30))].value is None
+    # FY2025 aligns cash + undrawn + due_24m.
+    end = date(2025, 12, 31)
+    undrawn = rows[("undrawn_facilities", end)]
+    cash = rows[("cash", end)]
+    due24 = rows[("due_24m", end)]
+    total = rows[("liquidity_coverage_total", end)]
+    assert undrawn.value == Decimal("13657000000")
+    assert cash.value is not None and due24.value is not None and due24.value != 0
+    expected = (cash.value + undrawn.value) / due24.value
+    assert total.value == expected.quantize(Decimal("0.0001"))
+    assert total.detail.get("method")
 
 
 def test_intel_liquidity_not_cash_only(metric_config):

@@ -1,8 +1,9 @@
 """Credit metric maths: tagged datapoints in, per-period metric rows out.
 
-Twelve metrics per issuer (``METRIC_IDS``): total_debt, cash, st_investments,
-due_12m, due_24m, liquidity_coverage, ebitda, leverage, net_leverage,
-interest_coverage, fcf, fcf_to_debt.
+Fourteen metrics per issuer (``METRIC_IDS``): total_debt, cash, st_investments,
+undrawn_facilities, due_12m, due_24m, liquidity_coverage_total,
+liquidity_coverage, ebitda, leverage, net_leverage, interest_coverage, fcf,
+fcf_to_debt.
 
 Each metric gets one row per fiscal year (history for sparklines) plus one
 latest-quarter row (TTM for flows). Anything unbuildable yields a row with
@@ -33,8 +34,10 @@ METRIC_IDS = (
     "total_debt",
     "cash",
     "st_investments",
+    "undrawn_facilities",
     "due_12m",
     "due_24m",
+    "liquidity_coverage_total",
     "liquidity_coverage",
     "ebitda",
     "leverage",
@@ -47,7 +50,14 @@ METRIC_IDS = (
 _MONEY = "USD"
 _MULTIPLE = "x"
 _RATIO_METRICS = frozenset(
-    {"leverage", "net_leverage", "interest_coverage", "liquidity_coverage", "fcf_to_debt"}
+    {
+        "leverage",
+        "net_leverage",
+        "interest_coverage",
+        "liquidity_coverage",
+        "liquidity_coverage_total",
+        "fcf_to_debt",
+    }
 )
 
 
@@ -207,6 +217,7 @@ def _compute_fy_period(
     wall: dict[date, tuple[Decimal, Decimal]] | None,
 ) -> list[MetricRow]:
     debt = _total_debt_fy(doc, cfg, as_of=as_of, end=end)
+    undrawn_tags = cfg.tag_list("undrawn_facilities")
     return _assemble(
         cfg,
         period_end=end,
@@ -215,6 +226,7 @@ def _compute_fy_period(
         debt=debt,
         cash_dp=_instant_first(doc, cfg.tag_list("cash"), as_of=as_of, end=end),
         stinv_dp=_point(doc, (cfg.tag_list("st_investments") or [None])[0], as_of=as_of, end=end),
+        undrawn_dp=_point(doc, undrawn_tags[0], as_of=as_of, end=end) if undrawn_tags else None,
         mat12_dp=_point(doc, (cfg.tag_list("mat_next12") or [None])[0], as_of=as_of, end=end),
         mat2_dp=_point(doc, (cfg.tag_list("mat_year2") or [None])[0], as_of=as_of, end=end),
         opinc=_fy_flow(doc, cfg.tag("opinc"), as_of=as_of, end=end),
@@ -254,6 +266,7 @@ def _compute_quarter(
         has_ttm = has_ttm or value is not None
     label = f"TTM {quarter_label}" if has_ttm else quarter_label
     stinv_tag = cfg.tag_list("st_investments")
+    undrawn_tag = cfg.tag_list("undrawn_facilities")
     mat12_tag = cfg.tag_list("mat_next12")
     mat2_tag = cfg.tag_list("mat_year2")
     return _assemble(
@@ -265,6 +278,9 @@ def _compute_quarter(
         cash_dp=_instant_first(doc, cfg.tag_list("cash"), as_of=as_of, period_end=period_end),
         stinv_dp=select_instant(doc, stinv_tag[0], as_of=as_of, period_end=period_end)
         if stinv_tag
+        else None,
+        undrawn_dp=select_instant(doc, undrawn_tag[0], as_of=as_of, period_end=period_end)
+        if undrawn_tag
         else None,
         mat12_dp=select_instant(doc, mat12_tag[0], as_of=as_of, period_end=period_end)
         if mat12_tag
@@ -479,6 +495,7 @@ def _assemble(
     debt: tuple[Decimal | None, list[Datapoint]],
     cash_dp: Datapoint | None,
     stinv_dp: Datapoint | None,
+    undrawn_dp: Datapoint | None,
     mat12_dp: Datapoint | None,
     mat2_dp: Datapoint | None,
     opinc: FlowValue,
@@ -525,6 +542,36 @@ def _assemble(
             )
         )
 
+    if undrawn_dp is None:
+        rows.append(
+            _missing(
+                "undrawn_facilities",
+                period_end,
+                label,
+                cfg.reason("undrawn_facilities") or _reason(cfg, "undrawn_facilities"),
+            )
+        )
+    else:
+        undrawn_detail: dict[str, Any] = {
+            "method": "remaining borrowing capacity (XBRL)",
+        }
+        if label.startswith("FY"):
+            undrawn_detail["source_note"] = f"from the {label} 10-K"
+        tags, accn, filed = _latest_inputs([undrawn_dp])
+        rows.append(
+            MetricRow(
+                "undrawn_facilities",
+                period_end,
+                label,
+                undrawn_dp.value,
+                _MONEY,
+                tags,
+                accn,
+                filed,
+                undrawn_detail,
+            )
+        )
+
     due12, due12_row = _due_row(
         "due_12m", period_end, label, mat12_dp, cfg, wall, tol, wall_index=0
     )
@@ -534,6 +581,19 @@ def _assemble(
 
     cash_val = cash_dp.value if cash_dp else None
     stinv_val = stinv_dp.value if stinv_dp else None
+    undrawn_val = undrawn_dp.value if undrawn_dp else None
+    rows.append(
+        _liquidity_total_row(
+            period_end,
+            label,
+            cash_val,
+            stinv_val,
+            undrawn_val,
+            due24,
+            [d for d in (cash_dp, stinv_dp, undrawn_dp) if d],
+            cfg,
+        )
+    )
     rows.append(
         _liquidity_row(
             period_end,
@@ -738,6 +798,61 @@ def _due_24m_row(
         accn,
         filed,
         extra,
+    )
+
+
+def _liquidity_total_row(
+    period_end: date,
+    label: str,
+    cash_val: Decimal | None,
+    stinv_val: Decimal | None,
+    undrawn_val: Decimal | None,
+    due24: Decimal | None,
+    inputs: list[Datapoint],
+    cfg: IssuerMetricConfig,
+) -> MetricRow:
+    """(cash + ST investments + undrawn facilities) ÷ debt due in 24 months."""
+    if cash_val is None:
+        return _missing("liquidity_coverage_total", period_end, label, _reason(cfg, "cash"))
+    if undrawn_val is None:
+        return _missing(
+            "liquidity_coverage_total",
+            period_end,
+            label,
+            cfg.reason("undrawn_facilities") or _reason(cfg, "undrawn_facilities"),
+            cash_only=False,
+        )
+    if due24 is None:
+        return _missing("liquidity_coverage_total", period_end, label, _due_reason(cfg))
+    if due24 == 0:
+        return _missing(
+            "liquidity_coverage_total",
+            period_end,
+            label,
+            "no debt matures in the next 24 months",
+        )
+    cushion = cash_val + (stinv_val or Decimal(0)) + undrawn_val
+    tags, accn, filed = _latest_inputs(inputs)
+    detail: dict[str, Any] = {
+        "cash_only": False,
+        "method": "(cash + short-term investments + undrawn facilities) ÷ debt due in 24 months",
+        "cash": str(cash_val),
+        "st_investments": str(stinv_val) if stinv_val is not None else None,
+        "undrawn_facilities": str(undrawn_val),
+        "due_24m": str(due24),
+    }
+    if label.startswith("FY"):
+        detail["source_note"] = f"from the {label} 10-K"
+    return MetricRow(
+        "liquidity_coverage_total",
+        period_end,
+        label,
+        _quantize_ratio(cushion / due24),
+        _MULTIPLE,
+        tags,
+        accn,
+        filed,
+        detail,
     )
 
 

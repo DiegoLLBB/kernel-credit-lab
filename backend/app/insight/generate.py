@@ -618,6 +618,7 @@ _SNAPSHOT_TILE_KEYS = (
     "due_24m",
     "leverage",
     "interest_coverage",
+    "liquidity_coverage_total",
     "liquidity_coverage",
 )
 

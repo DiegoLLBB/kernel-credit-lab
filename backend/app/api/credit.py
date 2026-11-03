@@ -57,6 +57,7 @@ from app.metrics.peers import (
     is_bank_sector,
     peer_comparison,
     sector_label_for_display,
+    watchlist_rank,
 )
 from app.metrics.periods import prior_same_period
 from app.models import Alert, CreditMetric, Event, Filing, Issuer, LiveConfig
@@ -69,8 +70,10 @@ METRIC_LABELS = {
     "total_debt": "Total debt",
     "cash": "Cash",
     "st_investments": "Short-term investments",
+    "undrawn_facilities": "Undrawn credit facilities",
     "due_12m": "Debt due in 12 months",
     "due_24m": "Debt due in 24 months",
+    "liquidity_coverage_total": "Cash + undrawn credit lines",
     "liquidity_coverage": "Cash only (excludes credit lines)",
     "ebitda": "EBITDA",
     "leverage": "Debt ÷ EBITDA",
@@ -95,7 +98,14 @@ def load_thresholds() -> dict[str, Any]:
 
 _NEAR_ZERO = Decimal("0.05")
 _RATIO_METRICS = frozenset(
-    {"leverage", "net_leverage", "interest_coverage", "liquidity_coverage", "fcf_to_debt"}
+    {
+        "leverage",
+        "net_leverage",
+        "interest_coverage",
+        "liquidity_coverage",
+        "liquidity_coverage_total",
+        "fcf_to_debt",
+    }
 )
 
 
@@ -184,14 +194,15 @@ def _peer_out(
     unit: str,
 ) -> MetricPeerOut | None:
     raw = peer_comparison(session, issuer, metric, as_of, value=value)
-    if raw is None:
+    wl = watchlist_rank(session, issuer, metric, as_of, value=value)
+    if raw is None and wl is None:
         return None
-    sector = raw.get("sector")
-    n = int(raw.get("n") or 0)
-    median = raw.get("median")
-    rank = raw.get("rank")
-    ordinal = raw.get("ordinal")
-    note = raw.get("note")
+    sector = (raw or {}).get("sector")
+    n = int((raw or {}).get("n") or 0)
+    median = (raw or {}).get("median")
+    rank = (raw or {}).get("rank")
+    ordinal = (raw or {}).get("ordinal")
+    note = (raw or {}).get("note")
     value_disp = _format_peer_figure(value, unit)
     if note and (rank is None or median is None):
         line = note
@@ -209,6 +220,10 @@ def _peer_out(
         ordinal=ordinal if isinstance(ordinal, str) else None,
         note=note if isinstance(note, str) else None,
         line=line,
+        watchlist_n=int(wl["n"]) if wl else None,
+        watchlist_rank=int(wl["rank"]) if wl else None,
+        watchlist_ordinal=str(wl["ordinal"]) if wl else None,
+        watchlist_line=str(wl["line"]) if wl else None,
     )
 
 
@@ -280,19 +295,18 @@ def metric_tiles(
         detail = dict(latest.detail or {})
         prior = prior_same_period(series, latest)
         prior_val = prior.value if prior else None
-        # Liquidity never includes undrawn credit lines (rarely tagged) and has
-        # no risk band — a cash ratio alone is not a full liquidity judgement.
+        # Cash-only liquidity has no risk band; total (cash + undrawn) is banded.
         flag = (
             None
             if metric == "liquidity_coverage"
             else flag_for(metric, latest.value, sector=issuer.sector)
         )
-        source_note = detail.get("source_note")
+        source_note = detail.get("source_note") or detail.get("method")
         # Annual-only maturity / cash-cover tiles: label even if the stored row
         # predates source_note (seed refresh writes it into detail).
         if (
             not source_note
-            and metric in {"due_12m", "due_24m", "liquidity_coverage"}
+            and metric in {"due_12m", "due_24m", "liquidity_coverage", "liquidity_coverage_total"}
             and (latest.fiscal_label or "").startswith("FY")
             and latest.value is not None
         ):
@@ -347,8 +361,10 @@ def _fields_for_metric(metric: str) -> tuple[str, ...]:
         "total_debt": ("debt_total", "debt_current"),
         "cash": ("cash",),
         "st_investments": ("st_investments",),
+        "undrawn_facilities": ("undrawn_facilities",),
         "due_12m": ("mat_next12",),
         "due_24m": ("mat_next12", "mat_year2"),
+        "liquidity_coverage_total": ("cash", "undrawn_facilities", "mat_next12"),
         "liquidity_coverage": ("cash", "mat_next12"),
         "ebitda": ("opinc", "pretax", "depreciation", "interest"),
         "leverage": ("opinc", "pretax", "depreciation", "interest"),
@@ -850,6 +866,7 @@ def credit_overview(
                 only=(
                     "total_debt",
                     "due_24m",
+                    "liquidity_coverage_total",
                     "liquidity_coverage",
                     "leverage",
                     "interest_coverage",

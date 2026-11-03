@@ -57,6 +57,7 @@ _WATCH_METRICS = (
     "total_debt",
     "due_12m",
     "due_24m",
+    "liquidity_coverage_total",
     "liquidity_coverage",
     "leverage",
     "interest_coverage",
@@ -68,7 +69,8 @@ _WATCH_METRIC_PRIORITY: tuple[tuple[str, str, int], ...] = (
     ("due_24m", "debt due within 24 months", 90),
     ("leverage", "leverage", 70),
     ("interest_coverage", "interest coverage", 70),
-    ("liquidity_coverage", "liquidity coverage", 60),
+    ("liquidity_coverage_total", "liquidity coverage (cash + undrawn)", 65),
+    ("liquidity_coverage", "liquidity coverage (cash only)", 55),
     ("total_debt", "total debt", 10),
 )
 
@@ -557,7 +559,7 @@ def _watch_sentences(facts: dict[str, Any]) -> list[str]:
                 elif value < 6.0:
                     score += 20
             if (
-                metric_id == "liquidity_coverage"
+                metric_id in {"liquidity_coverage_total", "liquidity_coverage"}
                 and isinstance(value, (int, float))
                 and value < 0.5
             ):

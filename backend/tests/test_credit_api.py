@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_session
 from app.main import app
-from app.models import Alert, Issuer
+from app.models import Alert, Instrument, Issuer
 from app.models.credit import CreditInsight, CreditMetric
 from scripts.load_seed import load_seed
 
@@ -156,10 +156,17 @@ def test_overview_shape(client: TestClient, api_db: Session) -> None:
     debt_tile = next(t for t in vz["metrics"] if t["metric"] == "total_debt")
     assert debt_tile["change_pct"] is not None
     assert debt_tile["flag"] in ("green", "amber", "red", None)
+    metrics_order = [t["metric"] for t in vz["metrics"]]
+    assert metrics_order.index("liquidity_coverage_total") < metrics_order.index(
+        "liquidity_coverage"
+    )
+    liq_total = next(t for t in vz["metrics"] if t["metric"] == "liquidity_coverage_total")
+    assert "undrawn" in liq_total["label"].lower()
     liq = next(t for t in vz["metrics"] if t["metric"] == "liquidity_coverage")
     assert liq["flag"] is None
     assert "Cash only" in liq["label"]
     assert isinstance(body["thresholds"], list) and body["thresholds"]
+    assert any("undrawn" in (t.get("label") or "").lower() for t in body["thresholds"])
     assert (
         body["evaluation"] is None
         or "Caught" in body["evaluation"]["text"]
@@ -229,3 +236,62 @@ def test_change_pct_suppresses_nonpositive_prior() -> None:
     assert _prior_for_display(Decimal("0")) is None
     assert _prior_for_display(Decimal("3.09")) == Decimal("3.09")
     assert _change_pct(Decimal("3.31"), Decimal("3.09")) == 7.1
+
+
+def test_upcoming_maturities(client: TestClient, api_db: Session) -> None:
+    iss = Issuer(key="acme", name="Acme", ticker="ACM", sector="Industrials")
+    api_db.add(iss)
+    api_db.flush()
+    api_db.add(
+        Instrument(
+            key="acme_2027",
+            issuer_id=iss.id,
+            name="Acme 5% 2027",
+            instrument_type="bond",
+            coupon=Decimal("5.0"),
+            maturity=date(2027, 3, 15),
+            amount_outstanding=Decimal("1000000000"),
+            status="active",
+        )
+    )
+    api_db.add(
+        Instrument(
+            key="acme_2035",
+            issuer_id=iss.id,
+            name="Acme 6% 2035",
+            instrument_type="bond",
+            coupon=Decimal("6.0"),
+            maturity=date(2035, 1, 1),
+            amount_outstanding=Decimal("500000000"),
+            status="active",
+        )
+    )
+    api_db.commit()
+    resp = client.get("/api/maturities/upcoming?months=12&as_of=2026-11-03")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    keys = [i["instrument_key"] for i in body["instruments"]]
+    assert "acme_2027" in keys
+    assert "acme_2035" not in keys
+
+
+def test_alerts_csv_and_rss(client: TestClient, api_db: Session) -> None:
+    _seed_credit(api_db)
+    csv_resp = client.get("/api/alerts.csv")
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers["content-type"]
+    assert "issuer_key" in csv_resp.text.splitlines()[0]
+    rss = client.get("/api/alerts.rss")
+    assert rss.status_code == 200
+    assert "<item>" in rss.text
+    assert "/alerts/" in rss.text
+
+
+def test_watchlist_csv(client: TestClient, api_db: Session) -> None:
+    _seed_credit(api_db)
+    resp = client.get("/api/watchlist.csv")
+    assert resp.status_code == 200
+    header = resp.text.splitlines()[0]
+    assert "liquidity_coverage_total_value" in header
+    assert "liquidity_coverage_value" in header
+    assert "verizon" in resp.text

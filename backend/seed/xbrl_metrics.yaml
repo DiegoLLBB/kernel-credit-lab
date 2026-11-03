@@ -10,8 +10,10 @@
 #
 # Legend: `null` tag + `<field>_reason` = metric intentionally missing.
 # `debt_extra` tags are added to total debt (finance leases where the main debt
-# tag demonstrably excludes them). Revolvers are undrawn capacity, not debt, and
-# no issuer tags undrawn amounts: `revolver: null` everywhere by design.
+# tag demonstrably excludes them). Undrawn credit facilities use
+# `undrawn_facilities` (prefer LineOfCreditFacilityRemainingBorrowingCapacity).
+# When that tag is absent in recent XBRL, the metric is missing with a reason —
+# never estimated from prose.
 
 defaults:
   # FY history rows per metric (plus the latest-quarter TTM row); feeds sparklines.
@@ -38,8 +40,10 @@ issuers:
     capex: PaymentsToAcquirePropertyPlantAndEquipment
     mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths # 7,123 vs printed current maturities 7,104 (VIE rounding); wall shows both
     mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
-    revolver: null
-    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+    undrawn_facilities: null
+    # Companyfacts (CIK 1326160): LineOfCreditFacilityMaximumBorrowingCapacity last
+    # ends 2014-12-31; RemainingBorrowingCapacity absent. No 2024+ facility tags.
+    undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL (LOC capacity tags end 2014); omitted, not estimated from the 10-K prose."
 
   duke_progress:
     cik: "17797"
@@ -79,8 +83,9 @@ issuers:
     capex: PaymentsToAcquirePropertyPlantAndEquipment # 55,663 = printed capital expenditures (gross)
     mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths
     mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
-    revolver: null
-    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+    undrawn_facilities: null
+    # No LineOfCreditFacilityRemaining/MaximumBorrowingCapacity in 2024+ companyfacts.
+    undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL; omitted, not estimated."
 
   verizon:
     cik: "732712"
@@ -103,8 +108,9 @@ issuers:
     capex: PaymentsToAcquireOtherProductiveAssets # 17,011 = printed capex incl. capitalized software; ProductiveAssets tag abandoned (stale 2019)
     mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths # 17,267 vs printed 18,177/18,618: wall shows both
     mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
-    revolver: null
-    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+    # Remaining capacity is the undrawn figure analysts use (backs CP).
+    # Spot-check: Q3 2026 10-Q period end 2026-09-30 → $12,014,000,000.
+    undrawn_facilities: LineOfCreditFacilityRemainingBorrowingCapacity
 
   boeing:
     cik: "12927"
@@ -126,8 +132,9 @@ issuers:
     capex: PaymentsToAcquirePropertyPlantAndEquipment # 2,942 = printed PP&E additions (gross)
     mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths
     mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
-    revolver: null
-    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+    undrawn_facilities: null
+    # No LineOfCreditFacility* capacity tags in 2024+ companyfacts.
+    undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL; omitted, not estimated."
 
   intel:
     cik: "50863"
@@ -147,8 +154,9 @@ issuers:
     capex: PaymentsToAcquirePropertyPlantAndEquipment # 14,646 = printed PP&E additions (gross), not net purchases 11,204
     mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths
     mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
-    revolver: null
-    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+    undrawn_facilities: null
+    # CommercialPaper is tagged (often $0) but facility remaining capacity is not.
+    undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL (CommercialPaper only); omitted, not estimated."
 
   amazon:
     cik: "1018724"
@@ -168,5 +176,7 @@ issuers:
     capex: PaymentsToAcquireProductiveAssets # 131,819 = printed gross PP&E purchases, not net-of-proceeds 128,320
     mat_next12: LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths
     mat_year2: LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo
-    revolver: null
-    revolver_reason: "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
+    undrawn_facilities: null
+    # Companyfacts: LineOfCreditFacilityMaximumBorrowingCapacity last ends 2016-06-30;
+    # RemainingBorrowingCapacity absent. No 2024+ facility tags.
+    undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL (LOC capacity tags end 2016); omitted, not estimated from the 10-K prose."

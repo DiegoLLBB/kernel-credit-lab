@@ -24,6 +24,7 @@ TAG_FIELDS = (
     "debt_total",
     "cash",
     "st_investments",
+    "undrawn_facilities",
     "opinc",
     "pretax",
     "depreciation",
@@ -94,6 +95,7 @@ _KNOWN_ENTRY_KEYS = set(TAG_FIELDS) | {
     "xbrl",
     "xbrl_reason",
     "debt_extra",
+    # Legacy aliases (pre-undrawn_facilities rename).
     "revolver",
     "revolver_reason",
     "ebitda_compose",
@@ -122,6 +124,11 @@ def entry_to_issuer_config(
     entry = dict(entry or {})
     # Onboard stores diagnostic keys that are not tag fields.
     entry.pop("_missing", None)
+    # Legacy ``revolver`` → ``undrawn_facilities``.
+    if entry.get("undrawn_facilities") is None and "revolver" in entry:
+        entry["undrawn_facilities"] = entry.get("revolver")
+    if entry.get("undrawn_facilities_reason") is None and entry.get("revolver_reason"):
+        entry["undrawn_facilities_reason"] = entry["revolver_reason"]
     unknown = set(entry) - _KNOWN_ENTRY_KEYS - {f"{f}_reason" for f in TAG_FIELDS}
     if unknown:
         raise ValueError(f"xbrl config {key}: unknown keys {sorted(unknown)}")
@@ -134,8 +141,6 @@ def entry_to_issuer_config(
             reasons["pretax"] = "Not used; operating income tag is configured."
         else:
             reasons["pretax"] = "No pretax tag configured."
-    if entry.get("revolver_reason"):
-        reasons["revolver"] = entry["revolver_reason"]
     debt_extra = tuple(entry.get("debt_extra") or ())
     compose = entry.get("ebitda_compose")
     return IssuerMetricConfig(

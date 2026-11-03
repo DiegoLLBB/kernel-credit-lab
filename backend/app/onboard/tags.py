@@ -56,6 +56,11 @@ CANDIDATES: dict[str, tuple[str, ...]] = {
         "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
         "MarketableSecuritiesCurrent",
     ),
+    # Prefer remaining (undrawn) capacity; never invent max − drawn without both tags.
+    "undrawn_facilities": (
+        "LineOfCreditFacilityRemainingBorrowingCapacity",
+        "LineOfCreditFacilityCurrentBorrowingCapacity",
+    ),
     "opinc": ("OperatingIncomeLoss",),
     "pretax": (
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
@@ -300,10 +305,15 @@ def build_xbrl_config(
             entry["opinc_reason"] = reason
             missing.append({"field": "opinc", "reason": reason})
 
-    entry["revolver"] = None
-    entry["revolver_reason"] = (
-        "Undrawn revolver capacity is not tagged in XBRL; omitted, not estimated."
-    )
+    undrawn = _first_present(doc, CANDIDATES["undrawn_facilities"], as_of=cutoff, flow=False)
+    if undrawn:
+        entry["undrawn_facilities"] = undrawn
+    else:
+        entry["undrawn_facilities"] = None
+        entry["undrawn_facilities_reason"] = (
+            "Undrawn credit facilities are not tagged in recent XBRL "
+            "(no Remaining/CurrentBorrowingCapacity); omitted, not estimated."
+        )
     entry["_missing"] = missing
     return entry
 

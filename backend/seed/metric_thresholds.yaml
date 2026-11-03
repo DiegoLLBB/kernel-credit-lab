@@ -6,8 +6,8 @@
 #
 # Leverage bands are sector-aware: utilities and telecoms run with more debt,
 # so their green/amber ceilings sit higher. Sectors without a by_sector entry
-# use the default. Liquidity coverage has no risk band — cash alone is not a
-# full liquidity picture (undrawn credit lines are rarely tagged).
+# use the default. Cash-only liquidity stays unbanded; total (cash + undrawn)
+# carries risk bands.
 
 metrics:
   leverage:
@@ -51,7 +51,9 @@ metrics:
     unit: "x"
     green_min: 0.1
     amber_min: 0.0 # negative means borrowing to fund the business
-
-# liquidity_coverage intentionally has no bands: the metric is cash-only for
-# most issuers (undrawn revolvers are not tagged), so a red/green flag would
-# overstate the judgement. The UI labels it "Cash only (excludes credit lines)".
+  # Cash-only liquidity stays unbanded (label: "Cash only (excludes credit lines)").
+  liquidity_coverage_total:
+    label: "Cash + undrawn credit lines"
+    unit: "x"
+    green_min: 1.0 # covers the next 24 months of maturities at least once
+    amber_min: 0.5 # below half coverage needs a funding story
