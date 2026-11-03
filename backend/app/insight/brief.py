@@ -37,7 +37,7 @@ from app.models import Alert, CreditMetric, Event, Issuer
 from app.models.credit import DailyBrief
 from app.models.trace import ModelCall
 
-PROMPT_VERSION = "brief_v2"
+PROMPT_VERSION = "brief_v3"
 BRIEF_COST_CAP_USD = Decimal("0.50")
 BRIEF_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_brief.md").read_text()
 
@@ -233,6 +233,33 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
     }
 
 
+def _template_lead_sentence(facts: dict[str, Any]) -> str | None:
+    """Deterministic first sentence from the largest wall move in the window."""
+    lead = facts.get("lead_change") or {}
+    if not lead:
+        return None
+    issuer = lead.get("issuer_name") or lead.get("issuer_key") or "This issuer"
+    impact = (lead.get("impact_sentence") or "").strip()
+    if impact:
+        return impact
+    deltas = lead.get("wall_deltas") or []
+    if not deltas:
+        return None
+    ranked = sorted(deltas, key=lambda d: float(d.get("change_abs") or 0), reverse=True)
+    d = ranked[0]
+    before_d = d.get("before_display") or format_usd_display(d.get("before"))
+    after_d = d.get("after_display") or format_usd_display(d.get("after"))
+    bucket = d.get("bucket") or "the maturity wall"
+    if not before_d or not after_d:
+        return None
+    try:
+        rises = float(d.get("after") or 0) >= float(d.get("before") or 0)
+    except (TypeError, ValueError):
+        rises = True
+    verb = "rises" if rises else "falls"
+    return f"{issuer}: {bucket} {verb} from {before_d} to {after_d}."
+
+
 def _annotate_links(sentences: list[str], facts: dict[str, Any]) -> list[dict[str, Any]]:
     """Map numbers in kept sentences to alert or issuer URLs."""
     linkables: list[tuple[str, str, str]] = []  # (needle, href, kind)
@@ -422,6 +449,19 @@ async def generate_daily_brief(
         summary.update(gate_summary)
         calls2, cost2, unpriced2 = _cost_since(session, started)
         calls, cost, has_unpriced = calls2, cost2, unpriced2
+
+    # Always lead with the most material wall move (Amazon term loan when present).
+    lead = _template_lead_sentence(facts)
+    if lead:
+        lead_kept, lead_dropped, lead_summary = await _gate_sentences([lead], facts, client)
+        if lead_kept:
+            rest = [s for s in kept if s.strip() != lead_kept[0].strip()]
+            # Drop model sentences that already try to open with a different "largest" claim.
+            kept = lead_kept + rest
+            summary["lead"] = "material_wall_move"
+            summary.update({k: v for k, v in lead_summary.items() if k == "verifier_models"})
+        else:
+            dropped.extend(lead_dropped)
 
     if cost is not None and cost > BRIEF_COST_CAP_USD:
         summary["cost_cap_exceeded"] = True

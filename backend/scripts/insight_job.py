@@ -36,12 +36,34 @@ from app.models.credit import CreditInsight  # used for snapshot cache lookup
 
 
 async def _run(
-    as_of: date, issuer_keys: list[str] | None, *, force: bool = False
+    as_of: date,
+    issuer_keys: list[str] | None,
+    *,
+    force: bool = False,
+    brief_only: bool = False,
 ) -> dict[str, int]:
     stats = {"snapshots": 0, "refinancing": 0, "impacts": 0, "briefs": 0, "errors": 0}
     with SessionLocal() as session:
         cfg = merge_db_configs(session, load_metric_config())
         keys = issuer_keys or list(cfg.issuers)
+        if brief_only:
+            brief_days = {as_of}
+            last = replay_last_day(session)
+            if last is not None:
+                brief_days.add(last)
+            for day in sorted(brief_days):
+                try:
+                    row = await generate_daily_brief(session, day, force=force or True)
+                    print(
+                        f"insight: brief @ {day}: {row.status} "
+                        f"kept={len(row.sentences or [])} refused={len(row.dropped or [])}"
+                    )
+                    stats["briefs"] += 1
+                except Exception as exc:
+                    stats["errors"] += 1
+                    traceback.print_exc()
+                    print(f"insight: brief @ {day} FAILED: {exc}", file=sys.stderr)
+            return stats
         for key in keys:
             issuer = session.scalar(select(Issuer).where(Issuer.key == key))
             if issuer is None:
@@ -124,8 +146,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Regenerate snapshots, impacts, and briefs even when the cache hash matches.",
     )
+    parser.add_argument(
+        "--brief-only",
+        action="store_true",
+        help="Only (re)generate daily briefs; skip snapshots, refinancing, and impacts.",
+    )
     args = parser.parse_args(argv)
-    stats = asyncio.run(_run(args.as_of, args.issuers, force=args.force))
+    stats = asyncio.run(
+        _run(args.as_of, args.issuers, force=args.force, brief_only=args.brief_only)
+    )
     print(
         f"insight: snapshots {stats['snapshots']}, refinancing {stats['refinancing']}, "
         f"impacts {stats['impacts']}, briefs {stats['briefs']}, errors {stats['errors']}"

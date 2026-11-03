@@ -430,6 +430,12 @@ def _analyst_line(session: Session, run: Any | None, status: str) -> str | None:
     )
 
 
+_MECHANICAL_SUMMARY = re.compile(
+    r"^.+:\s*[\w./-]+\s+filed\s+\d{4}-\d{2}-\d{2}\s*$",
+    re.I,
+)
+
+
 def _document_title(
     *,
     form: str | None,
@@ -439,19 +445,28 @@ def _document_title(
 ) -> str:
     """Form name in words, plus the agent's one-line summary when present."""
     words = form_words(form or filing_title)
-    summary = (event_summary or alert_title or "").strip()
-    # Drop summaries that are just the form code / filing title noise.
+    headed = words[0].upper() + words[1:] if words else "Document"
+    # Prefer a real agent summary (alert title) over mechanical "X: 10-Q filed …".
+    candidates = [event_summary, alert_title]
+    summary = ""
+    for cand in candidates:
+        text = (cand or "").strip()
+        if not text:
+            continue
+        if _MECHANICAL_SUMMARY.match(text):
+            continue
+        if text.upper().replace(" ", "") in {
+            (form or "").upper().replace(" ", ""),
+            words.upper().replace(" ", ""),
+        }:
+            continue
+        summary = text
+        break
     if not summary:
-        return words[0].upper() + words[1:] if words else "Document"
-    if summary.upper().replace(" ", "") in {
-        (form or "").upper().replace(" ", ""),
-        words.upper().replace(" ", ""),
-    }:
-        return words[0].upper() + words[1:]
-    # Avoid "Quarterly report: quarterly report…"
+        return headed
     if summary.lower().startswith(words.lower()):
         return summary[0].upper() + summary[1:]
-    return f"{words[0].upper() + words[1:]}: {summary}"
+    return f"{headed}: {summary}"
 
 
 def live_document_rows(session: Session) -> list[dict[str, Any]]:
