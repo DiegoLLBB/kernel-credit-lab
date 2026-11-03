@@ -1,12 +1,12 @@
 "use client";
 
 import { type MetricTile } from "@/lib/api";
-import { formatDate, formatUsdMillions } from "@/lib/format";
+import { formatDate, formatUsdDisplay } from "@/lib/format";
 
 /** Absolute dollars or a plain ratio — every number on screen comes from the API. */
 export function formatTileValue(tile: MetricTile): string {
   if (tile.value === null || tile.value === undefined) return "—";
-  if (tile.unit === "USD") return formatUsdMillions(tile.value);
+  if (tile.unit === "USD") return formatUsdDisplay(tile.value);
   const n = Number(tile.value);
   if (!Number.isFinite(n)) return String(tile.value);
   return `${n.toFixed(2)}×`;
@@ -51,13 +51,7 @@ export function ChangeArrow({ tile }: { tile: MetricTile }) {
     ? `vs ${formatDate(tile.prior_period_end)}`
     : "Versus same point one year earlier";
   if (RATIO_METRICS.has(tile.metric)) {
-    if (tile.prior_value === null || tile.value === null) {
-      return (
-        <span className="tabular-nums text-xs text-slate-500" title={vs}>
-          —
-        </span>
-      );
-    }
+    if (tile.prior_value === null || tile.value === null) return null;
     return (
       <span
         className="tabular-nums text-xs text-slate-300"
@@ -69,13 +63,7 @@ export function ChangeArrow({ tile }: { tile: MetricTile }) {
     );
   }
   const changePct = tile.change_pct;
-  if (changePct === null || changePct === undefined || !Number.isFinite(changePct)) {
-    return (
-      <span className="tabular-nums text-xs text-slate-500" title={vs}>
-        —
-      </span>
-    );
-  }
+  if (changePct === null || changePct === undefined || !Number.isFinite(changePct)) return null;
   const up = changePct > 0.05;
   const down = changePct < -0.05;
   const arrow = up ? "▲" : down ? "▼" : "▬";
@@ -137,7 +125,7 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
       className="scroll-mt-24 border-t border-memo-rule pt-3 pb-1"
     >
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-xs font-medium text-slate-400">
+        <h4 className="text-sm font-medium text-memo-muted">
           {tile.label}
         </h4>
         <FlagDot flag={tile.flag} />
@@ -150,8 +138,8 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
         </p>
       ) : (
         <>
-          <p className="mt-1 tabular-nums text-xl text-slate-100">{formatTileValue(tile)}</p>
-          {tile.peer?.line ? (
+          <p className="mt-1 text-2xl font-medium text-memo-ink">{formatTileValue(tile)}</p>
+          {tile.peer?.line && !/fewer than 3/i.test(tile.peer.line) ? (
             <p className="mt-0.5 tabular-nums text-[11px] text-slate-400">{tile.peer.line}</p>
           ) : null}
           <p className="mt-0.5 tabular-nums text-[11px] text-slate-500">
@@ -176,7 +164,7 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
       ) : null}
       {tile.wall_disagrees && tile.wall_value !== null ? (
         <p className="mt-2 text-[11px] leading-snug text-amber-300/90">
-          Filing total {formatUsdMillions(tile.wall_value)} differs from the bonds we track — both
+          Filing total {formatUsdDisplay(tile.wall_value)} differs from the bonds we track — both
           shown, see the debt wall below.
         </p>
       ) : null}

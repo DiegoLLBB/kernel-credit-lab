@@ -228,10 +228,6 @@ export function IssuerDetailClient() {
                   <dd className="inline">{issuer.cik}</dd>
                 </div>
               ) : null}
-              <div>
-                <dt className="inline text-slate-500">Key </dt>
-                <dd className="inline">{issuer.key}</dd>
-              </div>
             </dl>
             <div className="mt-3 flex flex-wrap gap-3 text-sm">
               {issuer.parent?.key ? (

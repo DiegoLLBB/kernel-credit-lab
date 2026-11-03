@@ -56,8 +56,8 @@ export function CreditSnapshot({
             </p>
           ))}
           {valued.length > 0 || snapshot.wall ? (
-            <p className="mt-3 text-xs leading-relaxed text-slate-500">
-              Figures above come from:{" "}
+            <details className="mt-3 text-xs leading-relaxed text-memo-muted"><summary className="cursor-pointer">Where these figures come from</summary><p className="mt-2">
+              
               {valued.map((t, i) => (
                 <span key={t.metric}>
                   {i > 0 ? " · " : null}
@@ -84,7 +84,7 @@ export function CreditSnapshot({
                   )}
                 </span>
               ))}
-            </p>
+            </p></details>
           ) : null}
           <details className="mt-3 text-xs leading-relaxed text-slate-500">
             <summary className="cursor-pointer text-slate-400">How this was written</summary>
@@ -119,11 +119,30 @@ export function CreditSnapshot({
       ) : null}
 
       {snapshot.metrics.length > 0 ? (
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {snapshot.metrics.map((t) => (
-            <MetricTileCard key={t.metric} tile={t} />
-          ))}
-        </div>
+        <>
+          {snapshot.metrics.some((t) => /fewer than 3/i.test(t.peer?.line ?? "")) ? (
+            <p className="mt-6 text-sm text-memo-muted">
+              Sector medians appear once a sector has at least three companies with the metric.
+            </p>
+          ) : null}
+          <div className="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+            {snapshot.metrics
+              .filter((t) => t.value !== null || t.missing_reason === "not meaningful for banks")
+              .map((t) => (
+                <MetricTileCard key={t.metric} tile={t} />
+              ))}
+          </div>
+          {snapshot.metrics.some((t) => t.value === null && t.missing_reason !== "not meaningful for banks") ? (
+            <p className="mt-4 text-sm text-memo-muted">
+              Not available from this company&apos;s filings:{" "}
+              {snapshot.metrics
+                .filter((t) => t.value === null && t.missing_reason !== "not meaningful for banks")
+                .map((t) => t.label)
+                .join(", ")}
+              .
+            </p>
+          ) : null}
+        </>
       ) : null}
 
       {snapshot.timeline.length > 0 ? (
