@@ -25,6 +25,7 @@ migrate:
 revision:      ## make revision m="add bonds"
 	docker compose exec api alembic revision --autogenerate -m "$(m)"
 
-seed:          ## Load the Dec 2025 snapshot + FRED rates (DGS*/DEX*) into RateObservation
+seed:          ## Load the Dec 2025 snapshot; FRED rates when FRED_API_KEY is valid
 	docker compose exec api python -m scripts.load_seed seed/snapshot_2025-12-31.json
-	docker compose exec api python -m scripts.load_rates
+	@docker compose exec api python -m scripts.load_rates \
+		|| echo "seed: skipped FRED rates (set a real 32-char FRED_API_KEY in .env to load Treasury/FX)"

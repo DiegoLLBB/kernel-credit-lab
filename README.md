@@ -134,6 +134,10 @@ make migrate && make seed
 make test
 ```
 
+`make seed` always loads the Dec 2025 bond snapshot. Treasury/FX rates load only when
+`.env` has a real 32-character `FRED_API_KEY` (dummy keys are skipped with a warning; unit
+tests use recorded fixtures). Model keys can stay empty for `make test`.
+
 Web http://localhost:3000 · API http://localhost:8000 (`/docs`). Cloud jobs (live, replay, seed,
 decks, baseline) run from GitHub Actions → **Run job**; see [DEPLOY.md](docs/DEPLOY.md).
 
