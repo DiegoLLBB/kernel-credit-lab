@@ -64,7 +64,7 @@ export function DocumentClient() {
         <span>{text.slice(0, start)}</span>
         <mark
           ref={highlightRef}
-          className="rounded bg-amber-400/40 text-amber-50 outline outline-1 outline-amber-300/60"
+          className="quote-mark bg-transparent"
         >
           {text.slice(start, end)}
         </mark>
@@ -135,7 +135,7 @@ export function DocumentClient() {
           </div>
           <pre
             aria-busy={pageLoading}
-            className={`max-h-[70vh] overflow-auto whitespace-pre-wrap break-words border-t border-memo-rule pt-3 pb-1 tabular-nums text-xs leading-relaxed text-slate-300 ${pageLoading ? "opacity-60" : ""}`}
+            className={`max-h-[70vh] overflow-auto whitespace-pre-wrap break-words border-y border-memo-rule bg-[#FBFCFA] px-5 py-4 font-serif text-[15px] leading-7 text-memo-ink ${pageLoading ? "opacity-60" : ""}`}
           >
             {renderText(doc)}
           </pre>

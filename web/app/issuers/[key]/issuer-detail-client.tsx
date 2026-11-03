@@ -15,7 +15,7 @@ import {
   type IssuerSnapshot,
   type RefinancingPanel,
 } from "@/lib/api";
-import { formatBps, formatDate, formatUsdMillions } from "@/lib/format";
+import { formatBps, formatDate, formatUsdDisplay, formatUsdMillions } from "@/lib/format";
 import { CreditSnapshot } from "./credit-snapshot";
 
 const WINDOW_START = Date.UTC(2026, 0, 1);
@@ -62,6 +62,21 @@ export function IssuerDetailClient() {
   const [tenorYears, setTenorYears] = useState(5);
   const [refinancing, setRefinancing] = useState<RefinancingPanel | null>(null);
   const [refiError, setRefiError] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState<IssuerDetailOut | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getJson<IssuerDetailOut>(`/api/issuers/${encodeURIComponent(key)}?as_of=2026-01-01`)
+      .then((d) => {
+        if (!cancelled) setBaseline(d);
+      })
+      .catch(() => {
+        /* the outline is optional */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
 
   if (keyRef.current !== key) {
     keyRef.current = key;
@@ -266,28 +281,30 @@ export function IssuerDetailClient() {
           </div>
 
           <section aria-labelledby="wall-heading" className="border-t border-memo-rule pt-8">
-            <h3 id="wall-heading" className="text-lg font-semibold text-memo-ink">
-              Debt due by year
-            </h3>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">
-              Dark blue: bonds Kernel tracks one by one. Light blue: bonds added since the last
-              filing schedule. Grey: the rest of the debt reported in the annual filing.
-            </p>
-            <p className="mt-1 tabular-nums text-xs text-slate-500">As of {formatDate(asOf)}</p>
-
-            <div className="mt-4 flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h3 id="wall-heading" className="text-lg font-semibold text-memo-ink">
+                Debt due by year, as of {formatDate(asOf)}
+              </h3>
               <button
                 type="button"
-                onClick={() => setPlaying((v) => !v)}
+                onClick={() => {
+                  if (!playing && sliderValue >= sliderMax) setAsOf(toIso(WINDOW_START));
+                  setPlaying((v) => !v);
+                }}
                 aria-pressed={playing}
-                className="shrink-0 rounded border border-slate-600 px-3 py-1 text-xs text-slate-200 hover:bg-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink"
               >
-                {playing ? "Pause" : "Play the year"}
+                {playing ? "Pause" : "Play 2026"}
               </button>
-              <label className="min-w-0 flex-1 basis-64">
-                <span className="text-xs text-slate-400">
-                  See the debt profile on any date in 2026
-                </span>
+            </div>
+            <p className="mt-1 max-w-[70ch] text-sm text-memo-muted">
+              Move through the year to see each filing change the profile. Dashed outlines show the
+              same year on 1 Jan 2026.
+            </p>
+
+            <div className="mt-5">
+              <label className="block">
+                <span className="sr-only">Date</span>
                 <input
                   type="range"
                   min={0}
@@ -298,54 +315,72 @@ export function IssuerDetailClient() {
                     const ms = WINDOW_START + Number(e.target.value) * WEEK_MS;
                     setAsOf(toIso(Math.min(WINDOW_END, ms)));
                   }}
-                  list="issuer-event-ticks"
-                  className="w-full accent-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="w-full accent-[#1C232B]"
                   aria-valuetext={formatDate(asOf)}
                 />
               </label>
-              <datalist id="issuer-event-ticks">
+              <div className="relative mt-1 h-8">
                 {eventDates.map((d) => {
-                  const week = Math.round((parseIso(d) - WINDOW_START) / WEEK_MS);
-                  return <option key={d} value={week} label={d} />;
+                  const pct = Math.min(100, Math.max(0, ((parseIso(d) - WINDOW_START) / (WINDOW_END - WINDOW_START)) * 100));
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => {
+                        setPlaying(false);
+                        setAsOf(d);
+                      }}
+                      className="absolute -translate-x-1/2 rounded px-1 text-xs text-memo-added hover:bg-[#EEF0EC]"
+                      style={{ left: `${pct}%` }}
+                      title={`Jump to ${formatDate(d)}`}
+                      aria-label={`Jump to ${formatDate(d)}`}
+                    >
+                      ▲
+                    </button>
+                  );
                 })}
-              </datalist>
+              </div>
+              <div className="flex justify-between text-xs text-memo-muted">
+                <span>1 Jan 2026</span>
+                <span>Filings that changed the profile are marked ▲</span>
+                <span>31 Oct 2026</span>
+              </div>
             </div>
-            <div className="mt-1 flex justify-between tabular-nums text-[10px] text-slate-500">
-              <span>1 Jan 2026</span>
-              <span>31 Oct 2026</span>
-            </div>
-            {eventDates.length > 0 ? (
-              <details className="mt-2 text-[11px] text-slate-500">
-                <summary className="cursor-pointer tabular-nums text-slate-400">
-                  {eventDates.length} event date{eventDates.length === 1 ? "" : "s"} on this slider
-                </summary>
-                <p className="mt-1 tabular-nums leading-relaxed">
-                  {eventDates.map((d) => formatDate(d)).join(" · ")}
-                </p>
-              </details>
-            ) : null}
 
             {error ? <div className="mt-3"><ErrorLine message={error} /></div> : null}
 
+            <div className="mt-8 grid gap-10 lg:grid-cols-2">
+              <MaturityWallChart
+                wall={issuer.maturity_wall}
+                title="This company"
+                baseline={baseline?.maturity_wall ?? null}
+              />
+              {issuer.group_maturity_wall ? (
+                <MaturityWallChart
+                  wall={issuer.group_maturity_wall}
+                  title="Whole group, combined"
+                  baseline={baseline?.group_maturity_wall ?? null}
+                />
+              ) : null}
+            </div>
+
             {snapshot?.wall && snapshot.wall.changes.length > 0 ? (
-              <div className="mt-4 rounded border border-slate-700/60 p-3">
-                <p className="text-xs font-medium text-slate-500">
-                  Changes this year
-                </p>
-                <ul className="mt-2 space-y-1 text-xs text-slate-300">
+              <div className="mt-8">
+                <h4 className="text-sm font-medium text-memo-muted">What moved it this year</h4>
+                <ul className="mt-2 border-t border-memo-rule">
                   {snapshot.wall.changes.map((c, i) => (
-                    <li key={`${c.label}-${i}`}>
-                      <span className="tabular-nums">
-                        {c.label}: {c.before !== null ? formatUsdMillions(c.before) : "—"}
-                        {" → "}
-                        {c.after !== null ? formatUsdMillions(c.after) : "—"}
+                    <li key={`${c.label}-${i}`} className="border-b border-memo-rule py-2 text-sm">
+                      <span className="font-medium text-memo-ink">
+                        {c.label.replace(/^FY/, "").replace(/^after /, "after ")}:{" "}
+                        {c.before !== null ? formatUsdDisplay(c.before) : "—"} →{" "}
+                        {c.after !== null ? formatUsdDisplay(c.after) : "—"}
                       </span>
                       {c.alert_id ? (
                         <>
-                          {" · "}
+                          {"  "}
                           <Link
                             href={`/alerts/${c.alert_id}`}
-                            className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                            className="ml-2 text-memo-info underline underline-offset-2"
                           >
                             {c.alert_title ?? "See the alert"}
                           </Link>
@@ -356,16 +391,6 @@ export function IssuerDetailClient() {
                 </ul>
               </div>
             ) : null}
-
-            <div className="mt-6 grid gap-8 lg:grid-cols-2">
-              <MaturityWallChart wall={issuer.maturity_wall} title="This company" />
-              {issuer.group_maturity_wall ? (
-                <MaturityWallChart
-                  wall={issuer.group_maturity_wall}
-                  title="Whole group, combined"
-                />
-              ) : null}
-            </div>
 
             <div className="mt-6 rounded border border-slate-700/60 p-4">
               <p className="text-xs font-medium text-slate-500">

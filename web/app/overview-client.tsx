@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ChangeArrow, FlagDot, formatTileValue } from "@/components/credit";
+import { FeaturedChange } from "@/components/featured-change";
 import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
 import { EmptyLine, ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
 import {
@@ -254,6 +255,8 @@ export function OverviewClient() {
 
       {overview ? (
         <>
+          {agentFeed[0] ? <FeaturedChange alertId={agentFeed[0].alert_id} /> : null}
+
           {overview.brief && overview.brief.sentences.length > 0 ? (
             <section
               aria-labelledby="brief-heading"

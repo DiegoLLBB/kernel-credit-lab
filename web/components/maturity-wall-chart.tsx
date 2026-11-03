@@ -1,7 +1,7 @@
 "use client";
 
 import type { MaturityWall } from "@/lib/api";
-import { formatUsdMillions, wallAmount } from "@/lib/format";
+import { formatUsdDisplay, wallAmount } from "@/lib/format";
 
 const DISPLAY_LABELS = ["FY2026", "FY2027", "FY2028", "FY2029"];
 
@@ -21,16 +21,21 @@ export function MaturityWallChart({
   wall,
   title,
   labels = DISPLAY_LABELS,
+  baseline,
+  baselineLabel = "1 Jan 2026",
 }: {
   wall: MaturityWall | null | undefined;
   title: string;
   labels?: string[];
+  /** Earlier wall drawn as a dashed outline, so the year's changes stand out. */
+  baseline?: MaturityWall | null;
+  baselineLabel?: string;
 }) {
   if (!wall || !wall.buckets || Object.keys(wall.buckets).length === 0) {
     return (
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-slate-300">{title}</h3>
-        <p className="text-sm text-slate-400">No maturity wall for this date.</p>
+        <h4 className="mb-2 text-sm font-medium text-memo-muted">{title}</h4>
+        <p className="text-sm text-memo-muted">No debt schedule for this date.</p>
       </div>
     );
   }
@@ -38,7 +43,6 @@ export function MaturityWallChart({
   const present = labels.filter((l) => wall.buckets[l]);
   const extras = Object.keys(wall.buckets).filter((l) => !labels.includes(l));
   const show = [...present, ...extras.filter((l) => l.startsWith("FY") && Number(l.slice(2)) <= 2030)];
-  // Prefer requested labels; if wall only has those years, use them.
   const ordered = (show.length > 0 ? show : Object.keys(wall.buckets)).slice(0, 6);
 
   const series = ordered.map((label) => {
@@ -47,43 +51,45 @@ export function MaturityWallChart({
     const newsince = wallAmount(b?.new_since_schedule_sum);
     const unattributed = wallAmount(b?.unattributed);
     const total = named + newsince + unattributed;
-    return {
-      label,
-      named,
-      newsince,
-      unattributed,
-      total,
-      breach: Boolean(b?.breach),
-    };
+    const bb = baseline?.buckets?.[label];
+    const base = bb
+      ? wallAmount(bb.named_active_sum) + wallAmount(bb.new_since_schedule_sum) + wallAmount(bb.unattributed)
+      : null;
+    return { label, named, newsince, unattributed, total, base, breach: Boolean(b?.breach) };
   });
 
-  const max = Math.max(1, ...series.map((s) => s.total));
-  const chartH = 160;
-  const barW = 36;
-  const gap = 28;
-  const width = Math.max(series.length * (barW + gap), 200);
+  const max = Math.max(1, ...series.flatMap((s) => [s.total, s.base ?? 0]));
+  const top = 30;
+  const chartH = 200;
+  const col = 96;
+  const barW = 52;
+  const width = Math.max(series.length * col, 240);
+  const Y = (v: number) => top + chartH - (v / max) * chartH;
+  const changed = series.filter(
+    (s) => s.base !== null && Math.abs(s.total - s.base) >= Math.max(100_000_000, 0.01 * s.total),
+  );
 
   return (
-    <div>
-      <h3 className="mb-3 text-sm font-semibold text-slate-300">{title}</h3>
+    <figure>
+      <h4 className="mb-3 text-sm font-medium text-memo-muted">{title}</h4>
       <div className="overflow-x-auto">
         <svg
           role="img"
-          aria-label={title}
+          aria-label={`${title}: ${series.map((s) => `${s.label.replace(/^FY/, "")} ${formatUsdDisplay(s.total)}`).join(", ")}`}
           width={width}
-          height={chartH + 48}
-          viewBox={`0 0 ${width} ${chartH + 48}`}
-          className="transition-all duration-500"
+          height={top + chartH + 40}
+          viewBox={`0 0 ${width} ${top + chartH + 40}`}
         >
+          <line x1={0} x2={width} y1={top + chartH} y2={top + chartH} stroke="#1C232B" />
           {series.map((s, i) => {
-            const x = i * (barW + gap) + 8;
-            let y = chartH;
-            const segments: { h: number; color: string; key: string; value: number }[] = [
-              { key: "unattributed", color: COLORS.unattributed, value: s.unattributed, h: 0 },
-              { key: "newsince", color: COLORS.newsince, value: s.newsince, h: 0 },
-              { key: "named", color: COLORS.named, value: s.named, h: 0 },
+            const x = i * col + (col - barW) / 2;
+            let y = top + chartH;
+            const segments = [
+              { key: "unattributed", color: COLORS.unattributed, value: s.unattributed },
+              { key: "newsince", color: COLORS.newsince, value: s.newsince },
+              { key: "named", color: COLORS.named, value: s.named },
             ].map((seg) => ({ ...seg, h: (seg.value / max) * chartH }));
-
+            const moved = changed.includes(s);
             return (
               <g key={s.label}>
                 {segments.map((seg) => {
@@ -97,68 +103,81 @@ export function MaturityWallChart({
                       width={barW}
                       height={seg.h}
                       fill={seg.color}
-                      className="transition-all duration-500 ease-out"
+                      style={{ transition: "y 400ms ease-out, height 400ms ease-out" }}
                     >
                       <title>
-                        {s.label} {SEG_LABEL[seg.key] ?? seg.key}: {formatUsdMillions(seg.value)}
+                        {s.label.replace(/^FY/, "")} {SEG_LABEL[seg.key] ?? seg.key}: {formatUsdDisplay(seg.value)}
                       </title>
                     </rect>
                   );
                 })}
-                {s.breach ? (
-                  <text
-                    x={x + barW / 2}
-                    y={12}
-                    textAnchor="middle"
-                    fontSize={9}
-                    className="fill-rose-300"
-                    fontFamily="ui-monospace, monospace"
+                {s.base !== null && moved ? (
+                  <rect
+                    x={x - 4}
+                    y={Y(s.base)}
+                    width={barW + 8}
+                    height={top + chartH - Y(s.base)}
+                    fill="none"
+                    stroke={s.total > s.base ? "#B4472E" : "#2E6B57"}
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
                   >
-                    over
-                  </text>
+                    <title>{`${s.label.replace(/^FY/, "")} on ${baselineLabel}: ${formatUsdDisplay(s.base)}`}</title>
+                  </rect>
                 ) : null}
                 <text
                   x={x + barW / 2}
-                  y={chartH + 16}
+                  y={Math.min(Y(s.total), s.base !== null && moved ? Y(s.base) : Y(s.total)) - 8}
                   textAnchor="middle"
-                  fontSize={10}
-                  className="fill-slate-400"
-                  fontFamily="ui-monospace, monospace"
+                  fontSize={13}
+                  fontWeight={600}
+                  fill="#1C232B"
                 >
+                  {formatUsdDisplay(s.total)}
+                </text>
+                <text x={x + barW / 2} y={top + chartH + 18} textAnchor="middle" fontSize={13} fill="#1C232B">
                   {s.label.replace(/^FY/, "")}
                 </text>
-                <text
-                  x={x + barW / 2}
-                  y={chartH + 32}
-                  textAnchor="middle"
-                  fontSize={9}
-                  className="fill-slate-500"
-                  fontFamily="ui-monospace, monospace"
-                >
-                  {formatUsdMillions(s.total)}
-                </text>
+                {moved && s.base !== null ? (
+                  <text
+                    x={x + barW / 2}
+                    y={top + chartH + 34}
+                    textAnchor="middle"
+                    fontSize={12}
+                    fill={s.total > s.base ? "#B4472E" : "#2E6B57"}
+                  >
+                    {s.total > s.base ? "+" : "−"}
+                    {formatUsdDisplay(Math.abs(s.total - s.base))}
+                  </text>
+                ) : null}
               </g>
             );
           })}
         </svg>
       </div>
-      <ul className="mt-3 flex flex-wrap gap-4 text-[11px] text-slate-400">
-        <li className="inline-flex items-center gap-1.5">
+      <figcaption className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-memo-muted">
+        <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5" style={{ background: COLORS.named }} aria-hidden />
-          Bonds we track
-        </li>
-        <li className="inline-flex items-center gap-1.5">
+          Bonds Kernel tracks one by one
+        </span>
+        <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5" style={{ background: COLORS.newsince }} aria-hidden />
-          Added since the last filing
-        </li>
-        <li className="inline-flex items-center gap-1.5">
+          New debt since the last annual filing
+        </span>
+        <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5" style={{ background: COLORS.unattributed }} aria-hidden />
-          Rest of the debt in the 10-K
-        </li>
-        <li className="inline-flex items-center gap-1.5 text-rose-300">
-          <span aria-hidden>⚑</span> Tracked bonds exceed the amount in that year&apos;s filing
-        </li>
-      </ul>
-    </div>
+          Rest of the debt in the 10-K schedule
+        </span>
+        {baseline ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-3 border border-dashed border-memo-muted" aria-hidden />
+            Same year on {baselineLabel}
+          </span>
+        ) : null}
+        {series.some((s) => s.breach) ? (
+          <span>Some years: tracked bonds exceed the 10-K amount (both kept).</span>
+        ) : null}
+      </figcaption>
+    </figure>
   );
 }

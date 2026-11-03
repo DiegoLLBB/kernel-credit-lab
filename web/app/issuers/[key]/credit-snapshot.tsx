@@ -146,30 +146,29 @@ export function CreditSnapshot({
       ) : null}
 
       {snapshot.timeline.length > 0 ? (
-        <div className="mt-6">
-          <h4 className="mb-3 text-xs font-semibold text-slate-500">
-            This year
-          </h4>
-          <ol className="space-y-3 border-l border-slate-700/80 pl-4">
+        <div className="mt-10">
+          <h4 className="text-lg font-semibold text-memo-ink">This year</h4>
+          <ol className="mt-3 border-t border-memo-ink">
             {snapshot.timeline.map((item, i) => (
-              <li key={`${item.event_date}-${i}`} className="text-sm">
-                <p className="tabular-nums text-[11px] text-slate-500">
-                  {formatDate(item.event_date)}
-                </p>
-                <p className="text-slate-200">{item.effect ?? item.title}</p>
-                {item.effect && item.title && item.effect !== item.title ? (
-                  <p className="text-xs text-slate-500">{item.title}</p>
-                ) : null}
-                {item.alert_id ? (
-                  <p className="mt-1 text-xs">
+              <li
+                key={`${item.event_date}-${i}`}
+                className="grid grid-cols-1 gap-x-6 border-b border-memo-rule py-3 sm:grid-cols-[7.5rem_1fr]"
+              >
+                <span className="text-sm text-memo-muted">{formatDate(item.event_date)}</span>
+                <span>
+                  <span className="block text-base text-memo-ink">{item.effect ?? item.title}</span>
+                  {item.effect && item.title && item.effect !== item.title ? (
+                    <span className="block text-sm text-memo-muted">{item.title}</span>
+                  ) : null}
+                  {item.alert_id ? (
                     <Link
                       href={`/alerts/${item.alert_id}`}
-                      className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      className="mt-1 inline-block text-sm text-memo-info underline underline-offset-2"
                     >
-                      See the alert
+                      Open the alert and its evidence
                     </Link>
-                  </p>
-                ) : null}
+                  ) : null}
+                </span>
               </li>
             ))}
           </ol>
