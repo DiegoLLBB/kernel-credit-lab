@@ -81,6 +81,8 @@ How Meta's coding models were used to build Kernel, task by task, with what revi
 
 ## Architecture
 
+![How a new filing becomes a checked alert](docs/architecture.svg)
+
 ```
 SEC EDGAR · issuer newsrooms · FRED · XBRL
         │  (Cloud Scheduler, 07:00 and 19:00 Madrid)
