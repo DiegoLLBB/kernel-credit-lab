@@ -37,7 +37,19 @@ Firebase/GCP billing already has a **$20** budget on project `kernel-credit-lab`
 
 **Uptime.** Cloud Monitoring check `Kernel web.app /health` hits
 `https://kernel-credit-lab.web.app/health` every 5 minutes from multiple regions; alert policy
-`Kernel /health down` emails `diego@zenico.ai` when the check fails.
+`Kernel /health down` emails **diegolobo020@gmail.com** (and diego@zenico.ai) when the check fails.
+Confirm the Gmail channel verification link if Google sends one.
+
+### During judging (5–8 Nov) checklist
+
+1. **Uptime:** Console → Monitoring → Uptime checks → `Kernel web.app /health` (green). Alerts →
+   `Kernel /health down`. Or: `curl -sS -o /dev/null -w '%{http_code}\n' https://kernel-credit-lab.web.app/health`
+2. **Live jobs:** `gcloud run jobs executions list --job=kernel-live --region=europe-west1 --limit=2`
+   — both should show `succeededCount: 1`. Costs are in the execution logs (`total cost` line).
+3. **Schedulers:** `gcloud scheduler jobs list --location=europe-west1` — morning/evening **ENABLED**.
+   To pause spend: `gcloud scheduler jobs pause kernel-live-morning --location=europe-west1` (and
+   `kernel-live-evening`). Resume with `… resume …`.
+4. **Smoke:** `python -m scripts.diagnostics.smoke_live --base-url https://kernel-credit-lab.web.app`
 
 **Known limit.** Requests through Firebase Hosting time out after 60 seconds, so long agent
 runs are started asynchronously and polled, not held open by the browser.
