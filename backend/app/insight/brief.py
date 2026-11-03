@@ -501,7 +501,7 @@ async def generate_daily_brief(
         if not lead_kept:
             # Deterministic wall sentence: keep when the number gate alone passes.
             gate = check_text(lead, facts)
-            if gate.get("ok"):
+            if gate.get("numbers_ok") and gate.get("advice_ok"):
                 lead_kept = [lead]
                 lead_dropped = []
                 summary["lead_gate"] = "numbers_only"
