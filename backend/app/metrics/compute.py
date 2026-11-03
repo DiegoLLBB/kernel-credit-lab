@@ -262,9 +262,7 @@ def _compute_quarter(
         label=label,
         wall=wall,
         debt=_total_debt_latest(doc, cfg, as_of=as_of, period_end=period_end),
-        cash_dp=_instant_first(
-            doc, cfg.tag_list("cash"), as_of=as_of, period_end=period_end
-        ),
+        cash_dp=_instant_first(doc, cfg.tag_list("cash"), as_of=as_of, period_end=period_end),
         stinv_dp=select_instant(doc, stinv_tag[0], as_of=as_of, period_end=period_end)
         if stinv_tag
         else None,

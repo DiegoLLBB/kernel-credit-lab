@@ -517,9 +517,8 @@ def get_snapshot(
             run = session.get(AgentRun, ev.run_id)
             if run is not None:
                 result = run.result if isinstance(run.result, dict) else {}
-                logged = (
-                    (result.get("summary") if isinstance(result, dict) else None)
-                    or (result.get("log_summary") if isinstance(result, dict) else None)
+                logged = (result.get("summary") if isinstance(result, dict) else None) or (
+                    result.get("log_summary") if isinstance(result, dict) else None
                 )
                 if isinstance(logged, str) and logged.strip():
                     headline = logged.strip()
