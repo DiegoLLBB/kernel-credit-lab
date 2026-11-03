@@ -357,3 +357,15 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     - **Muse Wonder coding credits** ran out the afternoon of **3 Nov 2026**; later commits use
       other tools (no `(Muse Wonder)` trailer). Runtime product models (Spark / Spark Open /
       Wonder brief / SAM) unchanged.
+38. **Tue 3 Nov evening — analyst depth and robustness (web + read-only API):**
+    - **Liquidity with undrawn credit lines** on the issuer page: cash + undrawn = available
+      against debt due in 24 months, same period required, shown under the debt-by-year chart.
+    - **Printable tear sheet** (print / save as PDF) of the issuer page without controls.
+    - **Investor-deck charts redrawn** in Kernel's own style; the original slide kept as evidence.
+    - **Loading placeholders** shaped like each page; **error boundaries** per page section and a
+      route-level error page, so one failing section cannot blank a page.
+    - **Alert size filter** (`min_change_usd`, any / $500M / $1bn), computed from the same
+      recomputed walls as the alert page.
+    - **Refinancing wording:** the "spread" is labelled as the company's own borrowing premium
+      (interest ÷ average debt minus Treasury), not a market spread.
+    - Agent tree still frozen at `f997487c2fbf`.

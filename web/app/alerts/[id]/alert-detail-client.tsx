@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionBoundary } from "@/components/section-boundary";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -182,6 +183,7 @@ export function AlertDetailClient() {
             ) : null}
           </header>
 
+          <SectionBoundary name="debt by year">
           <section aria-labelledby="wall-heading" className="mt-10">
             <h3 id="wall-heading" className="text-lg font-semibold text-memo-ink">
               Debt due by year
@@ -211,7 +213,9 @@ export function AlertDetailClient() {
               </p>
             ) : null}
           </section>
+          </SectionBoundary>
 
+          <SectionBoundary name="evidence">
           <section aria-labelledby="evidence-heading" className="mt-12 border-t border-memo-rule pt-8">
             <h3 id="evidence-heading" className="text-lg font-semibold text-memo-ink">
               What the filing says
@@ -265,7 +269,9 @@ export function AlertDetailClient() {
               </ol>
             )}
           </section>
+          </SectionBoundary>
 
+          <SectionBoundary name="changes">
           <section aria-labelledby="changes-heading" className="mt-12 border-t border-memo-rule pt-8">
             <h3 id="changes-heading" className="text-lg font-semibold text-memo-ink">
               What Kernel changed in its records
@@ -320,7 +326,9 @@ export function AlertDetailClient() {
               </div>
             )}
           </section>
+          </SectionBoundary>
 
+          <SectionBoundary name="independent check">
           <section aria-labelledby="claims-heading" className="mt-12 border-t border-memo-rule pt-8">
             <h3 id="claims-heading" className="text-lg font-semibold text-memo-ink">
               Independent check
@@ -353,6 +361,7 @@ export function AlertDetailClient() {
               </p>
             ) : null}
           </section>
+          </SectionBoundary>
 
           <section aria-labelledby="review-heading" className="mt-12 border-t border-memo-rule pt-8">
             <h3 id="review-heading" className="text-lg font-semibold text-memo-ink">

@@ -194,6 +194,15 @@ def test_alerts_list_detail_review_and_document(client: TestClient, seeded_alert
     assert item["issuer"]["key"] == "verizon"
     assert item["materiality_reasons"]
 
+    # Size filter: a huge threshold drops it; zero keeps it.
+    big = client.get("/api/alerts", params={"issuer": "verizon", "min_change_usd": 1e15})
+    assert big.status_code == 200
+    assert all(a["id"] != alert.id for a in big.json()["items"])
+    assert big.json()["total"] == len(big.json()["items"])
+    zero = client.get("/api/alerts", params={"issuer": "verizon", "min_change_usd": 0})
+    assert any(a["id"] == alert.id for a in zero.json()["items"])
+    assert client.get("/api/alerts", params={"min_change_usd": -1}).status_code == 422
+
     detail = client.get(f"/api/alerts/{alert.id}")
     assert detail.status_code == 200
     d = detail.json()

@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionBoundary } from "@/components/section-boundary";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ChangeArrow, FlagDot, formatTileValue } from "@/components/credit";
@@ -258,7 +259,9 @@ export function OverviewClient() {
 
       {overview ? (
         <>
+          <SectionBoundary name="latest change">
           {agentFeed[0] ? <FeaturedChange alertId={agentFeed[0].alert_id} /> : null}
+          </SectionBoundary>
 
           {overview.brief && overview.brief.sentences.length > 0 ? (
             <section
@@ -320,6 +323,7 @@ export function OverviewClient() {
             </section>
           )}
 
+          <SectionBoundary name="agent feed">
           <section aria-labelledby="feed-heading" className="mb-12">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <h2 id="feed-heading" className="text-lg font-semibold text-memo-ink">
@@ -352,9 +356,13 @@ export function OverviewClient() {
               </details>
             ) : null}
           </section>
+          </SectionBoundary>
 
+          <SectionBoundary name="coming due">
           <ComingDue />
+          </SectionBoundary>
 
+          <SectionBoundary name="watchlist">
           <section aria-labelledby="watchlist-heading" className="mb-10">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
               <h2 id="watchlist-heading" className="text-lg font-semibold text-memo-ink">
@@ -458,8 +466,10 @@ export function OverviewClient() {
               ) : null}
             </details>
           </section>
+          </SectionBoundary>
 
           {overview.live ? (
+            <SectionBoundary name="live monitoring">
             <section aria-labelledby="live-heading" className="mb-10">
               <h2 id="live-heading" className="mb-3 text-lg font-semibold text-memo-ink">
                 Live since {formatDate(overview.live.since.slice(0, 10))}
@@ -546,8 +556,10 @@ export function OverviewClient() {
                 <EmptyLine>No live documents yet.</EmptyLine>
               ) : null}
             </section>
+            </SectionBoundary>
           ) : null}
 
+          <SectionBoundary name="results">
           <section aria-labelledby="eval-heading" className="mb-10 max-w-3xl border-t border-memo-rule pt-8">
             <h2 id="eval-heading" className="text-lg font-semibold text-memo-ink">
               How well does it work?
@@ -632,6 +644,7 @@ export function OverviewClient() {
               </div>
             )}
           </section>
+          </SectionBoundary>
         </>
       ) : null}
     </PageShell>

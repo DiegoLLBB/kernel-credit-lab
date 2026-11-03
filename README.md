@@ -21,9 +21,11 @@ the analyst only what changed the picture, with the source for every number.
 
 ## What it does
 
-- **Watches** 6 companies (9 issuers: Duke Energy and three of its operating subsidiaries,
-  Oracle, Verizon, Boeing, Intel, Amazon). Live mode polls SEC EDGAR and issuer newsrooms twice
-  a day.
+- **Watches** 14 US investment-grade companies across 9 sectors. Six have every bond and loan
+  recorded one by one (Duke Energy and three of its operating subsidiaries, Oracle, Verizon,
+  Boeing, Intel, Amazon); eight more were added by ticker (Microsoft, JPMorgan, Johnson &
+  Johnson, Caterpillar, NextEra, Procter & Gamble, AT&T, Walmart). Live mode polls SEC EDGAR and
+  issuer newsrooms twice a day.
 - **Reads each new document with an agent** (Muse Spark) whose tools carry the checks:
   - every fact must be an exact quote from the document
   - every change to the debt records must cite those facts
@@ -33,9 +35,11 @@ the analyst only what changed the picture, with the source for every number.
   at any past date.
 - **Explains it in plain English.** For each company:
   - **credit metrics from XBRL:** total debt, debt due in 24 months, cash cover, leverage,
-    interest coverage
+    interest coverage, liquidity (cash plus undrawn credit lines against debt due in 24 months),
+    with sector medians and a rank across the watchlist
   - **a checked snapshot** and an impact sentence per alert
-  - **a refinancing panel:** Treasury yield plus issuer spread, with a 0–300bp shock slider
+  - **a refinancing panel:** Treasury yield plus the company's own borrowing premium, with a
+    0–300bp shock slider
   - **a daily brief** written by Muse Wonder
 - **Reads charts in investor decks.** SAM 3.1 locates bar charts and bars, Muse Spark reads the
   printed values, and bar geometry must match them. Unverifiable charts are refused
@@ -100,13 +104,13 @@ Cloud SQL (PostgreSQL) ◄── FastAPI (Cloud Run) ◄── Next.js dashboard
 ```
 
 Every agent run, step, tool call, check and model call is stored and shown in the trace. CI runs
-lint, migrations and about 300 tests; every deploy runs a smoke test of the live pages. Details:
+lint, migrations and about 370 tests; every deploy runs a smoke test of the live pages. Details:
 [DEPLOY.md](docs/DEPLOY.md).
 
 ## Limitations
 
-- **Coverage:** 6 companies, with bond lists curated from their filings. The rest of each year's
-  debt comes from the 10-K maturity schedule.
+- **Coverage:** 14 companies. Only the first six have bond-by-bond records; for the other eight,
+  and for the rest of each year's debt, the maturity profile comes from the 10-K schedule.
 - **Replay misses:** 5 of 14 expected changes were not caught, including Intel's April notes
   and August equity raise. Events that paused or failed count as misses; the live overview lists
   each one under Details.
@@ -115,15 +119,18 @@ lint, migrations and about 300 tests; every deploy runs a smoke test of the live
   - a subsidiary term loan recorded as a convertible bond (`dep_term_loan`)
 - **Live:** long 10-Qs can hit the agent's turn limit (Boeing's Q3 10-Q is paused). Limits are not
   raised after the freeze.
-- **Liquidity is cash only.** Undrawn credit lines are not in the XBRL data used.
+- **Undrawn credit lines** come from XBRL where companies tag them; for Duke, Amazon, Boeing,
+  Oracle and Intel the amount is taken from the 10-K text and recorded with its quote. Companies
+  without either show cash-only liquidity.
 - **Refinancing is illustrative.** It assumes all maturing debt rolls at one tenor at Treasury plus
-  the issuer's own spread.
+  the company's own borrowing premium: interest expense ÷ average debt minus Treasury (kept between
+  0.5% and 3.0%). That is a figure from the filings, not a market spread.
 - **No ratings, prices or spreads** (licensed data).
 
 ## Next
 
 1. Per-tranche completeness checks against each deal's stated total.
-2. Credit-line capacity extracted from filings with quote checks, for true liquidity cover.
+2. Credit-line capacity extracted by the agent from filings with quote checks, for every company.
 3. Any SEC-registered issuer by ticker, with the wall built from XBRL.
 4. SAM-read debt-maturity charts cross-checked against the filing-based wall.
 

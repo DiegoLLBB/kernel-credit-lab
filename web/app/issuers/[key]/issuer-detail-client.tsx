@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionBoundary } from "@/components/section-boundary";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -289,11 +290,13 @@ export function IssuerDetailClient() {
           </header>
 
           <div className={updating ? "opacity-70 transition-opacity" : undefined}>
+            <SectionBoundary name="snapshot">
             <CreditSnapshot
               snapshot={snapshot}
               loading={loading || (updating && !snapshot)}
               asOf={asOf}
             />
+            </SectionBoundary>
             {updating && snapshot ? (
               <p className="mt-2 tabular-nums text-[11px] text-slate-500" aria-live="polite">
                 Updating figures for {formatDate(asOf)}…
@@ -301,6 +304,7 @@ export function IssuerDetailClient() {
             ) : null}
           </div>
 
+          <SectionBoundary name="debt by year">
           <section aria-labelledby="wall-heading" className="border-t border-memo-rule pt-8">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <h3 id="wall-heading" className="text-lg font-semibold text-memo-ink">
@@ -422,9 +426,10 @@ export function IssuerDetailClient() {
                 Refinancing shock
               </p>
               <p className="mt-2 text-sm text-slate-300">
-                Incremental annual interest if 2026–2029 debt is refinanced at one selectable
-                Treasury tenor plus the issuer’s filing-derived spread. Display only; not used
-                by alerts.
+                Extra annual interest if the debt due 2026–2029 is refinanced at a Treasury yield
+                plus the company&apos;s own borrowing premium. The premium is its interest expense
+                divided by average debt, minus Treasury: a figure from its filings, not a market
+                spread, which needs licensed bond prices. Display only; not used by alerts.
               </p>
               {refinancing?.shock_bps === 0 && refinancing?.base_scenario_line ? (
                 <p className="mt-2 text-sm text-slate-400">{refinancing.base_scenario_line}</p>
@@ -471,8 +476,8 @@ export function IssuerDetailClient() {
                 </label>
               </div>
               <p className="mt-2 text-xs text-slate-500">
-                Illustrative annual interest if near-term maturities reprice off the selected
-                Treasury (plus the company&apos;s spread). Coverage is EBIT ÷ interest (×).
+                Illustrative: assumes every maturing bond or loan is refinanced at the chosen tenor.
+                Coverage is EBIT ÷ interest (×).
               </p>
               {refiError ? (
                 <p className="mt-3 text-xs text-amber-400">{refiError}</p>
@@ -582,7 +587,9 @@ export function IssuerDetailClient() {
               )}
             </div>
           </section>
+          </SectionBoundary>
 
+          <SectionBoundary name="bonds and loans">
           <section aria-labelledby="instruments-heading">
             <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
               <h3
@@ -680,7 +687,9 @@ export function IssuerDetailClient() {
               </div>
             )}
           </section>
+          </SectionBoundary>
 
+          <SectionBoundary name="timeline">
           <section aria-labelledby="events-heading">
             <h3
               id="events-heading"
@@ -728,12 +737,15 @@ export function IssuerDetailClient() {
               </ol>
             )}
           </section>
+          </SectionBoundary>
 
+          <SectionBoundary name="investor-deck charts">
           <VerifiedCharts
             charts={charts}
             showUnverified={showUnverified}
             onToggleUnverified={setShowUnverified}
           />
+          </SectionBoundary>
         </div>
       ) : null}
     </PageShell>

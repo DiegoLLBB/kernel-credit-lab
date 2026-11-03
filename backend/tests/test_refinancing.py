@@ -125,6 +125,8 @@ def test_spread_floor_cap_and_derivation(seeded_session: Session) -> None:
     floored = issuer_spread(seeded_session, duke.id, AS_OF, tenor_years=5)
     assert Decimal(floored["spread_pct"]) == SPREAD_FLOOR_PCT
     assert floored["floored"] is True
+    assert "raised to the 0.50% floor" in floored["derivation_line"]
+    assert "not a market spread" in floored["derivation_line"]
 
     for row in seeded_session.scalars(
         select(CreditMetric).where(CreditMetric.issuer_id == duke.id)

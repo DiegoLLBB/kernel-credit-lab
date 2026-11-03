@@ -15,6 +15,11 @@ import { formatDate } from "@/lib/format";
 
 const PAGE_SIZE = 20;
 const STATUSES: Array<AlertStatus | ""> = ["", "new", "confirmed", "dismissed"];
+const SIZES = [
+  { value: "", label: "Any size" },
+  { value: "500000000", label: "$500M or more" },
+  { value: "1000000000", label: "$1bn or more" },
+] as const;
 
 export function AlertsClient() {
   const searchParams = useSearchParams();
@@ -22,6 +27,9 @@ export function AlertsClient() {
   const status = (searchParams.get("status") ?? "") as AlertStatus | "";
   const issuer = searchParams.get("issuer") ?? "";
   const offset = Math.max(0, Number(searchParams.get("offset") ?? "0") || 0);
+  const minSize = SIZES.some((x) => x.value === (searchParams.get("min") ?? ""))
+    ? (searchParams.get("min") ?? "")
+    : "";
 
   const [data, setData] = useState<AlertListOut | null>(null);
   const [issuers, setIssuers] = useState<IssuerListOut | null>(null);
@@ -43,6 +51,7 @@ export function AlertsClient() {
     qs.set("offset", String(offset));
     if (status) qs.set("status", status);
     if (issuer) qs.set("issuer", issuer);
+    if (minSize) qs.set("min_change_usd", minSize);
     getJson<AlertListOut>(`/api/alerts?${qs.toString()}`)
       .then((d) => {
         if (!cancelled) setData(d);
@@ -56,15 +65,17 @@ export function AlertsClient() {
     return () => {
       cancelled = true;
     };
-  }, [status, issuer, offset]);
+  }, [status, issuer, offset, minSize]);
 
-  function updateQuery(next: { status?: string; issuer?: string; offset?: number }) {
+  function updateQuery(next: { status?: string; issuer?: string; min?: string; offset?: number }) {
     const qs = new URLSearchParams();
     const s = next.status !== undefined ? next.status : status;
     const i = next.issuer !== undefined ? next.issuer : issuer;
+    const m = next.min !== undefined ? next.min : minSize;
     const o = next.offset !== undefined ? next.offset : 0;
     if (s) qs.set("status", s);
     if (i) qs.set("issuer", i);
+    if (m) qs.set("min", m);
     if (o > 0) qs.set("offset", String(o));
     const q = qs.toString();
     router.push(q ? `/alerts?${q}` : "/alerts");
@@ -113,7 +124,28 @@ export function AlertsClient() {
             ))}
           </select>
         </label>
+        <label className="block text-sm text-memo-muted">
+          Size of change
+          <select
+            className="mt-1 block w-full rounded-md border border-memo-rule bg-[#FBFCFA] px-3 py-2 text-sm text-memo-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-48"
+            value={minSize}
+            onChange={(e) => updateQuery({ min: e.target.value, offset: 0 })}
+          >
+            {SIZES.map((x) => (
+              <option key={x.value || "any"} value={x.value}>
+                {x.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </form>
+      {minSize ? (
+        <p className="-mt-3 mb-6 text-sm text-memo-muted">
+          Showing debt changes where at least one maturity year moved by{" "}
+          {SIZES.find((x) => x.value === minSize)?.label.replace(" or more", "")} or more. Ratio alerts are
+          hidden while a size is set.
+        </p>
+      ) : null}
 
       {error ? <ErrorLine message={error} /> : null}
       {loading ? <LoadingLine label="Loading alerts…" /> : null}

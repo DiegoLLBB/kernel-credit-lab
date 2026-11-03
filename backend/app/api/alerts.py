@@ -76,6 +76,24 @@ def impact_for_alert(session: Session, alert: Alert) -> tuple[str | None, bool, 
     return (sentences[0] if sentences else None, False, row.status)
 
 
+def _change_size_usd(session: Session, alert: Alert) -> float | None:
+    """Largest absolute change to any maturity year, recomputed from records.
+
+    None for metric alerts.
+    """
+    if (getattr(alert, "kind", None) or "agent") != "agent":
+        return None
+    from app.api.wall_delta import primary_wall_before_after
+
+    primary = primary_wall_before_after(session, alert)
+    if primary is None:
+        return None
+    try:
+        return abs(float(primary["after"]) - float(primary["before"]))
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
 def _list_item(session: Session, alert: Alert) -> AlertListItem:
     issuer = session.get(Issuer, alert.issuer_id)
     if issuer is None:
@@ -209,6 +227,13 @@ def list_alerts(
     issuer: str | None = Query(None, description="Issuer key (e.g. verizon)"),
     material: bool | None = None,
     include_superseded: bool = False,
+    min_change_usd: float | None = Query(
+        None,
+        ge=0,
+        description=(
+            "Only agent alerts whose largest change to any maturity year is at least this many USD"
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> AlertListOut:
@@ -228,6 +253,19 @@ def list_alerts(
     if not include_superseded:
         stmt = stmt.where(
             (Alert.run_id.is_(None)) | (AgentRun.status.not_in(sorted(HIDDEN_RUN_STATUSES)))
+        )
+
+    if min_change_usd is not None:
+        # Size is recomputed from current records (same numbers as the alert page), so it is
+        # applied in Python; the alert table is small.
+        candidates = session.scalars(stmt.order_by(Alert.created_at.desc())).all()
+        sized = [a for a in candidates if (_change_size_usd(session, a) or 0.0) >= min_change_usd]
+        page = sized[offset : offset + limit]
+        return AlertListOut(
+            items=[_list_item(session, a) for a in page],
+            total=len(sized),
+            limit=limit,
+            offset=offset,
         )
 
     count_stmt = select(func.count()).select_from(stmt.with_only_columns(Alert.id).subquery())

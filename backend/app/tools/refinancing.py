@@ -33,7 +33,9 @@ FOOTNOTE = (
     "not a forecast or investment advice."
 )
 
-BASE_SCENARIO_LINE = "At today's Treasury plus spread, before any rate shock."
+BASE_SCENARIO_LINE = (
+    "At today's Treasury plus the company's own borrowing premium, before any rate shock."
+)
 
 PRESSURE_WEIGHTS: dict[str, Decimal] = {
     "rate_reset_cost": Decimal("0.45"),
@@ -300,7 +302,11 @@ def issuer_spread(
     year_bit = fiscal.replace("FY", "").strip() or "latest"
     derivation = (
         f"{tenor_years}-year Treasury {tsy:.2f}% on {format_day(obs)} "
-        f"+ {spread:.2f}% spread from {year_bit} cost of debt"
+        f"+ {spread:.2f}% spread from {year_bit} cost of debt "
+        f"(interest expense ÷ average debt, minus Treasury"
+        + (", raised to the 0.50% floor" if floored else "")
+        + (", cut to the 3.00% cap" if capped else "")
+        + "; a book figure, not a market spread)"
     )
 
     return {
