@@ -58,10 +58,14 @@ once after the first comparison (tranche matching, years read from quotes, FX at
 with the same rules for both rows; see [PROGRESS.md](docs/PROGRESS.md).
 
 **Live, out of sample.** The agent was frozen at commit `f997487` on 2 Nov 2026, 12:39 UTC, and
-has been run unchanged on every new filing since. The first run covered filings from 27 Oct:
-10 documents read, 1 alert, 7 logged as not material, 1 refused, 1 paused at its turn limit.
-The alert came from Amazon's Q3 10-Q: a term loan that changes its 2029 maturities. Current
-figures are on the live overview.
+has run unchanged on every new filing since, twice a day. Its first alert shows why that matters.
+Amazon's Q3 10-Q, filed on 30 Oct, discloses a **$17.5bn term loan signed in June and drawn in
+September, due September 2029**. That loan is not in our hand-built list of 29 events for 2026:
+we missed it when we built the test set. The frozen agent found it on its own, quoted the filing
+("In June 2026, we entered into a $17.5 billion unsecured delayed single draw term loan … which we
+drew on in September 2026. The Term Loan matures in September 2029"), passed the independent
+check, and moved Amazon's 2029 maturities from $12.9bn to $30.4bn. Every live document and its
+outcome (alert, no alert, needs an analyst, paused) is on the live overview, misses included.
 
 ## Meta models
 
