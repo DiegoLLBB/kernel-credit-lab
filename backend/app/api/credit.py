@@ -626,12 +626,13 @@ def _feed_item(
     *,
     live: bool,
     heavy: bool = True,
+    verdicts: dict[str, dict[str, str]] | None = None,
 ) -> FeedItemOut | None:
     """Build one feed row.
 
-    ``heavy=False`` skips replay-verdict and wall before/after (each agent alert
-    otherwise reloads ReplayEvaluation + expectations). Overview uses the light
-    path; alert list/detail keep full badges.
+    Overview passes ``heavy=False`` plus a precomputed ``verdicts`` map
+    (``alert_id → {verdict, reason}``) so badges stay cheap. Alert list/detail
+    keep ``heavy=True`` (live verdict + wall before/after).
     """
     issuer = session.get(Issuer, alert.issuer_id)
     if issuer is None:
@@ -677,7 +678,17 @@ def _feed_item(
             verdict, verdict_reason = replay_verdict_for_alert(session, alert)
             ba = _feed_before_after(session, alert)
         else:
-            verdict, verdict_reason, ba = None, None, None
+            ba = None
+            cached = (verdicts or {}).get(alert.id) if verdicts is not None else None
+            if cached:
+                verdict, verdict_reason = cached.get("verdict"), cached.get("reason") or None
+            elif live:
+                verdict, verdict_reason = (
+                    "not yet scored",
+                    "Live document or not yet in the latest replay evaluation.",
+                )
+            else:
+                verdict, verdict_reason = None, None
     return FeedItemOut(
         alert_id=alert.id,
         issuer=_issuer_ref(issuer),
@@ -786,11 +797,16 @@ def credit_overview(
             continue
         seen_ids.add(alert.id)
         recent_alerts.append(alert)
+    from app.eval.replay_verdict import overview_feed_verdicts
+
+    # One batched lookup (stored on ReplayEvaluation.alert_counts, or built once
+    # for this feed slice) — restores correct / false alert / not yet scored.
+    verdicts = overview_feed_verdicts(session, recent_alerts)
     feed_items: list[FeedItemOut] = []
     for alert in recent_alerts:
         event = session.get(Event, alert.event_id) if alert.event_id else None
         live = event is not None and event.source == "live"
-        item = _feed_item(session, alert, live=live, heavy=False)
+        item = _feed_item(session, alert, live=live, heavy=False, verdicts=verdicts)
         if item is not None:
             feed_items.append(item)
     feed_items.sort(

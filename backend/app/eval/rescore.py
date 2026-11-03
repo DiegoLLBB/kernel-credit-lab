@@ -395,6 +395,10 @@ def rescore_agent(session: Session) -> dict[str, Any]:
         row.unsupported_claims = 0
     session.add(row)
     session.flush()
+    from app.eval.replay_verdict import attach_feed_verdicts
+
+    attach_feed_verdicts(session, row)
+    session.flush()
     return {
         "kind": "agent",
         "accurate_caught": accurate,
@@ -403,7 +407,7 @@ def rescore_agent(session: Session) -> dict[str, Any]:
         "wall_total": wall_total,
         "groups": group_details,
         "wall_details": wall_details,
-        "alert": counts,
+        "alert": dict(row.alert_counts or counts),
     }
 
 

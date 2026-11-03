@@ -119,6 +119,10 @@ def build_eval_summary(
         if counts.recall is not None:
             row.recall = Decimal(str(counts.recall))
         session.add(row)
+        if kind == "agent":
+            from app.eval.replay_verdict import attach_feed_verdicts
+
+            attach_feed_verdicts(session, row)
 
     x = counts.true_positive
     y = counts.true_positive + counts.false_negative

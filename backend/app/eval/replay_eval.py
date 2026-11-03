@@ -1209,4 +1209,9 @@ def store_latest_evaluation(session: Session, report: EvalReport) -> ReplayEvalu
     )
     session.add(row)
     session.flush()
+    # Overview feed badges: alert_id → verdict/reason (avoids per-request rescoring).
+    from app.eval.replay_verdict import attach_feed_verdicts
+
+    attach_feed_verdicts(session, row)
+    session.flush()
     return row
