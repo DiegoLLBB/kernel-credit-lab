@@ -7,7 +7,7 @@ registered before the hackathon; everything served there was built during it).
 | Piece | Service | Notes |
 |---|---|---|
 | Dashboard (Next.js) | Cloud Run `kernel-web` | scales to zero, max 2 instances |
-| API (FastAPI) | Cloud Run `kernel-api` | scales to zero, max 2 instances, 15-min request timeout |
+| API (FastAPI) | Cloud Run `kernel-api` | **min-instances=1** (warm for judging week), max 2, 15-min request timeout |
 | Migrations | Cloud Run job `kernel-migrate` | runs `alembic upgrade head` before every deploy |
 | Database | Cloud SQL for PostgreSQL 18 + pgvector (Firebase SQL Connect trial instance) | reached over the Cloud SQL socket, never a public IP |
 | Routing, TLS, custom domain | Firebase Hosting | `/api/**` and `/health*` → API, everything else → web |
@@ -20,9 +20,24 @@ registered before the hackathon; everything served there was built during it).
 accessor), `kcl-web` (no roles), `kcl-deployer` (GitHub only, main branch only: deploy Cloud Run
 and Hosting, push images). No Google key file exists anywhere.
 
-**Cost controls.** Free allowances cover demo traffic: scale to zero, max 2 instances per
-service, a $5 budget alert, image cleanup. The database is the free trial instance (3 months);
-after that it bills at standard Cloud SQL rates, so it is deleted or downsized before then.
+**Cost controls.** Max 2 instances per service, image cleanup, and billing budgets (see below).
+`kernel-api` stays warm with **min-instances=1** for judging week (≈ a few dollars/week idle).
+
+**Cloud SQL trial.** Instance `kernel-credit-lab-instance` (Firebase SQL Connect /
+`db-f1-micro`, created **2026-10-29**). The free-trial window is **3 months** → expected end
+**≈ 2027-01-27**. After that it bills at standard Cloud SQL rates (~**$7–12/mo** for
+`db-f1-micro` in europe-west1, usage-dependent). Delete or downsize before the trial ends if
+the demo is over.
+
+**Monthly cost estimate (judging week, quiet traffic):** Cloud Run API warm instance
+~$5–10/mo; web scale-to-zero ~$0–2; Cloud SQL still on trial ~$0 until ≈27 Jan 2027; Scheduler
+free; live jobs capped at $5/run × 2/day worst case but usually far less. **Budget alert:**
+Firebase/GCP billing already has a **$20** budget on project `kernel-credit-lab` (thresholds at
+50% / 90% / 100%).
+
+**Uptime.** Cloud Monitoring check `Kernel web.app /health` hits
+`https://kernel-credit-lab.web.app/health` every 5 minutes from multiple regions; alert policy
+`Kernel /health down` emails `diego@zenico.ai` when the check fails.
 
 **Known limit.** Requests through Firebase Hosting time out after 60 seconds, so long agent
 runs are started asynchronously and polled, not held open by the browser.
