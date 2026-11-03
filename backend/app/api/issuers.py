@@ -507,16 +507,28 @@ def get_snapshot(
             if sentence:
                 effect, alert_id = sentence, alert.id
                 break
-        headline = ev.summary or ev.event_type
-        story = effect
+        # Prefer alert title; else the run's logged one-line summary (not boilerplate
+        # "press release, 11 May 2026" on Event.summary).
+        headline = None
         if ev_alerts:
-            headline = ev_alerts[0].title or headline
-            story = story or ev_alerts[0].summary
+            headline = ev_alerts[0].title or ev_alerts[0].summary
+            effect = effect or ev_alerts[0].summary
+        if not headline and ev.run_id:
+            run = session.get(AgentRun, ev.run_id)
+            if run is not None:
+                result = run.result if isinstance(run.result, dict) else {}
+                logged = (
+                    (result.get("summary") if isinstance(result, dict) else None)
+                    or (result.get("log_summary") if isinstance(result, dict) else None)
+                )
+                if isinstance(logged, str) and logged.strip():
+                    headline = logged.strip()
+        headline = headline or ev.summary or ev.event_type
         timeline.append(
             TimelineItemOut(
                 event_date=ev.event_date,
                 title=headline,
-                effect=story,
+                effect=effect,
                 alert_id=alert_id or (ev_alerts[0].id if ev_alerts else None),
             )
         )
