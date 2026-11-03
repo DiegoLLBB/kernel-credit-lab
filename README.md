@@ -21,10 +21,10 @@ the analyst only what changed the picture, with the source for every number.
 
 ## What it does
 
-- **Watches** 14 US investment-grade companies across 9 sectors. Six have every bond and loan
+- **Watches** 16 US investment-grade companies across 9 sectors. Six have every bond and loan
   recorded one by one (Duke Energy and three of its operating subsidiaries, Oracle, Verizon,
-  Boeing, Intel, Amazon); eight more were added by ticker (Microsoft, JPMorgan, Johnson &
-  Johnson, Caterpillar, NextEra, Procter & Gamble, AT&T, Walmart). Live mode polls SEC EDGAR and
+  Boeing, Intel, Amazon); ten more were added by ticker (Microsoft, JPMorgan, Johnson &
+  Johnson, Caterpillar, NextEra, Procter & Gamble, AT&T, Walmart, Exxon Mobil, General Motors). Live mode polls SEC EDGAR and
   issuer newsrooms twice a day.
 - **Reads each new document with an agent** (Muse Spark) whose tools carry the checks:
   - every fact must be an exact quote from the document
@@ -109,7 +109,7 @@ lint, migrations and about 370 tests; every deploy runs a smoke test of the live
 
 ## Limitations
 
-- **Coverage:** 14 companies. Only the first six have bond-by-bond records; for the other eight,
+- **Coverage:** 16 companies. Only the first six have bond-by-bond records; for the other ten,
   and for the rest of each year's debt, the maturity profile comes from the 10-K schedule.
 - **Replay misses:** 5 of 14 expected changes were not caught, including Intel's April notes
   and August equity raise. Events that paused or failed count as misses; the live overview lists

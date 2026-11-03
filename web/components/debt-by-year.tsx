@@ -59,12 +59,18 @@ export function DebtByYear({
   affected,
   findings = [],
   animate = false,
+  showQuote = true,
+  large = false,
 }: {
   beforeWall: MaturityWall | null;
   afterWall: MaturityWall | null;
   affected: WallBucketDelta[];
   findings?: FindingOut[];
   animate?: boolean;
+  /** Off when the page shows the quote elsewhere (see ChangeQuote). */
+  showQuote?: boolean;
+  /** Wider columns and taller bars, for the overview's opening chart. */
+  large?: boolean;
 }) {
   const affectedMap = new Map(affected.map((a) => [a.label, a]));
   const present = new Set<string>([
@@ -96,10 +102,10 @@ export function DebtByYear({
   const quote = main ? quoteForBucket(findings, main.label) : null;
 
   const max = Math.max(1, ...bars.flatMap((b) => [b.before, b.after]));
-  const H = 180;
+  const H = large ? 220 : 180;
   const top = 26;
-  const col = 92;
-  const barW = 44;
+  const col = large ? 124 : 92;
+  const barW = large ? 60 : 44;
   const W = bars.length * col;
   const y = (v: number) => top + H - (v / max) * H;
 
@@ -201,36 +207,63 @@ export function DebtByYear({
           </span>
         ) : null}
       </figcaption>
-      {main && quote ? (
-        <div
-          className={`border-l-[3px] pl-4 ${main.after > main.before ? "border-memo-added" : "border-memo-reduced"}`}
-        >
-          <p className="text-sm font-semibold text-memo-ink">
-            {yearLabel(main.label)}: {money(main.before)} → {money(main.after)}{" "}
-            <span className={main.after > main.before ? "text-memo-added" : "text-memo-reduced"}>
-              ({delta(main.before, main.after)})
-            </span>
-            . The filing says:
-          </p>
-          <blockquote className="mt-2 max-w-[68ch] leading-8">
-            <span className="quote-mark">{quote.exact_quote}</span>
-          </blockquote>
-          <p className="mt-2 text-xs text-memo-muted">
-            {sourceLine(quote)}
-            {quote.filing_id ? (
-              <>
-                {" "}
-                <Link
-                  className="text-memo-info underline underline-offset-2"
-                  href={`/documents/${quote.filing_id}?fact=${quote.id}${quote.page != null ? `&page=${quote.page}` : ""}`}
-                >
-                  Open in the document
-                </Link>
-              </>
-            ) : null}
-          </p>
-        </div>
-      ) : null}
+      {showQuote && main && quote ? <QuoteBlock main={main} quote={quote} /> : null}
     </figure>
   );
+}
+
+function QuoteBlock({ main, quote }: { main: Bar; quote: CitedFactOut }) {
+  return (
+    <div
+      className={`border-l-[3px] pl-4 ${main.after > main.before ? "border-memo-added" : "border-memo-reduced"}`}
+    >
+      <p className="text-sm font-semibold text-memo-ink">
+        {yearLabel(main.label)}: {money(main.before)} → {money(main.after)}{" "}
+        <span className={main.after > main.before ? "text-memo-added" : "text-memo-reduced"}>
+          ({delta(main.before, main.after)})
+        </span>
+        . The filing says:
+      </p>
+      <blockquote className="mt-2 max-w-[68ch] leading-8">
+        <span className="quote-mark">{quote.exact_quote}</span>
+      </blockquote>
+      <p className="mt-2 text-xs text-memo-muted">
+        {sourceLine(quote)}
+        {quote.filing_id ? (
+          <>
+            {" "}
+            <Link
+              className="text-memo-info underline underline-offset-2"
+              href={`/documents/${quote.filing_id}?fact=${quote.id}${quote.page != null ? `&page=${quote.page}` : ""}`}
+            >
+              Open in the document
+            </Link>
+          </>
+        ) : null}
+      </p>
+    </div>
+  );
+}
+
+/** The main change and the filing sentence behind it, for pages that place it apart from the chart. */
+export function ChangeQuote({
+  affected,
+  findings,
+}: {
+  affected: WallBucketDelta[];
+  findings: FindingOut[];
+}) {
+  const main = affected
+    .filter((a) => SHOWN.has(a.label))
+    .map((a) => ({
+      label: a.label,
+      before: wallAmount(a.before),
+      after: wallAmount(a.after),
+      changed: true,
+    }))
+    .filter((b) => !isNoise(b.before, b.after))
+    .sort((x, y) => Math.abs(y.after - y.before) - Math.abs(x.after - x.before))[0];
+  const quote = main ? quoteForBucket(findings, main.label) : null;
+  if (!main || !quote) return null;
+  return <QuoteBlock main={main} quote={quote} />;
 }

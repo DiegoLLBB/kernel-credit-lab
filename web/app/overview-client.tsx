@@ -239,18 +239,30 @@ export function OverviewClient() {
 
   return (
     <PageShell title="What changed">
-      <header className="mb-12 max-w-3xl">
-        <h1 className="text-3xl font-semibold text-memo-ink sm:text-[46px] sm:leading-[52px]">
-          What changed
-        </h1>
-        <p className="mt-4 max-w-[62ch] text-lg text-memo-ink">
-          Kernel reads company filings as they are published and tells you when a company&apos;s
-          debt picture changes. Every number links to the sentence in the filing it came from.
-        </p>
-        {headerLine ? (
-          <p className="mt-3 text-sm text-memo-muted" aria-live="polite">
-            {headerLine}
+      <header className="mb-12 grid gap-x-12 gap-y-6 md:grid-cols-[minmax(0,1fr)_16rem] md:items-end">
+        <div>
+          <h1 className="text-3xl font-semibold text-memo-ink sm:text-[46px] sm:leading-[52px]">
+            What changed
+          </h1>
+          <p className="mt-4 max-w-[58ch] text-lg text-memo-ink">
+            Kernel reads company filings as they are published and tells you when a company&apos;s
+            debt picture changes. Every number links to the sentence in the filing it came from.
           </p>
+        </div>
+        {header ? (
+          <dl className="border-t border-memo-ink text-sm" aria-live="polite" aria-label={headerLine ?? undefined}>
+            {[
+              ["Last checked", formatDate(header.last_check)],
+              ["Companies watched", String(header.companies)],
+              ["Filings read", String(header.filings_read)],
+              ["Material changes", String(header.material_changes)],
+            ].map(([k, v]) => (
+              <div key={k} className="flex items-baseline justify-between border-b border-memo-rule py-1.5">
+                <dt className="text-memo-muted">{k}</dt>
+                <dd className="font-medium text-memo-ink">{v}</dd>
+              </div>
+            ))}
+          </dl>
         ) : null}
       </header>
 
