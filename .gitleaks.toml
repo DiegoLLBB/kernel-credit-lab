@@ -1,0 +1,19 @@
+# Allowlist for known false positives from a full-history gitleaks scan (3 Nov 2026).
+# Trufflehog --only-verified found 0 secrets. Nothing here is a credential we own.
+title = "kernel-credit-lab"
+
+[allowlist]
+description = "Scraped newsroom HTML embeds CMS UUIDs; seed/tests use duk_/vz_ instrument keys"
+paths = [
+  '''backend/tests/fixtures/newsroom/.*''',
+  '''backend/tests/fixtures/replay/.*''',
+  '''backend/seed/.*''',
+]
+regexes = [
+  '''(?i)duk_[a-z0-9_]+''',
+  '''(?i)dec_[a-z0-9_]+''',
+  '''(?i)dep_[a-z0-9_]+''',
+  '''(?i)def_[a-z0-9_]+''',
+  '''(?i)vz_[a-z0-9_]+''',
+  '''(?i)amzn_[a-z0-9_]+''',
+]
