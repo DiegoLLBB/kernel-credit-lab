@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { MetricTileCard } from "@/components/credit";
 import { EmptyLine, LoadingLine } from "@/components/loading-error";
 import type { IssuerSnapshot } from "@/lib/api";
@@ -17,10 +18,13 @@ export function CreditSnapshot({
   snapshot,
   loading,
   asOf,
+  watch,
 }: {
   snapshot: IssuerSnapshot | null;
   loading: boolean;
   asOf?: string;
+  /** "What to watch" lines, placed under the written summary. */
+  watch?: ReactNode;
 }) {
   if (loading && !snapshot) {
     return (
@@ -67,23 +71,17 @@ export function CreditSnapshot({
               
               {valued.map((t, i) => (
                 <span key={t.metric}>
-                  {i > 0 ? " · " : null}
-                  <a
-                    href={`#metric-${t.metric}`}
-                    className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  >
+                  {i > 0 ? ", " : null}
+                  <a href={`#metric-${t.metric}`} className="text-memo-info underline underline-offset-2">
                     {t.label} ({t.fiscal_label ?? "latest"})
                   </a>
                 </span>
               ))}
               {(snapshot.wall?.changes ?? []).map((c) => (
                 <span key={`${c.label}-${c.alert_id ?? "na"}`}>
-                  {" · "}
+                  {", "}
                   {c.alert_id ? (
-                    <Link
-                      href={`/alerts/${c.alert_id}`}
-                      className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                    >
+                    <Link href={`/alerts/${c.alert_id}`} className="text-memo-info underline underline-offset-2">
                       {c.label} change{c.alert_title ? `: ${c.alert_title}` : ""}
                     </Link>
                   ) : (
@@ -93,26 +91,26 @@ export function CreditSnapshot({
               ))}
             </p></details>
           ) : null}
-          <details className="mt-3 text-xs leading-relaxed text-slate-500">
-            <summary className="cursor-pointer text-slate-400">How this was written</summary>
+          <details className="mt-1 text-xs leading-relaxed text-memo-muted">
+            <summary className="cursor-pointer">How this summary was written</summary>
             <p className="mt-2">
               Drafted from computed filing numbers only, then checked sentence by sentence by an
               independent model against the same numbers
               {[insight.how.model, insight.how.provider].filter(Boolean).length > 0
-                ? ` (${[insight.how.model, insight.how.provider].filter(Boolean).join(" · ")})`
+                ? ` (${[insight.how.model, insight.how.provider].filter(Boolean).join(", ")})`
                 : ""}
               . Any sentence whose numbers didn&apos;t match was dropped
               {insight.how.dropped.length > 0
-                ? ` (${insight.how.dropped.length} dropped — see below)`
+                ? ` (${insight.how.dropped.length} dropped, listed below)`
                 : " (none dropped)"}
               . This is description, not advice.
             </p>
             {insight.how.dropped.length > 0 ? (
-              <ul className="mt-2 list-disc space-y-1 pl-5">
+              <ul className="mt-2 space-y-1">
                 {insight.how.dropped.map((d, i) => (
                   <li key={i}>
                     Dropped: {String(d.sentence ?? d.text ?? JSON.stringify(d))}
-                    {d.reason ? ` — ${String(d.reason)}` : ""}
+                    {d.reason ? `: ${String(d.reason)}` : ""}
                   </li>
                 ))}
               </ul>
@@ -120,19 +118,26 @@ export function CreditSnapshot({
           </details>
         </div>
       ) : snapshot.insight_pending ? (
-        <p className="mt-3 text-sm text-slate-400">
+        <p className="mt-3 text-sm text-memo-muted">
           The written summary covers the latest figures; move the date slider to today to read it.
         </p>
       ) : null}
 
+      {watch}
+
       {snapshot.metrics.length > 0 ? (
         <>
           {snapshot.metrics.some((t) => /fewer than 3/i.test(t.peer?.line ?? "")) ? (
-            <p className="mt-6 text-sm text-memo-muted">
+            <p className="mt-6 hidden text-sm text-memo-muted">
               Sector medians appear once a sector has at least three companies with the metric.
             </p>
           ) : null}
-          <div className="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+          <h4 className="mt-10 text-lg font-semibold text-memo-ink">Credit figures</h4>
+          <p className="mt-1 max-w-[70ch] text-sm text-memo-muted">
+            From the latest SEC filings, with the change from a year earlier and the rank across the
+            watchlist.
+          </p>
+          <div className="mt-3 grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
             {snapshot.metrics
               .filter((t) => t.value !== null || t.missing_reason === "not meaningful for banks")
               .map((t) => (

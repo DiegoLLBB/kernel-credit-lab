@@ -85,7 +85,7 @@ export function Sparkline({ tile }: { tile: MetricTile }) {
     (p): p is typeof p & { value: string } => p.value !== null,
   );
   if (points.length < 2) {
-    return <p className="tabular-nums text-[11px] text-slate-500">No trend yet</p>;
+    return <p className="text-xs text-memo-muted">No trend yet</p>;
   }
   const values = points.map((p) => Number(p.value));
   const min = Math.min(...values);
@@ -131,7 +131,7 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
         <FlagDot flag={tile.flag} />
       </div>
       {tile.value === null ? (
-        <p className="mt-2 text-sm text-slate-300">
+        <p className="mt-2 text-sm text-memo-muted">
           {tile.missing_reason === "not meaningful for banks"
             ? "Not meaningful for banks"
             : `Missing${tile.missing_reason ? `: ${tile.missing_reason}` : ""}`}
@@ -143,16 +143,16 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
             <p className="mt-0.5 text-xs text-memo-muted">{tile.peer.watchlist_line}</p>
           ) : null}
           {tile.peer?.line && !/fewer than 3/i.test(tile.peer.line) ? (
-            <p className="mt-0.5 tabular-nums text-[11px] text-slate-400">{tile.peer.line}</p>
+            <p className="mt-0.5 text-xs text-memo-muted">{tile.peer.line}</p>
           ) : null}
-          <p className="mt-0.5 tabular-nums text-[11px] text-slate-500">
+          <p className="mt-0.5 text-xs text-memo-muted">
             {[
               tile.fiscal_label,
               tile.source_note,
               tile.filed ? `filed ${formatDate(tile.filed)}` : null,
             ]
               .filter(Boolean)
-              .join(" · ")}
+              .join(", ")}
           </p>
           <div className="mt-1">
             <ChangeArrow tile={tile} />
@@ -161,14 +161,14 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
         </>
       )}
       {tile.metric === "liquidity_coverage" || tile.cash_only ? (
-        <p className="mt-2 text-[11px] leading-snug text-slate-500">
-          Cash only (excludes credit lines) — undrawn revolvers aren&apos;t tagged in the filing.
+        <p className="mt-2 text-xs leading-snug text-memo-muted">
+          Cash only, without undrawn credit lines.
         </p>
       ) : null}
       {tile.wall_disagrees && tile.wall_value !== null ? (
-        <p className="mt-2 text-[11px] leading-snug text-amber-300/90">
-          Filing total {formatUsdDisplay(tile.wall_value)} differs from the bonds we track — both
-          shown, see the debt wall below.
+        <p className="mt-2 text-xs leading-snug text-memo-watch">
+          The filing&apos;s total, {formatUsdDisplay(tile.wall_value)}, differs from the bonds Kernel tracks;
+          both are shown in the debt chart below.
         </p>
       ) : null}
     </div>

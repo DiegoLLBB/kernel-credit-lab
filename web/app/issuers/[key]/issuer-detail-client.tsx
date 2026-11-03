@@ -9,6 +9,7 @@ import { PageSkeleton } from "@/components/skeleton";
 import { MaturityWallChart } from "@/components/maturity-wall-chart";
 import { VerifiedCharts } from "@/components/verified-charts";
 import { LiquidityLine } from "@/components/liquidity-line";
+import { WatchList, watchLines } from "@/components/watch-lines";
 import {
   getJson,
   type ChartListOut,
@@ -17,7 +18,7 @@ import {
   type IssuerSnapshot,
   type RefinancingPanel,
 } from "@/lib/api";
-import { formatBps, formatDate, formatUsdDisplay, formatUsdMillions } from "@/lib/format";
+import { formatDate, formatUsdDisplay, formatUsdMillions } from "@/lib/format";
 import { CreditSnapshot } from "./credit-snapshot";
 
 const WINDOW_START = Date.UTC(2026, 0, 1);
@@ -45,6 +46,57 @@ function parseIso(iso: string): number {
 }
 
 type SortKey = "maturity" | "amount" | "name";
+
+function eventKind(t: string | null | undefined): string {
+  const v = (t ?? "").replaceAll("_", " ").trim();
+  if (!v) return "Filing";
+  if (/^\d|^[A-Z0-9-]+$/.test(v)) return v; // form types such as 10-Q, 8-K, 424B2
+  return v.charAt(0).toUpperCase() + v.slice(1);
+}
+
+const SHOWN_EVENTS = 8;
+
+/** Filings read for one company, newest first; the older ones fold away. */
+function EventList({ events }: { events: IssuerDetailOut["events"] }) {
+  const sorted = [...events].sort((a, b) => b.event_date.localeCompare(a.event_date));
+  const row = (ev: IssuerDetailOut["events"][number]) => (
+    <li
+      key={ev.id}
+      className="grid grid-cols-1 gap-x-6 gap-y-0.5 border-b border-memo-rule py-3 sm:grid-cols-[7.5rem_minmax(0,1fr)_auto]"
+    >
+      <span className="text-sm text-memo-muted">{formatDate(ev.event_date)}</span>
+      <span>
+        <span className="block text-xs text-memo-muted">{eventKind(ev.event_type)}</span>
+        <span className="block text-base text-memo-ink">{ev.summary ?? eventKind(ev.event_type)}</span>
+      </span>
+      <span className="flex gap-4 text-sm sm:justify-end">
+        {ev.alert_ids.map((aid) => (
+          <Link key={aid} href={`/alerts/${aid}`} className="font-medium text-memo-added underline underline-offset-2">
+            Alert
+          </Link>
+        ))}
+        {ev.run_id ? (
+          <Link href={`/runs/${ev.run_id}`} className="text-memo-info underline underline-offset-2">
+            Agent&apos;s record
+          </Link>
+        ) : null}
+      </span>
+    </li>
+  );
+  return (
+    <>
+      <ol className="mt-3 border-t border-memo-ink">{sorted.slice(0, SHOWN_EVENTS).map(row)}</ol>
+      {sorted.length > SHOWN_EVENTS ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-sm text-memo-info underline underline-offset-2">
+            {sorted.length - SHOWN_EVENTS} earlier
+          </summary>
+          <ol>{sorted.slice(SHOWN_EVENTS).map(row)}</ol>
+        </details>
+      ) : null}
+    </>
+  );
+}
 
 export function IssuerDetailClient() {
   const params = useParams<{ key: string }>();
@@ -224,68 +276,99 @@ export function IssuerDetailClient() {
   }
 
   return (
-    <PageShell title="Issuer">
+    <PageShell title={issuer?.name ?? "Company"}>
       {error && !issuer ? <ErrorLine message={error} /> : null}
       {loading && !issuer ? <PageSkeleton kind="issuer" /> : null}
 
       {issuer ? (
         <div className="space-y-10">
-          <header>
-            <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <h2 className="text-2xl font-semibold text-white">{issuer.name}</h2>
+          <header className="grid gap-x-12 gap-y-6 md:grid-cols-[minmax(0,1fr)_17rem] md:items-start">
+            <div>
+              <p className="no-print text-sm text-memo-muted">
+                <Link href="/issuers" className="underline-offset-2 hover:underline">
+                  Companies
+                </Link>
+                {issuer.sector ? <span>, {issuer.sector}</span> : null}
+              </p>
+              <h2 className="mt-2 text-3xl font-semibold leading-tight text-memo-ink sm:text-[42px] sm:leading-[48px]">
+                {issuer.name}
+              </h2>
+              {issuer.parent?.key ? (
+                <p className="mt-3 text-base text-memo-ink">
+                  Part of{" "}
+                  <Link
+                    href={`/issuers/${encodeURIComponent(issuer.parent.key)}`}
+                    className="text-memo-info underline underline-offset-2"
+                  >
+                    {issuer.parent.name}
+                  </Link>
+                  . Its own bonds and loans are shown here; the group&apos;s combined debt is on the
+                  parent&apos;s page.
+                </p>
+              ) : null}
+              {issuer.subsidiaries.some((sub) => sub.key) ? (
+                <p className="mt-3 text-base text-memo-ink">
+                  Group companies that issue their own debt:{" "}
+                  {issuer.subsidiaries
+                    .filter((sub) => sub.key)
+                    .map((sub, i, arr) => (
+                      <span key={sub.id}>
+                        <Link
+                          href={`/issuers/${encodeURIComponent(sub.key ?? "")}`}
+                          className="text-memo-info underline underline-offset-2"
+                        >
+                          {sub.name}
+                        </Link>
+                        {i < arr.length - 2 ? ", " : i === arr.length - 2 ? " and " : "."}
+                      </span>
+                    ))}
+                </p>
+              ) : null}
+              <p className="print-only mt-2 text-sm text-memo-muted">
+                Kernel tear sheet, figures as of {formatDate(asOf)}, printed{" "}
+                {formatDate(new Date().toISOString().slice(0, 10))}. Every figure is computed from SEC
+                filings; sources at kernel-credit-lab.web.app/issuers/{issuer.key ?? ""}.
+              </p>
+            </div>
+            <div>
+              <dl className="border-t border-memo-ink text-sm">
+                {(
+                  [
+                    ["Ticker", issuer.ticker],
+                    ["Sector", issuer.sector],
+                    ["Figures as of", formatDate(asOf)],
+                  ] as [string, string | null][]
+                )
+                  .filter(([, v]) => v)
+                  .map(([k, v]) => (
+                    <div key={k} className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                      <dt className="text-memo-muted">{k}</dt>
+                      <dd className="text-right font-medium text-memo-ink">{v}</dd>
+                    </div>
+                  ))}
+                {issuer.cik ? (
+                  <div className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                    <dt className="text-memo-muted">SEC filings</dt>
+                    <dd>
+                      <a
+                        href={`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(issuer.cik)}&type=&dateb=&owner=include&count=40`}
+                        className="font-medium text-memo-info underline underline-offset-2"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        EDGAR, CIK {issuer.cik}
+                      </a>
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="no-print rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink"
+                className="no-print mt-3 rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink hover:bg-[#EEF0EC]"
               >
                 Print tear sheet
               </button>
-            </div>
-            <p className="print-only mt-1 text-sm text-memo-muted">
-              Kernel Credit Lab tear sheet, figures as of {formatDate(asOf)}, printed{" "}
-              {formatDate(new Date().toISOString().slice(0, 10))}. Every figure is computed from SEC filings;
-              sources at kernel-credit-lab.web.app/issuers/{issuer.key ?? ""}.
-            </p>
-            <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-xs text-slate-400">
-              {issuer.ticker ? (
-                <div>
-                  <dt className="inline text-slate-500">Ticker </dt>
-                  <dd className="inline">{issuer.ticker}</dd>
-                </div>
-              ) : null}
-              {issuer.sector ? (
-                <div>
-                  <dt className="inline text-slate-500">Sector </dt>
-                  <dd className="inline">{issuer.sector}</dd>
-                </div>
-              ) : null}
-              {issuer.cik ? (
-                <div>
-                  <dt className="inline text-slate-500">CIK </dt>
-                  <dd className="inline">{issuer.cik}</dd>
-                </div>
-              ) : null}
-            </dl>
-            <div className="mt-3 flex flex-wrap gap-3 text-sm">
-              {issuer.parent?.key ? (
-                <Link
-                  href={`/issuers/${encodeURIComponent(issuer.parent.key)}`}
-                  className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                >
-                  Parent: {issuer.parent.name}
-                </Link>
-              ) : null}
-              {issuer.subsidiaries.map((s) =>
-                s.key ? (
-                  <Link
-                    key={s.id}
-                    href={`/issuers/${encodeURIComponent(s.key)}`}
-                    className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  >
-                    {s.name}
-                  </Link>
-                ) : null,
-              )}
             </div>
           </header>
 
@@ -295,10 +378,11 @@ export function IssuerDetailClient() {
               snapshot={snapshot}
               loading={loading || (updating && !snapshot)}
               asOf={asOf}
+              watch={<WatchList lines={watchLines(snapshot?.metrics ?? [], issuer.maturity_wall)} />}
             />
             </SectionBoundary>
             {updating && snapshot ? (
-              <p className="mt-2 tabular-nums text-[11px] text-slate-500" aria-live="polite">
+              <p className="mt-2 text-xs text-memo-muted" aria-live="polite">
                 Updating figures for {formatDate(asOf)}…
               </p>
             ) : null}
@@ -421,44 +505,32 @@ export function IssuerDetailClient() {
               </div>
             ) : null}
 
-            <div className="mt-10 border-t border-memo-rule pt-8">
-              <p className="text-xs font-medium text-slate-500">
-                Refinancing shock
+            <div className="mt-12 border-t-[3px] border-memo-ink pt-6">
+              <h4 className="text-lg font-semibold text-memo-ink">What refinancing would cost</h4>
+              <p className="mt-1 max-w-[70ch] text-sm text-memo-muted">
+                Extra interest a year if the debt due 2026–2029 is refinanced at a Treasury yield plus the
+                company&apos;s own borrowing premium (interest expense ÷ average debt, minus Treasury). A
+                figure from its filings, not a market spread. Display only; alerts don&apos;t use it.
               </p>
-              <p className="mt-2 text-sm text-slate-300">
-                Extra annual interest if the debt due 2026–2029 is refinanced at a Treasury yield
-                plus the company&apos;s own borrowing premium. The premium is its interest expense
-                divided by average debt, minus Treasury: a figure from its filings, not a market
-                spread, which needs licensed bond prices. Display only; not used by alerts.
-              </p>
-              {refinancing?.shock_bps === 0 && refinancing?.base_scenario_line ? (
-                <p className="mt-2 text-sm text-slate-400">{refinancing.base_scenario_line}</p>
-              ) : null}
-              {refinancing?.derivation_line ? (
-                <p className="mt-2 text-sm text-slate-200">{refinancing.derivation_line}</p>
-              ) : refinancing?.missing ? (
-                <p className="mt-2 text-sm text-amber-400">{refinancing.missing}</p>
-              ) : null}
-              <div className="no-print mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400">
-                <label className="flex items-center gap-2">
-                  <span className="tabular-nums text-slate-500">Tenor</span>
+
+              <div className="no-print mt-5 flex flex-wrap items-end gap-x-8 gap-y-4">
+                <label className="text-sm text-memo-muted">
+                  Refinance at the
                   <select
-                    className="rounded border border-slate-700 bg-ink-soft px-2 py-1 text-sm text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    className="ml-2 rounded-md border border-memo-rule bg-[#FBFCFA] px-2 py-1.5 text-sm text-memo-ink"
                     value={tenorYears}
                     onChange={(e) => setTenorYears(Number(e.target.value))}
-                    aria-label="Refinancing Treasury tenor"
+                    aria-label="Treasury tenor used for refinancing"
                   >
                     {(refinancing?.tenor_choices ?? [2, 5, 7, 10]).map((y) => (
                       <option key={y} value={y}>
-                        {y}-year
+                        {y}-year Treasury
                       </option>
                     ))}
                   </select>
                 </label>
-                <label className="flex flex-wrap items-center gap-3">
-                  <span className="tabular-nums text-slate-500">
-                    Treasury shock
-                  </span>
+                <label className="flex flex-wrap items-center gap-3 text-sm text-memo-muted">
+                  Rates rise by
                   <input
                     type="range"
                     min={refinancing?.shock_bps_min ?? 0}
@@ -466,222 +538,235 @@ export function IssuerDetailClient() {
                     step={10}
                     value={shockBps}
                     onChange={(e) => setShockBps(Number(e.target.value))}
-                    className="h-2 w-48 accent-accent"
+                    className="w-48 accent-[#1C232B]"
                     aria-valuemin={0}
                     aria-valuemax={300}
                     aria-valuenow={shockBps}
-                    aria-label="Treasury shock in basis points"
+                    aria-valuetext={`${shockBps} basis points`}
+                    aria-label="Rise in Treasury yields, in basis points"
                   />
-                  <span className="tabular-nums text-slate-200">{formatBps(shockBps)}</span>
+                  <span className="w-28 font-medium text-memo-ink">
+                    {shockBps === 0 ? "nothing (today)" : `${shockBps} bp (${(shockBps / 100).toFixed(2)}%)`}
+                  </span>
                 </label>
               </div>
-              <p className="mt-2 text-xs text-slate-500">
-                Illustrative: assumes every maturing bond or loan is refinanced at the chosen tenor.
-                Coverage is EBIT ÷ interest (×).
-              </p>
-              {refiError ? (
-                <p className="mt-3 text-xs text-amber-400">{refiError}</p>
+
+              {refiError ? <p className="mt-3 text-sm text-memo-watch">{refiError}</p> : null}
+              {refinancing?.missing ? (
+                <p className="mt-3 text-sm text-memo-watch">Can&apos;t be worked out: {refinancing.missing}.</p>
               ) : null}
+
               {refinancing ? (
                 <>
                   {refinancing.insight_sentence ? (
-                    <p className="mt-3 text-sm text-slate-200">{refinancing.insight_sentence}</p>
+                    <p className="mt-5 max-w-[62ch] text-lg leading-7 text-memo-ink">{refinancing.insight_sentence}</p>
                   ) : null}
-                  <dl className="mt-3 grid gap-3 sm:grid-cols-3 tabular-nums text-sm">
-                    <div>
-                      <dt className="text-[11px] text-slate-500">
-                        Base (+0 bp)
+                  <dl className="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-3">
+                    <div className="border-t border-memo-rule pt-3">
+                      <dt className="text-sm text-memo-muted">
+                        {Number(refinancing.base_total) < 0
+                          ? "Interest saved a year, at today's rates"
+                          : "Extra interest a year, at today's rates"}
                       </dt>
-                      <dd className="text-slate-100">
-                        {refinancing.base_total != null
-                          ? `${formatUsdMillions(refinancing.base_total)}/yr`
-                          : "—"}
+                      <dd className="mt-1 text-2xl font-medium text-memo-ink">
+                        {refinancing.base_total != null ? formatUsdDisplay(refinancing.base_total) : "–"}
                       </dd>
-                      <dd className="mt-1 text-[11px] text-slate-500">
-                        named{" "}
-                        {refinancing.named_base != null
-                          ? formatUsdMillions(refinancing.named_base)
-                          : "—"}
-                        {" · "}est{" "}
-                        {refinancing.estimated_base != null
-                          ? formatUsdMillions(refinancing.estimated_base)
-                          : "—"}
-                      </dd>
+                      {refinancing.named_base != null || refinancing.estimated_base != null ? (
+                        <dd className="mt-0.5 text-xs text-memo-muted">
+                          {formatUsdDisplay(refinancing.named_base)} from bonds tracked one by one,{" "}
+                          {formatUsdDisplay(refinancing.estimated_base)} from the rest of the 10-K schedule
+                        </dd>
+                      ) : null}
                     </div>
-                    <div>
-                      <dt className="text-[11px] text-slate-500">
-                        Shocked
+                    <div className="border-t border-memo-rule pt-3">
+                      <dt className="text-sm text-memo-muted">
+                        {shockBps === 0 ? "If rates rise" : `If rates rise ${shockBps} bp`}
                       </dt>
-                      <dd className="text-slate-100">
-                        {refinancing.shocked_total != null
-                          ? `${formatUsdMillions(refinancing.shocked_total)}/yr`
-                          : "—"}
-                      </dd>
-                      <dd className="mt-1 text-[11px] text-slate-500">
-                        Δ{" "}
-                        {refinancing.delta != null
-                          ? formatUsdMillions(refinancing.delta)
-                          : "—"}
-                      </dd>
+                      {shockBps > 0 ? (
+                        <dd className="mt-1 text-2xl font-medium text-memo-added">
+                          {refinancing.shocked_total != null ? formatUsdDisplay(refinancing.shocked_total) : "–"}
+                        </dd>
+                      ) : (
+                        <dd className="mt-2 text-sm text-memo-muted">
+                          Move &ldquo;Rates rise by&rdquo; above to test a rise of up to 300 bp.
+                        </dd>
+                      )}
+                      {shockBps > 0 && refinancing.delta != null ? (
+                        <dd className="mt-0.5 text-xs text-memo-muted">
+                          {formatUsdDisplay(refinancing.delta)} a year more than at today&apos;s rates
+                        </dd>
+                      ) : null}
                     </div>
-                    <div>
-                      <dt className="text-[11px] text-slate-500">
-                        Interest coverage (×)
-                      </dt>
-                      <dd className="text-slate-100">
-                        {refinancing.coverage_before != null
-                          ? `${Number(refinancing.coverage_before).toFixed(1)}×`
-                          : "—"}
+                    <div className="border-t border-memo-rule pt-3">
+                      <dt className="text-sm text-memo-muted">Interest cover, now → after refinancing</dt>
+                      <dd className="mt-1 text-2xl font-medium text-memo-ink">
+                        {refinancing.coverage_before != null ? `${Number(refinancing.coverage_before).toFixed(1)}×` : "–"}
                         {" → "}
-                        {refinancing.coverage_after_base != null
-                          ? `${Number(refinancing.coverage_after_base).toFixed(1)}×`
-                          : "—"}
-                        {refinancing.coverage_after_shock != null && shockBps > 0
-                          ? ` (shock ${Number(refinancing.coverage_after_shock).toFixed(1)}×)`
-                          : ""}
+                        {shockBps > 0 && refinancing.coverage_after_shock != null
+                          ? `${Number(refinancing.coverage_after_shock).toFixed(1)}×`
+                          : refinancing.coverage_after_base != null
+                            ? `${Number(refinancing.coverage_after_base).toFixed(1)}×`
+                            : "–"}
                       </dd>
-                      <dd className="mt-1 text-[11px] text-slate-500">
+                      <dd className="mt-0.5 text-xs text-memo-muted">
                         {refinancing.coverage_missing
                           ? refinancing.coverage_missing
                           : refinancing.pressure_rank != null
-                            ? `refinance-pressure rank #${refinancing.pressure_rank} among watchlist names`
-                            : "—"}
+                            ? `Operating profit ÷ interest. Refinancing pressure ranks #${refinancing.pressure_rank} on the watchlist.`
+                            : "Operating profit ÷ interest."}
                       </dd>
                     </div>
                   </dl>
-                  {(refinancing.buckets?.length ?? 0) > 0 ? (
-                    <ul className="mt-3 space-y-1 tabular-nums text-[11px] text-slate-500">
-                      {refinancing.buckets.map((b) => (
-                        <li key={b.label}>
-                          {b.label}: coupon{" "}
-                          {b.maturing_coupon_pct != null
-                            ? `${Number(b.maturing_coupon_pct).toFixed(2)}%`
-                            : "—"}{" "}
-                          ({b.maturing_coupon_source ?? "—"})
-                          {b.unattributed_amount != null &&
-                          Number(b.unattributed_amount) > 0
-                            ? `; remainder ${b.remainder_coupon_source ?? "—"}`
-                            : ""}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {Object.keys(refinancing.weights).length > 0 ? (
-                    <details className="mt-3 text-[11px] text-slate-500">
-                      <summary className="cursor-pointer text-slate-400">
-                        How pressure rank is weighted
-                      </summary>
-                      <p className="mt-1 tabular-nums">
-                        {Object.entries(refinancing.weights)
-                          .map(([k, v]) => `${k.replaceAll("_", " ")} ${v}`)
-                          .join(" · ")}
-                      </p>
-                    </details>
-                  ) : null}
-                  <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-                    {refinancing.footnote}
-                  </p>
+                  <details className="mt-5 text-sm text-memo-muted">
+                    <summary className="cursor-pointer text-memo-info underline underline-offset-2">
+                      How it&apos;s worked out
+                    </summary>
+                    <div className="mt-2 max-w-[80ch] space-y-2">
+                      {refinancing.derivation_line ? <p className="text-memo-ink">{refinancing.derivation_line}</p> : null}
+                      {(refinancing.buckets?.length ?? 0) > 0 ? (
+                        <ul className="border-t border-memo-rule">
+                          {refinancing.buckets.map((bk) => (
+                            <li key={bk.label} className="border-b border-memo-rule py-1.5">
+                              <span className="text-memo-ink">{bk.label.replace(/^FY/, "")}</span>: maturing coupon{" "}
+                              {bk.maturing_coupon_pct != null ? `${Number(bk.maturing_coupon_pct).toFixed(2)}%` : "unknown"}
+                              {bk.maturing_coupon_source ? ` (${bk.maturing_coupon_source})` : ""}
+                              {bk.unattributed_amount != null && Number(bk.unattributed_amount) > 0
+                                ? `; the rest of that year at ${bk.remainder_coupon_source ?? "the average cost of debt"}`
+                                : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {Object.keys(refinancing.weights).length > 0 ? (
+                        <p>
+                          Pressure rank weights:{" "}
+                          {Object.entries(refinancing.weights)
+                            .map(([k, v]) => `${k.replaceAll("_", " ")} ${v}`)
+                            .join(", ")}
+                          .
+                        </p>
+                      ) : null}
+                      <p>{refinancing.footnote}</p>
+                    </div>
+                  </details>
                 </>
-              ) : (
-                <p className="mt-3 text-xs text-slate-500">Loading refinancing…</p>
-              )}
+              ) : !refiError ? (
+                <p className="mt-4 text-sm text-memo-muted">Working out refinancing costs…</p>
+              ) : null}
             </div>
           </section>
           </SectionBoundary>
 
           <SectionBoundary name="bonds and loans">
-          <section aria-labelledby="instruments-heading">
-            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-              <h3
-                id="instruments-heading"
-                className="text-lg font-semibold text-memo-ink"
-              >
-                Instruments
-              </h3>
-              <label className="text-xs text-slate-400">
-                Status{" "}
-                <select
-                  className="ml-1 rounded border border-slate-700 bg-ink-soft px-2 py-1 text-sm text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  value={statusFilter}
-                  onChange={(e) =>
-                    setStatusFilter(e.target.value as "all" | "active" | "repaid")
-                  }
-                >
-                  <option value="all">all</option>
-                  <option value="active">active</option>
-                  <option value="repaid">repaid</option>
-                </select>
-              </label>
+          <section aria-labelledby="instruments-heading" className="border-t border-memo-rule pt-8">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h3 id="instruments-heading" className="text-lg font-semibold text-memo-ink">
+                  Bonds and loans tracked one by one
+                </h3>
+                <p className="mt-1 max-w-[70ch] text-sm text-memo-muted">
+                  Each recorded from the company&apos;s filings and updated when a filing changes it. Amounts as
+                  of {formatDate(asOf)}.
+                </p>
+              </div>
+              {(issuer.instruments?.length ?? 0) > 0 ? (
+                <div role="group" aria-label="Show" className="no-print flex rounded-md border border-memo-rule text-sm">
+                  {(
+                    [
+                      ["all", "All"],
+                      ["active", "Outstanding"],
+                      ["repaid", "Repaid or redeemed"],
+                    ] as const
+                  ).map(([v, label]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      aria-pressed={statusFilter === v}
+                      onClick={() => setStatusFilter(v)}
+                      className={`px-3 py-1.5 first:rounded-l-md last:rounded-r-md ${
+                        statusFilter === v ? "bg-memo-ink text-paper" : "text-memo-ink hover:bg-[#EEF0EC]"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
-            {instruments.length === 0 ? (
-              <p className="text-sm text-slate-400">No instruments match.</p>
+            {(issuer.instruments?.length ?? 0) === 0 ? (
+              <p className="mt-3 max-w-[70ch] text-sm text-memo-muted">
+                Kernel doesn&apos;t record this company&apos;s bonds one by one yet. Its debt by year above comes
+                from the maturity schedule in its 10-K.
+              </p>
+            ) : instruments.length === 0 ? (
+              <p className="mt-3 text-sm text-memo-muted">None in this group.</p>
             ) : (
-              <div className="overflow-x-auto border-t border-memo-ink">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-ink-soft tabular-nums text-[11px] text-slate-500">
-                    <tr>
-                      <th className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                          onClick={() => toggleSort("name")}
-                        >
-                          Name{sortKey === "name" ? (sortAsc ? " ↑" : " ↓") : ""}
+              <div className="mt-3 overflow-x-auto border-t border-memo-ink">
+                <table className="min-w-full border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-memo-ink text-xs text-memo-muted">
+                      <th scope="col" className="py-2 pr-4 font-medium">
+                        <button type="button" onClick={() => toggleSort("name")}>
+                          Bond or loan{sortKey === "name" ? (sortAsc ? " ↑" : " ↓") : ""}
                         </button>
                       </th>
-                      <th className="px-3 py-2">Coupon</th>
-                      <th className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                          onClick={() => toggleSort("maturity")}
-                        >
-                          Maturity{sortKey === "maturity" ? (sortAsc ? " ↑" : " ↓") : ""}
+                      <th scope="col" className="py-2 pl-4 text-right font-medium">Coupon</th>
+                      <th scope="col" className="py-2 pl-4 font-medium">
+                        <button type="button" onClick={() => toggleSort("maturity")}>
+                          Matures{sortKey === "maturity" ? (sortAsc ? " ↑" : " ↓") : ""}
                         </button>
                       </th>
-                      <th className="px-3 py-2">
-                        <button
-                          type="button"
-                          className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                          onClick={() => toggleSort("amount")}
-                        >
-                          Amount{sortKey === "amount" ? (sortAsc ? " ↑" : " ↓") : ""}
+                      <th scope="col" className="py-2 pl-4 text-right font-medium">
+                        <button type="button" onClick={() => toggleSort("amount")}>
+                          Outstanding{sortKey === "amount" ? (sortAsc ? " ↑" : " ↓") : ""}
                         </button>
                       </th>
-                      <th className="px-3 py-2">Status</th>
+                      <th scope="col" className="py-2 pl-4 font-medium">Status</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {instruments.map((inst: InstrumentOut) => (
-                      <tr key={inst.id}>
-                        <td className="px-3 py-2">
-                          <div className="text-slate-200">{inst.name}</div>
-                          <div className="tabular-nums text-[11px] text-slate-500">
-                            {inst.key} · {inst.currency}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-xs text-slate-400">
-                          {Number(inst.coupon).toFixed(3)}%
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-xs text-slate-400">
-                          {formatDate(inst.maturity)}
-                        </td>
-                        <td
-                          className="px-3 py-2 tabular-nums text-xs text-slate-200"
-                          title={
-                            inst.original_amount &&
-                            inst.original_amount !== inst.amount_outstanding
-                              ? `Original par ${formatUsdMillions(inst.original_amount, inst.currency)} before reductions`
-                              : undefined
-                          }
-                        >
-                          {formatUsdMillions(inst.amount_outstanding, inst.currency)}
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-xs text-slate-400">
-                          {inst.status}
-                        </td>
-                      </tr>
-                    ))}
+                  <tbody>
+                    {instruments.map((inst: InstrumentOut) => {
+                      const live = inst.status === "active";
+                      const reduced =
+                        inst.original_amount != null && Number(inst.original_amount) !== Number(inst.amount_outstanding);
+                      return (
+                        <tr key={inst.id} className={`border-b border-memo-rule align-top ${live ? "" : "text-memo-muted"}`}>
+                          <td className="py-2.5 pr-4">
+                            <span className={live ? "text-memo-ink" : ""}>{inst.name}</span>
+                            <span className="block text-xs text-memo-muted">
+                              {[
+                                inst.instrument_type ? inst.instrument_type.replaceAll("_", " ") : null,
+                                inst.rate_type && inst.rate_type !== "fixed" ? inst.rate_type.replaceAll("_", " ") : null,
+                                inst.cusip ? `CUSIP ${inst.cusip}` : null,
+                                inst.currency !== "USD" ? inst.currency : null,
+                              ]
+                                .filter(Boolean)
+                                .join(", ")}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap py-2.5 pl-4 text-right">{Number(inst.coupon).toFixed(3)}%</td>
+                          <td className="whitespace-nowrap py-2.5 pl-4">{formatDate(inst.maturity)}</td>
+                          <td className="whitespace-nowrap py-2.5 pl-4 text-right">
+                            <span className={live ? "font-medium text-memo-ink" : ""}>
+                              {inst.currency === "USD"
+                                ? formatUsdDisplay(inst.amount_outstanding)
+                                : formatUsdMillions(inst.amount_outstanding, inst.currency)}
+                            </span>
+                            {reduced ? (
+                              <span className="block text-xs text-memo-reduced">
+                                was{" "}
+                                {inst.currency === "USD"
+                                  ? formatUsdDisplay(inst.original_amount)
+                                  : formatUsdMillions(inst.original_amount, inst.currency)}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="whitespace-nowrap py-2.5 pl-4">
+                            {live ? "outstanding" : inst.status.replaceAll("_", " ")}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -690,51 +775,18 @@ export function IssuerDetailClient() {
           </SectionBoundary>
 
           <SectionBoundary name="timeline">
-          <section aria-labelledby="events-heading">
-            <h3
-              id="events-heading"
-              className="mb-3 text-lg font-semibold text-memo-ink"
-            >
-              Events
+          <section aria-labelledby="events-heading" className="border-t border-memo-rule pt-8">
+            <h3 id="events-heading" className="text-lg font-semibold text-memo-ink">
+              Every filing Kernel has read for this company
             </h3>
+            <p className="mt-1 max-w-[70ch] text-sm text-memo-muted">
+              Newest first. Each links to the alert it raised, if any, and to the agent&apos;s step-by-step
+              record.
+            </p>
             {issuer.events.length === 0 ? (
-              <p className="text-sm text-slate-400">No events for this issuer.</p>
+              <p className="mt-3 text-sm text-memo-muted">No filings read yet.</p>
             ) : (
-              <ol className="space-y-3 border-l border-slate-700/80 pl-4">
-                {issuer.events.map((ev) => (
-                  <li key={ev.id} className="text-sm">
-                    <p className="tabular-nums text-[11px] text-slate-500">
-                      {formatDate(ev.event_date)}
-                      {ev.event_type ? ` · ${ev.event_type.replaceAll("_", " ")}` : ""}
-                    </p>
-                    <p className="text-slate-200">
-                      {ev.summary ??
-                        (ev.event_type
-                          ? ev.event_type.replaceAll("_", " ")
-                          : "Processing event")}
-                    </p>
-                    <div className="mt-1 flex flex-wrap gap-3 text-xs">
-                      {ev.alert_ids.map((aid) => (
-                        <Link
-                          key={aid}
-                          href={`/alerts/${aid}`}
-                          className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                        >
-                          Alert
-                        </Link>
-                      ))}
-                      {ev.run_id ? (
-                        <Link
-                          href={`/runs/${ev.run_id}`}
-                          className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                        >
-                          Trace
-                        </Link>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ol>
+              <EventList events={issuer.events} />
             )}
           </section>
           </SectionBoundary>
