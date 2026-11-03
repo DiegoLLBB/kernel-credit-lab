@@ -136,12 +136,29 @@ function groupTurns(turns: TraceTurnOut[]): StepItem[] {
   return out;
 }
 
+const TOOL_WORDS: Record<string, string> = {
+  get_issuer_debt: "Loaded Kernel's debt records",
+  set_checklist: "Set what to check in this filing",
+  list_documents: "Listed the filing's documents",
+  read_document: "Read document pages",
+  search_document: "Searched the document",
+  record_fact: "Recorded an exact quote",
+  propose_change: "Proposed a change to the records",
+  compute_metrics: "Recomputed the maturity wall",
+  request_input: "Asked for an analyst",
+  read_chart: "Read a chart",
+  submit_alert: "Submitted the alert",
+};
+
 function TurnBody({ t }: { t: TraceTurnOut }) {
   const refused = Boolean(t.refusal_reason);
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="tabular-nums text-sm text-slate-100">{t.tool ?? "(no tool)"}</h3>
+        <h3 className="text-base font-medium text-memo-ink">
+          {t.tool ? (TOOL_WORDS[t.tool] ?? t.tool.replace(/_/g, " ")) : "Thinking, no tool call"}
+        </h3>
+        {t.tool ? <span className="font-mono text-xs text-memo-muted">{t.tool}</span> : null}
         {t.status ? (
           <span className="tabular-nums text-[11px] text-slate-500">{t.status}</span>
         ) : null}
@@ -228,7 +245,7 @@ export function TraceClient() {
         <div className="space-y-8">
           <header>
             <p className="tabular-nums text-xs text-slate-500">Run {trace.id}</p>
-            <h2 className="mt-1 text-2xl font-semibold text-white">Agent trace</h2>
+            <h2 className="mt-1 text-3xl font-semibold text-memo-ink sm:text-[40px] sm:leading-[46px]">How the agent got here</h2>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">
               Summary of what the agent read and proposed, then the step list. Use it to audit an
               alert — refusals and checks are the analyst signals.
@@ -298,16 +315,16 @@ export function TraceClient() {
                         <li key={`fact-${i}`} className="border-l border-slate-700 pl-3">
                           <p>{f.claim || "Fact"}</p>
                           {f.quote ? (
-                            <p className="mt-0.5 text-xs text-slate-400">
+                            <p className="mt-1 leading-7">
                               {href ? (
                                 <Link
                                   href={href}
                                   className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                                 >
-                                  “{f.quote.length > 180 ? `${f.quote.slice(0, 177)}…` : f.quote}”
+                                  <span className="quote-mark text-base">{f.quote.length > 180 ? `${f.quote.slice(0, 177)}…` : f.quote}</span>
                                 </Link>
                               ) : (
-                                <>“{f.quote.length > 180 ? `${f.quote.slice(0, 177)}…` : f.quote}”</>
+                                <><span className="quote-mark text-base">{f.quote.length > 180 ? `${f.quote.slice(0, 177)}…` : f.quote}</span></>
                               )}
                             </p>
                           ) : null}

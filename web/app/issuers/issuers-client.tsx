@@ -85,17 +85,76 @@ export function IssuersClient() {
 
   return (
     <PageShell title="Issuers">
-      <header className="mb-6">
-        <h2 className="text-2xl font-semibold text-white">Issuers</h2>
-        <p className="mt-1 text-sm text-slate-400">
+      <header className="mb-8">
+        <h2 className="text-3xl font-semibold text-memo-ink sm:text-[40px] sm:leading-[46px]">Companies</h2>
+        <p className="mt-3 max-w-[62ch] text-lg text-memo-ink">
           {data
-            ? `${data.items.length} ${data.items.length === 1 ? "name" : "names"} on the Kernel watchlist.`
-            : "Companies on the Kernel watchlist."}
+            ? `${data.items.filter((x) => !x.parent_key).length} investment-grade companies Kernel watches, grouped by sector. Duke Energy's operating subsidiaries are tracked separately under it.`
+            : "Companies Kernel watches."}
         </p>
       </header>
 
-      <section className="mb-8 border-t border-memo-rule px-4 py-4">
-        <h3 className="text-sm font-medium text-slate-100">Add a company</h3>
+
+
+      {error ? <ErrorLine message={error} /> : null}
+      {!error && !data ? <LoadingLine /> : null}
+      {data && data.items.length === 0 ? (
+        <EmptyLine>No issuers loaded yet — seed the watchlist to populate this page.</EmptyLine>
+      ) : null}
+
+      {data && data.items.length > 0 ? (
+        <div className="space-y-10">
+          {Object.entries(
+            data.items
+              .filter((x) => !x.parent_key)
+              .reduce<Record<string, typeof data.items>>((acc, iss) => {
+                const k = iss.sector ?? "Other";
+                (acc[k] ??= []).push(iss);
+                return acc;
+              }, {}),
+          )
+            .sort(([x], [y]) => x.localeCompare(y))
+            .map(([sector, list]) => (
+              <section key={sector} aria-label={sector}>
+                <h3 className="text-sm font-medium text-memo-muted">{sector}</h3>
+                <ul className="mt-2 border-t border-memo-ink">
+                  {list.map((iss) => {
+                    const subs = data.items.filter((x) => x.parent_key && x.parent_key === iss.key);
+                    return (
+                      <li key={iss.id} className="border-b border-memo-rule">
+                        <Link
+                          href={`/issuers/${encodeURIComponent(iss.key ?? iss.id)}`}
+                          className="flex items-baseline justify-between gap-4 py-3 hover:bg-[#EEF0EC]"
+                        >
+                          <span className="text-base font-medium text-memo-ink">{iss.name}</span>
+                          <span className="text-sm text-memo-muted">{iss.ticker ?? ""}</span>
+                        </Link>
+                        {subs.length > 0 ? (
+                          <ul className="mb-3 ml-5 border-l border-memo-rule pl-4">
+                            {subs.map((sub) => (
+                              <li key={sub.id}>
+                                <Link
+                                  href={`/issuers/${encodeURIComponent(sub.key ?? sub.id)}`}
+                                  className="block py-1.5 text-sm text-memo-ink hover:underline"
+                                >
+                                  {sub.name}
+                                </Link>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+        </div>
+      ) : null}
+      <details className="mt-12 border-t border-memo-rule pt-6 text-sm">
+        <summary className="cursor-pointer text-memo-muted">Operator: add a company by ticker</summary>
+        <div className="mt-4">
+        
         {adminToken ? (
           <>
             <p className="mt-1 text-xs text-slate-500">
@@ -115,7 +174,7 @@ export function IssuersClient() {
                 <input
                   value={ticker}
                   onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                  className="rounded border border-slate-600 bg-ink px-3 py-2 tabular-nums text-sm text-slate-100"
+                  className="rounded-md border border-memo-rule bg-[#FBFCFA] px-3 py-2 tabular-nums text-sm text-slate-100"
                   placeholder="MSFT"
                   maxLength={16}
                   disabled={busy}
@@ -124,7 +183,7 @@ export function IssuersClient() {
               <button
                 type="submit"
                 disabled={busy || !ticker.trim()}
-                className="rounded bg-accent px-3 py-2 text-sm font-medium text-ink disabled:opacity-50"
+                className="rounded-md bg-memo-ink px-3 py-2 text-sm font-medium text-paper disabled:opacity-50"
               >
                 {busy ? "Onboarding…" : "Add by ticker"}
               </button>
@@ -144,7 +203,7 @@ export function IssuersClient() {
                   type="password"
                   value={tokenDraft}
                   onChange={(e) => setTokenDraft(e.target.value)}
-                  className="rounded border border-slate-700 bg-ink px-3 py-2 tabular-nums text-sm text-slate-100"
+                  className="rounded-md border border-memo-rule bg-[#FBFCFA] px-3 py-2 tabular-nums text-sm text-slate-100"
                   placeholder="Paste admin token"
                   autoComplete="off"
                 />
@@ -187,39 +246,8 @@ export function IssuersClient() {
         ) : (
           <p className="mt-3 text-xs text-slate-600">No ticker-onboarded companies yet.</p>
         )}
-      </section>
-
-      {error ? <ErrorLine message={error} /> : null}
-      {!error && !data ? <LoadingLine /> : null}
-      {data && data.items.length === 0 ? (
-        <EmptyLine>No issuers loaded yet — seed the watchlist to populate this page.</EmptyLine>
-      ) : null}
-
-      {data && data.items.length > 0 ? (
-        <ul className="divide-y divide-slate-800 border-t border-memo-ink">
-          {data.items.map((iss) => (
-            <li key={iss.id}>
-              <Link
-                href={`/issuers/${encodeURIComponent(iss.key ?? iss.id)}`}
-                className="flex flex-col gap-1 px-4 py-3 hover:bg-ink-soft/70 focus-visible:bg-ink-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <p className="text-sm text-slate-100">{iss.name}</p>
-                  <p className="tabular-nums text-[11px] text-slate-500">
-                    {[iss.ticker, iss.key, iss.sector].filter(Boolean).join(" · ")}
-                  </p>
-                </div>
-                <p className="tabular-nums text-xs text-slate-500">
-                  {iss.parent_key ? `parent: ${iss.parent_key}` : null}
-                  {iss.subsidiary_count > 0
-                    ? `${iss.parent_key ? " · " : ""}${iss.subsidiary_count} subsidiaries`
-                    : null}
-                </p>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+        </div>
+      </details>
     </PageShell>
   );
 }

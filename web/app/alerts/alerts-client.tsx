@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
-import { AlertStatusChip, MaterialBadge } from "@/components/status-chip";
 import { EmptyLine, ErrorLine, LoadingLine } from "@/components/loading-error";
 import {
   getJson,
@@ -73,11 +72,11 @@ export function AlertsClient() {
 
   return (
     <div>
-      <header className="mb-6">
-        <h2 className="text-2xl font-semibold text-white">Alerts</h2>
-        <p className="mt-1 text-sm text-slate-400">
-          Material changes to what these companies owe, from filings and announcements in the demo
-          window (Jan–Oct 2026) plus live documents since go-live.
+      <header className="mb-8">
+        <h2 className="text-3xl font-semibold text-memo-ink sm:text-[40px] sm:leading-[46px]">Alerts</h2>
+        <p className="mt-3 max-w-[62ch] text-lg text-memo-ink">
+          Every material change to what these companies owe: from the replay of real 2026 filings, and
+          from new filings since live monitoring began on 2 Nov.
         </p>
       </header>
 
@@ -85,10 +84,10 @@ export function AlertsClient() {
         className="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end"
         onSubmit={(e) => e.preventDefault()}
       >
-        <label className="block text-xs text-slate-400">
+        <label className="block text-sm text-memo-muted">
           Status
           <select
-            className="mt-1 block w-full rounded border border-slate-700 bg-ink-soft px-3 py-2 text-sm text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-40"
+            className="mt-1 block w-full rounded-md border border-memo-rule bg-[#FBFCFA] px-3 py-2 text-sm text-memo-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-40"
             value={status}
             onChange={(e) => updateQuery({ status: e.target.value, offset: 0 })}
           >
@@ -99,10 +98,10 @@ export function AlertsClient() {
             ))}
           </select>
         </label>
-        <label className="block text-xs text-slate-400">
+        <label className="block text-sm text-memo-muted">
           Issuer
           <select
-            className="mt-1 block w-full rounded border border-slate-700 bg-ink-soft px-3 py-2 text-sm text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-56"
+            className="mt-1 block w-full rounded-md border border-memo-rule bg-[#FBFCFA] px-3 py-2 text-sm text-memo-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-56"
             value={issuer}
             onChange={(e) => updateQuery({ issuer: e.target.value, offset: 0 })}
           >
@@ -128,51 +127,41 @@ export function AlertsClient() {
 
       {!loading && data && data.items.length > 0 ? (
         <>
-          <ul className="divide-y divide-slate-800 border-t border-memo-ink">
+          <ol className="border-t border-memo-ink">
             {data.items.map((a) => (
-              <li key={a.id}>
+              <li key={a.id} className="border-b border-memo-rule">
                 <Link
                   href={`/alerts/${a.id}`}
-                  className="block px-4 py-3 hover:bg-ink-soft/70 focus-visible:bg-ink-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+                  className="grid grid-cols-1 gap-x-6 gap-y-1 py-4 hover:bg-[#EEF0EC] sm:grid-cols-[7.5rem_1fr]"
                 >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="tabular-nums text-xs text-slate-400">
-                      {a.issuer.key ?? a.issuer.name}
+                  <span className="text-sm text-memo-muted">{formatDate(a.event_date)}</span>
+                  <span>
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                      <span className="font-semibold text-memo-ink">{a.issuer.name}</span>
+                      {a.live ? (
+                        <span className="rounded border border-memo-info/50 px-1.5 py-0.5 text-xs text-memo-info">
+                          found live
+                        </span>
+                      ) : null}
+                      {a.kind === "metric" ? (
+                        <span className="rounded border border-memo-rule px-1.5 py-0.5 text-xs text-memo-muted">
+                          credit metric
+                        </span>
+                      ) : (
+                        <ReplayVerdictBadge verdict={a.replay_verdict} reason={a.replay_verdict_reason} />
+                      )}
                     </span>
-                    <span className="tabular-nums text-xs text-slate-500">
-                      {formatDate(a.event_date)}
+                    <span className="mt-1 block max-w-[70ch] text-base text-memo-ink">
+                      {a.impact_sentence ?? a.title}
                     </span>
-                    <MaterialBadge material={a.material} />
-                    <AlertStatusChip status={a.status} />
-                    {a.kind === "metric" ? (
-                      <span className="rounded border border-sky-500/40 px-1.5 py-0.5 tabular-nums text-[10px] text-sky-300">
-                        metric
-                      </span>
+                    {a.impact_sentence ? (
+                      <span className="mt-0.5 block max-w-[70ch] text-sm text-memo-muted">{a.title}</span>
                     ) : null}
-                    {a.live ? (
-                      <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 tabular-nums text-[11px] text-sky-200">
-                        live
-                      </span>
-                    ) : null}
-                    {a.kind === "metric" ? null : (
-                      <ReplayVerdictBadge
-                        verdict={a.replay_verdict}
-                        reason={a.replay_verdict_reason}
-                      />
-                    )}
-                  </div>
-                  <p className="mt-1 text-sm text-slate-100">{a.title}</p>
-                  {a.impact_sentence ? (
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-300">
-                      {a.impact_sentence}
-                    </p>
-                  ) : a.summary ? (
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-500">{a.summary}</p>
-                  ) : null}
+                  </span>
                 </Link>
               </li>
             ))}
-          </ul>
+          </ol>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
             <span className="tabular-nums text-xs">
               {data.offset + 1}–{Math.min(data.offset + data.items.length, data.total)} of {data.total}
@@ -181,7 +170,7 @@ export function AlertsClient() {
               <button
                 type="button"
                 disabled={offset <= 0}
-                className="rounded border border-slate-700 px-3 py-1.5 text-xs enabled:hover:bg-ink-soft disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink enabled:hover:bg-[#EEF0EC] disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 onClick={() => updateQuery({ offset: Math.max(0, offset - PAGE_SIZE) })}
               >
                 Previous
@@ -189,7 +178,7 @@ export function AlertsClient() {
               <button
                 type="button"
                 disabled={offset + PAGE_SIZE >= data.total}
-                className="rounded border border-slate-700 px-3 py-1.5 text-xs enabled:hover:bg-ink-soft disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink enabled:hover:bg-[#EEF0EC] disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 onClick={() => updateQuery({ offset: offset + PAGE_SIZE })}
               >
                 Next
