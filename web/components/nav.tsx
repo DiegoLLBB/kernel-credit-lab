@@ -18,8 +18,8 @@ export function Nav() {
       <div className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-10">
         <Link
           href="/"
-          aria-label="Kernel, home"
-          className="inline-flex items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+          aria-label="Kernel Terminal Credit, home"
+          className="inline-flex items-center gap-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent sm:gap-4"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -29,6 +29,13 @@ export function Nav() {
             alt="Kernel Terminal"
             className="h-6 w-auto sm:h-7"
           />
+          <span aria-hidden className="h-5 w-px bg-memo-muted/50 sm:h-6" />
+          <span
+            className="translate-y-[2px] text-[12px] font-medium uppercase leading-none tracking-[0.2em] text-memo-ink sm:translate-y-[4px] sm:text-[15px]"
+            style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}
+          >
+            Credit
+          </span>
         </Link>
         <nav aria-label="Primary" className="flex flex-wrap gap-1">
           {LINKS.map(({ href, label }) => {
