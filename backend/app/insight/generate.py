@@ -39,7 +39,8 @@ from app.llm.recorder import db_recorder
 from app.models import Alert, Event, Issuer
 from app.models.credit import CreditInsight
 
-PROMPT_VERSION = "insight_v7"
+# Bump when the snapshot prompt or tile-gate semantics change (invalidates cache).
+PROMPT_VERSION = "insight_v8"
 
 SNAPSHOT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_snapshot.md").read_text()
 IMPACT_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_impact.md").read_text()
@@ -227,11 +228,18 @@ async def generate_snapshot(
     client: Any | None = None,
     force: bool = False,
 ) -> CreditInsight:
-    """Headline + snapshot sentences for an issuer at a date (cached)."""
+    """Headline + snapshot sentences for an issuer at a date (cached).
+
+    Every caller (insight job, live job, onboard) goes through this path. Facts
+    are built from the same metric tiles the UI shows; we refuse to generate or
+    serve a cache hit when facts disagree with those tiles.
+    """
     issuer = session.scalars(select(Issuer).where(Issuer.key == issuer_key)).first()
     if issuer is None:
         raise ValueError(f"unknown issuer: {issuer_key}")
     facts = build_snapshot_facts(session, issuer_key, as_of)
+    # Numbers-must-match-tiles: refuse before any model call or cache return.
+    assert_snapshot_matches_metric_tiles(session, issuer_key, as_of, facts)
     digest = input_hash("snapshot", "", facts)
     if not force:
         hit = _cached(session, issuer.id, as_of, "snapshot", "", digest)

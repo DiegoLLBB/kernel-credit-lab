@@ -411,6 +411,16 @@ def get_snapshot(
     ).first()
     insight = None
     if insight_row is not None:
+        # Refuse to serve prose whose grounded facts disagree with current tiles
+        # (seed/live can refresh metrics after a snapshot was written).
+        from app.insight.generate import assert_snapshot_matches_metric_tiles
+
+        stored = insight_row.facts if isinstance(insight_row.facts, dict) else {}
+        try:
+            assert_snapshot_matches_metric_tiles(session, key, point, stored)
+        except ValueError:
+            insight_row = None
+    if insight_row is not None:
         check = insight_row.check if isinstance(insight_row.check, dict) else {}
         insight = SnapshotInsightOut(
             headline=insight_row.headline,

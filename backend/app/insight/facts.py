@@ -25,7 +25,7 @@ from app.insight.display import (
     issuer_short_name,
 )
 from app.metrics.compute import METRIC_IDS
-from app.models import Alert, CreditMetric, Event, Issuer
+from app.models import Alert, Event, Issuer
 
 
 def _num(value: Any) -> float | None:
@@ -48,28 +48,29 @@ def _change_pct(now: float | None, then: float | None) -> float | None:
 
 
 def _metric_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
-    rows = session.scalars(
-        select(CreditMetric)
-        .where(CreditMetric.issuer_id == issuer_id, CreditMetric.filed <= as_of)
-        .order_by(CreditMetric.period_end.asc())
-    ).all()
-    by_metric: dict[str, list[Any]] = {}
-    for row in rows:
-        by_metric.setdefault(row.metric, []).append(row)
-    out: dict[str, Any] = {}
-    for metric in METRIC_IDS:
-        series = by_metric.get(metric, [])
-        if not series:
-            out[metric] = {"value": None, "missing": "no data yet"}
-            continue
-        latest = next((r for r in reversed(series) if r.value is not None), series[-1])
-        from app.metrics.periods import prior_same_period
+    """Metric leaves for the model — taken from the same ``metric_tiles`` the UI shows.
 
-        prior = prior_same_period(series, latest)
-        now_val, then_val = _num(latest.value), _num(prior.value) if prior else None
-        detail = dict(latest.detail or {})
-        pct = _change_pct(now_val, then_val)
-        unit = latest.unit or "USD"
+    Building from tiles (not a parallel CreditMetric walk) is the
+    numbers-must-match-tiles guarantee: snapshot prose cannot cite a figure
+    the issuer page does not display.
+    """
+    from app.api.credit import metric_tiles
+
+    issuer = session.get(Issuer, issuer_id)
+    if issuer is None:
+        return {m: {"value": None, "missing": "no data yet"} for m in METRIC_IDS}
+    tiles = metric_tiles(session, issuer, as_of, include_peers=False)
+    out: dict[str, Any] = {}
+    seen: set[str] = set()
+    for tile in tiles:
+        metric = tile.metric
+        seen.add(metric)
+        now_val = _num(tile.value)
+        then_val = _num(tile.prior_value)
+        unit = tile.unit or "USD"
+        pct = tile.change_pct
+        if pct is None:
+            pct = _change_pct(now_val, then_val)
         display_value = (
             format_usd_display(now_val)
             if unit == "USD"
@@ -83,11 +84,13 @@ def _metric_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
             "value": now_val,
             "value_display": display_value,
             "unit": unit,
-            "period": latest.fiscal_label,
-            "period_end": latest.period_end.isoformat(),
-            "period_end_display": format_date_display(latest.period_end),
-            "filed": latest.filed.isoformat() if latest.filed else None,
-            "missing": detail.pop("missing", None),
+            "period": tile.fiscal_label,
+            "period_end": tile.period_end.isoformat() if tile.period_end else None,
+            "period_end_display": (
+                format_date_display(tile.period_end) if tile.period_end else None
+            ),
+            "filed": tile.filed.isoformat() if tile.filed else None,
+            "missing": tile.missing_reason,
             "previous_value": then_val,
             "previous_value_display": (
                 format_usd_display(then_val)
@@ -96,16 +99,21 @@ def _metric_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
                 if unit == "x" and then_val is not None
                 else None
             ),
-            "previous_period": prior.fiscal_label if prior else None,
-            "previous_period_end": prior.period_end.isoformat() if prior else None,
+            "previous_period": None,
+            "previous_period_end": (
+                tile.prior_period_end.isoformat() if tile.prior_period_end else None
+            ),
             "change_pct": pct,
             "change_pct_abs": abs(pct) if pct is not None else None,
-            "cash_only": detail.get("cash_only"),
-            "wall_disagrees": detail.get("wall_agrees") is False,
-            "wall_value": float(detail["wall_due"]) if detail.get("wall_due") else None,
-            "wall_value_display": format_usd_display(detail.get("wall_due")),
-            "source_note": detail.get("source_note"),
+            "cash_only": tile.cash_only,
+            "wall_disagrees": tile.wall_disagrees,
+            "wall_value": _num(tile.wall_value),
+            "wall_value_display": format_usd_display(_num(tile.wall_value)),
+            "source_note": tile.source_note,
         }
+    for metric in METRIC_IDS:
+        if metric not in seen:
+            out[metric] = {"value": None, "missing": "no data yet"}
     return out
 
 

@@ -218,8 +218,13 @@ def metric_tiles(
     as_of: date,
     *,
     only: tuple[str, ...] = METRIC_IDS,
+    include_peers: bool = True,
 ) -> list[MetricTileOut]:
-    """One tile per metric: latest value, 1-year change, flag, full sparkline."""
+    """One tile per metric: latest value, 1-year change, flag, full sparkline.
+
+    ``include_peers=False`` skips sector peer medians (overview watchlist) —
+    peer scans dominate overview latency and the watchlist does not show them.
+    """
     rows = session.scalars(
         select(CreditMetric)
         .where(CreditMetric.issuer_id == issuer.id, CreditMetric.filed <= as_of)
@@ -296,7 +301,7 @@ def metric_tiles(
                 value=latest.value,
                 unit=latest.unit,
             )
-            if latest.value is not None and metric in _RATIO_METRICS
+            if include_peers and latest.value is not None and metric in _RATIO_METRICS
             else None
         )
         tiles.append(
@@ -684,8 +689,16 @@ def credit_overview(
         material_changes=int(material_changes),
         last_check=last_check,
     )
+    # Cap the scan: building feed items (esp. agent impact) over every historical
+    # alert was the main overview latency source (~5s). We only surface
+    # ``limit`` agent + ``max(limit, 40)`` metric rows plus a live slice.
+    metric_cap = max(limit, 40)
+    scan_cap = max(limit, metric_cap) * 4
+    recent_alerts = session.scalars(
+        select(Alert).order_by(Alert.created_at.desc()).limit(scan_cap)
+    ).all()
     feed_items: list[FeedItemOut] = []
-    for alert in session.scalars(select(Alert).order_by(Alert.created_at.desc())).all():
+    for alert in recent_alerts:
         event = session.get(Event, alert.event_id) if alert.event_id else None
         live = event is not None and event.source == "live"
         item = _feed_item(session, alert, live=live)
@@ -701,7 +714,7 @@ def credit_overview(
     # Agent alerts lead the feed; metric alerts follow (UI collapses them).
     agent_feed = [i for i in feed_items if i.kind != "metric"]
     metric_feed = [i for i in feed_items if i.kind == "metric"]
-    feed = agent_feed[:limit] + metric_feed[: max(limit, 40)]
+    feed = agent_feed[:limit] + metric_feed[:metric_cap]
     live_feed = [i for i in feed_items if i.live][:limit]
     stats = live_stats(session)
     live_section = None
@@ -736,6 +749,7 @@ def credit_overview(
                     "leverage",
                     "interest_coverage",
                 ),
+                include_peers=False,
             ),
         )
         for iss in roots

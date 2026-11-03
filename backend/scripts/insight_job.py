@@ -81,10 +81,11 @@ async def _run(
                     )
                 )
                 if force or cached is None or cached.input_hash != digest:
+                    # generate_snapshot asserts facts vs tiles before model/cache.
                     row = await generate_snapshot(session, key, as_of, force=force)
                 else:
+                    assert_snapshot_matches_metric_tiles(session, key, as_of, facts)
                     row = cached
-                assert_snapshot_matches_metric_tiles(session, key, as_of, facts)
                 print(f"insight: snapshot {key} @ {as_of}: {row.status}")
                 stats["snapshots"] += 1
             except Exception as exc:
