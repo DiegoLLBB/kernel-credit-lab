@@ -6,9 +6,9 @@ import { formatUsdMillions, wallAmount } from "@/lib/format";
 const DISPLAY_LABELS = ["FY2026", "FY2027", "FY2028", "FY2029"];
 
 const COLORS = {
-  named: "#2f6fed",
-  newsince: "#38bdf8",
-  unattributed: "#64748b",
+  named: "#1C232B",
+  newsince: "#B4472E",
+  unattributed: "#AEB6BA",
 } as const;
 
 const SEG_LABEL: Record<string, string> = {

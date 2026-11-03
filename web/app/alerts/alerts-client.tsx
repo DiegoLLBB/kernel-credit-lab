@@ -128,7 +128,7 @@ export function AlertsClient() {
 
       {!loading && data && data.items.length > 0 ? (
         <>
-          <ul className="divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
+          <ul className="divide-y divide-slate-800 border-t border-memo-ink">
             {data.items.map((a) => (
               <li key={a.id}>
                 <Link
@@ -136,21 +136,21 @@ export function AlertsClient() {
                   className="block px-4 py-3 hover:bg-ink-soft/70 focus-visible:bg-ink-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs text-slate-400">
+                    <span className="tabular-nums text-xs text-slate-400">
                       {a.issuer.key ?? a.issuer.name}
                     </span>
-                    <span className="font-mono text-xs text-slate-500">
+                    <span className="tabular-nums text-xs text-slate-500">
                       {formatDate(a.event_date)}
                     </span>
                     <MaterialBadge material={a.material} />
                     <AlertStatusChip status={a.status} />
                     {a.kind === "metric" ? (
-                      <span className="rounded border border-sky-500/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-sky-300">
+                      <span className="rounded border border-sky-500/40 px-1.5 py-0.5 tabular-nums text-[10px] text-sky-300">
                         metric
                       </span>
                     ) : null}
                     {a.live ? (
-                      <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-sky-200">
+                      <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 tabular-nums text-[11px] text-sky-200">
                         live
                       </span>
                     ) : null}
@@ -174,7 +174,7 @@ export function AlertsClient() {
             ))}
           </ul>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
-            <span className="font-mono text-xs">
+            <span className="tabular-nums text-xs">
               {data.offset + 1}–{Math.min(data.offset + data.items.length, data.total)} of {data.total}
             </span>
             <div className="flex gap-2">

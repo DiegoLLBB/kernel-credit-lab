@@ -80,7 +80,7 @@ export function DocumentClient() {
           {doc?.title ?? "Document"}
         </h2>
         {doc ? (
-          <p className="mt-1 font-mono text-xs text-slate-500">
+          <p className="mt-1 tabular-nums text-xs text-slate-500">
             {[doc.form_type, formatDate(doc.filed_at), `page ${doc.page + 1} of ${doc.pages}`]
               .filter(Boolean)
               .join(" · ")}
@@ -115,7 +115,7 @@ export function DocumentClient() {
             >
               Previous page
             </button>
-            <span className="font-mono text-xs text-slate-400">
+            <span className="tabular-nums text-xs text-slate-400">
               Page {doc.page + 1} / {doc.pages}
               {pageLoading ? " · updating…" : ""}
             </span>
@@ -128,14 +128,14 @@ export function DocumentClient() {
               Next page
             </button>
             {factId ? (
-              <span className="font-mono text-[11px] text-slate-500">
+              <span className="tabular-nums text-[11px] text-slate-500">
                 Highlighting cited passage
               </span>
             ) : null}
           </div>
           <pre
             aria-busy={pageLoading}
-            className={`max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-700/60 bg-ink-soft/50 p-4 font-mono text-xs leading-relaxed text-slate-300 ${pageLoading ? "opacity-60" : ""}`}
+            className={`max-h-[70vh] overflow-auto whitespace-pre-wrap break-words border-t border-memo-rule pt-3 pb-1 tabular-nums text-xs leading-relaxed text-slate-300 ${pageLoading ? "opacity-60" : ""}`}
           >
             {renderText(doc)}
           </pre>

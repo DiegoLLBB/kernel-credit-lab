@@ -9,7 +9,7 @@ const ALERT_STYLES: Record<AlertStatus, string> = {
 export function AlertStatusChip({ status }: { status: AlertStatus }) {
   return (
     <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide ${ALERT_STYLES[status]}`}
+      className={`inline-flex items-center rounded border px-2 py-0.5 tabular-nums text-[11px] ${ALERT_STYLES[status]}`}
     >
       {status}
     </span>
@@ -19,13 +19,13 @@ export function AlertStatusChip({ status }: { status: AlertStatus }) {
 export function MaterialBadge({ material }: { material: boolean }) {
   if (!material) {
     return (
-      <span className="inline-flex items-center rounded border border-slate-600/50 bg-slate-800/40 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-slate-400">
+      <span className="inline-flex items-center rounded border border-slate-600/50 bg-slate-800/40 px-2 py-0.5 tabular-nums text-[11px] text-slate-400">
         not material
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-amber-200">
+    <span className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 tabular-nums text-[11px] text-amber-200">
       material
     </span>
   );
@@ -41,7 +41,7 @@ export function PassFailChip({
   const text = label ?? (passed ? "pass" : "fail");
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide ${
+      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 tabular-nums text-[11px] ${
         passed
           ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
           : "border-rose-500/40 bg-rose-500/10 text-rose-200"
@@ -60,7 +60,7 @@ export function ClaimsStatusChip({ status }: { status: string | null }) {
   const bad = s === "fail" || s === "failed" || s === "unsupported" || s === "reject";
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide ${
+      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 tabular-nums text-[11px] ${
         ok
           ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
           : bad

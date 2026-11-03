@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import "@fontsource-variable/public-sans";
+import "@fontsource-variable/source-serif-4";
 import { Nav } from "@/components/nav";
 import "./globals.css";
 

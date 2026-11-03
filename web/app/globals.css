@@ -3,9 +3,41 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+  --font-sans: "Public Sans Variable";
+  --font-serif: "Source Serif 4 Variable";
 }
 
 body {
-  @apply bg-ink text-slate-200 antialiased;
+  @apply bg-paper text-memo-ink antialiased;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Text quoted from a filing: the filing's voice, marked up like a highlighter. */
+.quote-mark {
+  @apply font-serif text-lg text-memo-ink;
+  background: linear-gradient(transparent 12%, #e6ef6e 12%, #e6ef6e 92%, transparent 92%);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0 2px;
+}
+
+:focus-visible {
+  outline: 2px solid #1c232b;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* The one motion moment: the added slice of a bar grows into place on the alert page. */
+@keyframes grow-up {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+.grow-up {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: grow-up 500ms ease-out 200ms both;
 }

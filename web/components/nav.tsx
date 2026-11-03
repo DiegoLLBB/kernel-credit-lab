@@ -13,11 +13,11 @@ export function Nav() {
   const pathname = usePathname();
 
   return (
-    <header className="border-b border-slate-800/80 bg-ink/90 backdrop-blur">
+    <header className="border-b border-memo-rule bg-paper">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <Link
           href="/"
-          className="font-mono text-xs uppercase tracking-[0.22em] text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="text-base font-semibold text-memo-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           Kernel Credit Lab
         </Link>

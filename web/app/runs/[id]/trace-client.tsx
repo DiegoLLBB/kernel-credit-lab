@@ -141,12 +141,12 @@ function TurnBody({ t }: { t: TraceTurnOut }) {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-mono text-sm text-slate-100">{t.tool ?? "(no tool)"}</h3>
+        <h3 className="tabular-nums text-sm text-slate-100">{t.tool ?? "(no tool)"}</h3>
         {t.status ? (
-          <span className="font-mono text-[11px] text-slate-500">{t.status}</span>
+          <span className="tabular-nums text-[11px] text-slate-500">{t.status}</span>
         ) : null}
         {t.cost_label || t.cost_usd != null || t.model ? (
-          <span className="font-mono text-[11px] text-slate-500">
+          <span className="tabular-nums text-[11px] text-slate-500">
             {t.cost_label ?? formatCost(t.cost_usd, { model: t.model })}
           </span>
         ) : null}
@@ -169,7 +169,7 @@ function TurnBody({ t }: { t: TraceTurnOut }) {
                 label={`${c.check_name}: ${c.passed ? "pass" : "fail"}`}
               />
               {!c.passed && c.problems != null ? (
-                <span className="ml-2 font-mono text-[11px] text-rose-300">
+                <span className="ml-2 tabular-nums text-[11px] text-rose-300">
                   {typeof c.problems === "string" ? c.problems : JSON.stringify(c.problems)}
                 </span>
               ) : null}
@@ -227,7 +227,7 @@ export function TraceClient() {
       {trace && summary ? (
         <div className="space-y-8">
           <header>
-            <p className="font-mono text-xs text-slate-500">Run {trace.id}</p>
+            <p className="tabular-nums text-xs text-slate-500">Run {trace.id}</p>
             <h2 className="mt-1 text-2xl font-semibold text-white">Agent trace</h2>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">
               Summary of what the agent read and proposed, then the step list. Use it to audit an
@@ -236,42 +236,42 @@ export function TraceClient() {
             <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <dt className="text-xs text-slate-500">Status</dt>
-                <dd className="font-mono text-sm text-slate-200">{trace.status}</dd>
+                <dd className="tabular-nums text-sm text-slate-200">{trace.status}</dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-500">Duration</dt>
-                <dd className="font-mono text-sm text-slate-200">{summary.duration}</dd>
+                <dd className="tabular-nums text-sm text-slate-200">{summary.duration}</dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-500">Turns</dt>
-                <dd className="font-mono text-sm text-slate-200">{trace.turn_count}</dd>
+                <dd className="tabular-nums text-sm text-slate-200">{trace.turn_count}</dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-500">Tokens</dt>
-                <dd className="font-mono text-sm text-slate-200">
+                <dd className="tabular-nums text-sm text-slate-200">
                   {formatNumber(trace.total_tokens)}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-500">Cost</dt>
-                <dd className="font-mono text-sm text-slate-200">
+                <dd className="tabular-nums text-sm text-slate-200">
                   {trace.total_cost_label ??
                     formatCost(trace.total_cost_usd, { hasUnpriced: true })}
                 </dd>
               </div>
             </dl>
-            <p className="mt-2 font-mono text-xs text-slate-500">
+            <p className="mt-2 tabular-nums text-xs text-slate-500">
               Prompt version: {trace.prompt_version ?? "—"}
             </p>
           </header>
 
           <section
             aria-labelledby="trace-summary-heading"
-            className="rounded-lg border border-slate-700/60 bg-ink-soft/40 p-5"
+            className="border-t border-memo-rule pt-8"
           >
             <h3
               id="trace-summary-heading"
-              className="text-sm font-semibold uppercase tracking-wide text-slate-400"
+              className="text-lg font-semibold text-memo-ink"
             >
               Summary
             </h3>
@@ -325,7 +325,7 @@ export function TraceClient() {
                   <ul className="mt-1 list-disc space-y-1 pl-5 text-rose-200/90">
                     {summary.refusals.map((r) => (
                       <li key={`ref-${r.sequence}`}>
-                        <span className="font-mono text-xs text-slate-500">
+                        <span className="tabular-nums text-xs text-slate-500">
                           #{r.sequence} {r.tool}:{" "}
                         </span>
                         {r.reason}
@@ -344,7 +344,7 @@ export function TraceClient() {
                       <li key={`ch-${c.sequence}`}>
                         {c.name}
                         {c.detail ? (
-                          <span className="font-mono text-xs text-slate-500"> — {c.detail}</span>
+                          <span className="tabular-nums text-xs text-slate-500"> — {c.detail}</span>
                         ) : null}
                       </li>
                     ))}
@@ -359,9 +359,9 @@ export function TraceClient() {
                 <span className="text-slate-400">Claims check: </span>
                 {summary.claims ? (
                   <>
-                    <span className="font-mono">{summary.claims.verdict}</span>
+                    <span className="tabular-nums">{summary.claims.verdict}</span>
                     {summary.claims.model ? (
-                      <span className="font-mono text-xs text-slate-500">
+                      <span className="tabular-nums text-xs text-slate-500">
                         {" "}
                         · {summary.claims.model}
                       </span>
@@ -401,22 +401,22 @@ export function TraceClient() {
                   return (
                     <li key={`g-${first.sequence}`} className="relative pb-8">
                       <span
-                        className="absolute -left-[1.625rem] top-1 flex h-5 w-5 items-center justify-center rounded-full border border-slate-600 bg-ink text-[10px] font-mono text-slate-400"
+                        className="absolute -left-[1.625rem] top-1 flex h-5 w-5 items-center justify-center rounded-full border border-slate-600 bg-ink text-[10px] tabular-nums text-slate-400"
                         aria-hidden
                       >
                         {first.sequence}
                       </span>
                       <details className="space-y-2">
-                        <summary className="cursor-pointer font-mono text-sm text-slate-100">
+                        <summary className="cursor-pointer tabular-nums text-sm text-slate-100">
                           {item.label}
-                          <span className="ml-2 font-mono text-[11px] text-slate-500">
+                          <span className="ml-2 tabular-nums text-[11px] text-slate-500">
                             steps {first.sequence}–{last.sequence}
                           </span>
                         </summary>
                         <ol className="mt-3 space-y-6 border-l border-slate-800 pl-4">
                           {item.turns.map((t) => (
                             <li key={t.sequence}>
-                              <p className="mb-1 font-mono text-[11px] text-slate-500">
+                              <p className="mb-1 tabular-nums text-[11px] text-slate-500">
                                 #{t.sequence}
                               </p>
                               <TurnBody t={t} />
@@ -432,7 +432,7 @@ export function TraceClient() {
                 return (
                   <li key={t.sequence} className="relative pb-8">
                     <span
-                      className={`absolute -left-[1.625rem] top-1 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-mono ${
+                      className={`absolute -left-[1.625rem] top-1 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] tabular-nums ${
                         refused
                           ? "border-rose-500 bg-rose-500/20 text-rose-200"
                           : "border-slate-600 bg-ink text-slate-400"

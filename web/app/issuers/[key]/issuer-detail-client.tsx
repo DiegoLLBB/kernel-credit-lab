@@ -209,7 +209,7 @@ export function IssuerDetailClient() {
         <div className="space-y-10">
           <header>
             <h2 className="text-2xl font-semibold text-white">{issuer.name}</h2>
-            <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-slate-400">
+            <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-xs text-slate-400">
               {issuer.ticker ? (
                 <div>
                   <dt className="inline text-slate-500">Ticker </dt>
@@ -263,21 +263,21 @@ export function IssuerDetailClient() {
               asOf={asOf}
             />
             {updating && snapshot ? (
-              <p className="mt-2 font-mono text-[11px] text-slate-500" aria-live="polite">
+              <p className="mt-2 tabular-nums text-[11px] text-slate-500" aria-live="polite">
                 Updating figures for {formatDate(asOf)}…
               </p>
             ) : null}
           </div>
 
-          <section aria-labelledby="wall-heading" className="rounded-lg border border-slate-700/60 bg-ink-soft/40 p-5">
-            <h3 id="wall-heading" className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+          <section aria-labelledby="wall-heading" className="border-t border-memo-rule pt-8">
+            <h3 id="wall-heading" className="text-lg font-semibold text-memo-ink">
               Debt due by year
             </h3>
             <p className="mt-1 text-xs leading-relaxed text-slate-500">
               Dark blue: bonds Kernel tracks one by one. Light blue: bonds added since the last
               filing schedule. Grey: the rest of the debt reported in the annual filing.
             </p>
-            <p className="mt-1 font-mono text-xs text-slate-500">As of {formatDate(asOf)}</p>
+            <p className="mt-1 tabular-nums text-xs text-slate-500">As of {formatDate(asOf)}</p>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
@@ -314,16 +314,16 @@ export function IssuerDetailClient() {
                 })}
               </datalist>
             </div>
-            <div className="mt-1 flex justify-between font-mono text-[10px] text-slate-500">
+            <div className="mt-1 flex justify-between tabular-nums text-[10px] text-slate-500">
               <span>1 Jan 2026</span>
               <span>31 Oct 2026</span>
             </div>
             {eventDates.length > 0 ? (
               <details className="mt-2 text-[11px] text-slate-500">
-                <summary className="cursor-pointer font-mono text-slate-400">
+                <summary className="cursor-pointer tabular-nums text-slate-400">
                   {eventDates.length} event date{eventDates.length === 1 ? "" : "s"} on this slider
                 </summary>
-                <p className="mt-1 font-mono leading-relaxed">
+                <p className="mt-1 tabular-nums leading-relaxed">
                   {eventDates.map((d) => formatDate(d)).join(" · ")}
                 </p>
               </details>
@@ -333,13 +333,13 @@ export function IssuerDetailClient() {
 
             {snapshot?.wall && snapshot.wall.changes.length > 0 ? (
               <div className="mt-4 rounded border border-slate-700/60 p-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                <p className="text-xs font-medium text-slate-500">
                   Changes this year
                 </p>
                 <ul className="mt-2 space-y-1 text-xs text-slate-300">
                   {snapshot.wall.changes.map((c, i) => (
                     <li key={`${c.label}-${i}`}>
-                      <span className="font-mono">
+                      <span className="tabular-nums">
                         {c.label}: {c.before !== null ? formatUsdMillions(c.before) : "—"}
                         {" → "}
                         {c.after !== null ? formatUsdMillions(c.after) : "—"}
@@ -372,7 +372,7 @@ export function IssuerDetailClient() {
             </div>
 
             <div className="mt-6 rounded border border-slate-700/60 p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              <p className="text-xs font-medium text-slate-500">
                 Refinancing shock
               </p>
               <p className="mt-2 text-sm text-slate-300">
@@ -390,7 +390,7 @@ export function IssuerDetailClient() {
               ) : null}
               <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400">
                 <label className="flex items-center gap-2">
-                  <span className="font-mono uppercase tracking-wide text-slate-500">Tenor</span>
+                  <span className="tabular-nums text-slate-500">Tenor</span>
                   <select
                     className="rounded border border-slate-700 bg-ink-soft px-2 py-1 text-sm text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     value={tenorYears}
@@ -405,7 +405,7 @@ export function IssuerDetailClient() {
                   </select>
                 </label>
                 <label className="flex flex-wrap items-center gap-3">
-                  <span className="font-mono uppercase tracking-wide text-slate-500">
+                  <span className="tabular-nums text-slate-500">
                     Treasury shock
                   </span>
                   <input
@@ -421,7 +421,7 @@ export function IssuerDetailClient() {
                     aria-valuenow={shockBps}
                     aria-label="Treasury shock in basis points"
                   />
-                  <span className="font-mono text-slate-200">{formatBps(shockBps)}</span>
+                  <span className="tabular-nums text-slate-200">{formatBps(shockBps)}</span>
                 </label>
               </div>
               <p className="mt-2 text-xs text-slate-500">
@@ -436,9 +436,9 @@ export function IssuerDetailClient() {
                   {refinancing.insight_sentence ? (
                     <p className="mt-3 text-sm text-slate-200">{refinancing.insight_sentence}</p>
                   ) : null}
-                  <dl className="mt-3 grid gap-3 sm:grid-cols-3 font-mono text-sm">
+                  <dl className="mt-3 grid gap-3 sm:grid-cols-3 tabular-nums text-sm">
                     <div>
-                      <dt className="text-[11px] uppercase tracking-wide text-slate-500">
+                      <dt className="text-[11px] text-slate-500">
                         Base (+0 bp)
                       </dt>
                       <dd className="text-slate-100">
@@ -458,7 +458,7 @@ export function IssuerDetailClient() {
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-[11px] uppercase tracking-wide text-slate-500">
+                      <dt className="text-[11px] text-slate-500">
                         Shocked
                       </dt>
                       <dd className="text-slate-100">
@@ -474,7 +474,7 @@ export function IssuerDetailClient() {
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-[11px] uppercase tracking-wide text-slate-500">
+                      <dt className="text-[11px] text-slate-500">
                         Interest coverage (×)
                       </dt>
                       <dd className="text-slate-100">
@@ -499,7 +499,7 @@ export function IssuerDetailClient() {
                     </div>
                   </dl>
                   {(refinancing.buckets?.length ?? 0) > 0 ? (
-                    <ul className="mt-3 space-y-1 font-mono text-[11px] text-slate-500">
+                    <ul className="mt-3 space-y-1 tabular-nums text-[11px] text-slate-500">
                       {refinancing.buckets.map((b) => (
                         <li key={b.label}>
                           {b.label}: coupon{" "}
@@ -520,7 +520,7 @@ export function IssuerDetailClient() {
                       <summary className="cursor-pointer text-slate-400">
                         How pressure rank is weighted
                       </summary>
-                      <p className="mt-1 font-mono">
+                      <p className="mt-1 tabular-nums">
                         {Object.entries(refinancing.weights)
                           .map(([k, v]) => `${k.replaceAll("_", " ")} ${v}`)
                           .join(" · ")}
@@ -541,7 +541,7 @@ export function IssuerDetailClient() {
             <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
               <h3
                 id="instruments-heading"
-                className="text-sm font-semibold uppercase tracking-wide text-slate-400"
+                className="text-lg font-semibold text-memo-ink"
               >
                 Instruments
               </h3>
@@ -563,9 +563,9 @@ export function IssuerDetailClient() {
             {instruments.length === 0 ? (
               <p className="text-sm text-slate-400">No instruments match.</p>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-slate-700/60">
+              <div className="overflow-x-auto border-t border-memo-ink">
                 <table className="min-w-full text-left text-sm">
-                  <thead className="bg-ink-soft font-mono text-[11px] uppercase tracking-wide text-slate-500">
+                  <thead className="bg-ink-soft tabular-nums text-[11px] text-slate-500">
                     <tr>
                       <th className="px-3 py-2">
                         <button
@@ -603,18 +603,18 @@ export function IssuerDetailClient() {
                       <tr key={inst.id}>
                         <td className="px-3 py-2">
                           <div className="text-slate-200">{inst.name}</div>
-                          <div className="font-mono text-[11px] text-slate-500">
+                          <div className="tabular-nums text-[11px] text-slate-500">
                             {inst.key} · {inst.currency}
                           </div>
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-400">
+                        <td className="px-3 py-2 tabular-nums text-xs text-slate-400">
                           {Number(inst.coupon).toFixed(3)}%
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-400">
+                        <td className="px-3 py-2 tabular-nums text-xs text-slate-400">
                           {formatDate(inst.maturity)}
                         </td>
                         <td
-                          className="px-3 py-2 font-mono text-xs text-slate-200"
+                          className="px-3 py-2 tabular-nums text-xs text-slate-200"
                           title={
                             inst.original_amount &&
                             inst.original_amount !== inst.amount_outstanding
@@ -624,7 +624,7 @@ export function IssuerDetailClient() {
                         >
                           {formatUsdMillions(inst.amount_outstanding, inst.currency)}
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-400">
+                        <td className="px-3 py-2 tabular-nums text-xs text-slate-400">
                           {inst.status}
                         </td>
                       </tr>
@@ -638,7 +638,7 @@ export function IssuerDetailClient() {
           <section aria-labelledby="events-heading">
             <h3
               id="events-heading"
-              className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400"
+              className="mb-3 text-lg font-semibold text-memo-ink"
             >
               Events
             </h3>
@@ -648,7 +648,7 @@ export function IssuerDetailClient() {
               <ol className="space-y-3 border-l border-slate-700/80 pl-4">
                 {issuer.events.map((ev) => (
                   <li key={ev.id} className="text-sm">
-                    <p className="font-mono text-[11px] text-slate-500">
+                    <p className="tabular-nums text-[11px] text-slate-500">
                       {formatDate(ev.event_date)}
                       {ev.event_type ? ` · ${ev.event_type.replaceAll("_", " ")}` : ""}
                     </p>
@@ -687,7 +687,7 @@ export function IssuerDetailClient() {
             <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
               <h3
                 id="charts-heading"
-                className="text-sm font-semibold uppercase tracking-wide text-slate-400"
+                className="text-lg font-semibold text-memo-ink"
               >
                 Verified charts
               </h3>
@@ -718,7 +718,7 @@ export function IssuerDetailClient() {
                   return (
                     <li
                       key={c.id}
-                      className="overflow-hidden rounded-lg border border-slate-700/60 bg-ink-soft/30"
+                      className="border-t border-memo-ink "
                     >
                       {c.has_overlay || c.has_crop ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -742,7 +742,7 @@ export function IssuerDetailClient() {
                             label={c.verified ? "verified" : "unverified"}
                           />
                         </div>
-                        <p className="font-mono text-[11px] text-slate-500">
+                        <p className="tabular-nums text-[11px] text-slate-500">
                           {[c.filing_title, c.page != null ? `p.${c.page + 1}` : null, c.unit]
                             .filter(Boolean)
                             .join(" · ")}
@@ -753,7 +753,7 @@ export function IssuerDetailClient() {
                           </p>
                         ) : null}
                         {c.categories.length > 0 ? (
-                          <table className="mt-2 w-full text-left font-mono text-[11px]">
+                          <table className="mt-2 w-full text-left tabular-nums text-[11px]">
                             <thead className="text-slate-500">
                               <tr>
                                 <th className="py-1 pr-2 font-medium">Category</th>
@@ -806,7 +806,7 @@ export function IssuerDetailClient() {
                                 ? ` · ${c.filing_crosscheck.metric_label}`
                                 : ""}
                             </p>
-                            <ul className="mt-2 space-y-1 font-mono text-[11px] text-slate-400">
+                            <ul className="mt-2 space-y-1 tabular-nums text-[11px] text-slate-400">
                               {c.filing_crosscheck.values
                                 .filter((v) => v.status !== "skipped")
                                 .map((v) => (

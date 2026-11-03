@@ -16,7 +16,7 @@ export function ReplayVerdictBadge({
   const cls = styles[verdict] ?? "border-slate-500/40 bg-slate-500/10 text-slate-300";
   return (
     <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 font-mono text-[11px] tracking-wide ${cls}`}
+      className={`inline-flex items-center rounded border px-2 py-0.5 tabular-nums text-[11px] ${cls}`}
       title={reason ?? undefined}
     >
       {verdict}

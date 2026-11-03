@@ -94,7 +94,7 @@ export function IssuersClient() {
         </p>
       </header>
 
-      <section className="mb-8 rounded-lg border border-slate-700/60 px-4 py-4">
+      <section className="mb-8 border-t border-memo-rule px-4 py-4">
         <h3 className="text-sm font-medium text-slate-100">Add a company</h3>
         {adminToken ? (
           <>
@@ -115,7 +115,7 @@ export function IssuersClient() {
                 <input
                   value={ticker}
                   onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                  className="rounded border border-slate-600 bg-ink px-3 py-2 font-mono text-sm text-slate-100"
+                  className="rounded border border-slate-600 bg-ink px-3 py-2 tabular-nums text-sm text-slate-100"
                   placeholder="MSFT"
                   maxLength={16}
                   disabled={busy}
@@ -144,7 +144,7 @@ export function IssuersClient() {
                   type="password"
                   value={tokenDraft}
                   onChange={(e) => setTokenDraft(e.target.value)}
-                  className="rounded border border-slate-700 bg-ink px-3 py-2 font-mono text-sm text-slate-100"
+                  className="rounded border border-slate-700 bg-ink px-3 py-2 tabular-nums text-sm text-slate-100"
                   placeholder="Paste admin token"
                   autoComplete="off"
                 />
@@ -162,7 +162,7 @@ export function IssuersClient() {
 
         {onboarded.length > 0 ? (
           <div className="mt-4 border-t border-slate-800 pt-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            <p className="text-xs font-medium text-slate-500">
               Added by ticker
             </p>
             <ul className="mt-2 space-y-1 text-sm text-slate-300">
@@ -175,7 +175,7 @@ export function IssuersClient() {
                     {iss.ticker || iss.key}
                   </Link>
                   <span className="text-slate-500">{iss.name}</span>
-                  <span className="font-mono text-[11px] text-slate-600">
+                  <span className="tabular-nums text-[11px] text-slate-600">
                     {iss.onboarded_at
                       ? `onboarded ${iss.onboarded_at.slice(0, 10)}`
                       : "onboarded"}
@@ -196,7 +196,7 @@ export function IssuersClient() {
       ) : null}
 
       {data && data.items.length > 0 ? (
-        <ul className="divide-y divide-slate-800 overflow-hidden rounded-lg border border-slate-700/60">
+        <ul className="divide-y divide-slate-800 border-t border-memo-ink">
           {data.items.map((iss) => (
             <li key={iss.id}>
               <Link
@@ -205,11 +205,11 @@ export function IssuersClient() {
               >
                 <div>
                   <p className="text-sm text-slate-100">{iss.name}</p>
-                  <p className="font-mono text-[11px] text-slate-500">
+                  <p className="tabular-nums text-[11px] text-slate-500">
                     {[iss.ticker, iss.key, iss.sector].filter(Boolean).join(" · ")}
                   </p>
                 </div>
-                <p className="font-mono text-xs text-slate-500">
+                <p className="tabular-nums text-xs text-slate-500">
                   {iss.parent_key ? `parent: ${iss.parent_key}` : null}
                   {iss.subsidiary_count > 0
                     ? `${iss.parent_key ? " · " : ""}${iss.subsidiary_count} subsidiaries`

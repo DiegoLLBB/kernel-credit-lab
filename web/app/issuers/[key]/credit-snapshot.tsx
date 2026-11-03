@@ -40,18 +40,18 @@ export function CreditSnapshot({
   const valued = snapshot.metrics.filter((t) => t.value !== null);
 
   return (
-    <section aria-labelledby="snapshot-heading" className="rounded-lg border border-slate-700/60 bg-ink-soft/40 p-5">
-      <h3 id="snapshot-heading" className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-        Credit snapshot · as of {formatDate(snapshot.as_of)}
+    <section aria-labelledby="snapshot-heading" className="border-t border-memo-rule pt-8">
+      <h3 id="snapshot-heading" className="text-lg font-semibold text-memo-ink">
+        Credit snapshot, as of {formatDate(snapshot.as_of)}
       </h3>
 
       {insight && (insight.headline || insight.sentences.length > 0) ? (
         <div className="mt-3 max-w-3xl">
           {insight.headline ? (
-            <p className="text-xl font-semibold leading-snug text-white">{insight.headline}</p>
+            <p className="text-2xl font-semibold leading-tight text-memo-ink sm:text-[30px] sm:leading-[38px]">{insight.headline}</p>
           ) : null}
           {insight.sentences.map((s, i) => (
-            <p key={i} className="mt-2 text-sm leading-relaxed text-slate-300">
+            <p key={i} className="mt-3 max-w-[70ch] text-base leading-7 text-memo-ink">
               {s}
             </p>
           ))}
@@ -128,13 +128,13 @@ export function CreditSnapshot({
 
       {snapshot.timeline.length > 0 ? (
         <div className="mt-6">
-          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <h4 className="mb-3 text-xs font-semibold text-slate-500">
             This year
           </h4>
           <ol className="space-y-3 border-l border-slate-700/80 pl-4">
             {snapshot.timeline.map((item, i) => (
               <li key={`${item.event_date}-${i}`} className="text-sm">
-                <p className="font-mono text-[11px] text-slate-500">
+                <p className="tabular-nums text-[11px] text-slate-500">
                   {formatDate(item.event_date)}
                 </p>
                 <p className="text-slate-200">{item.effect ?? item.title}</p>

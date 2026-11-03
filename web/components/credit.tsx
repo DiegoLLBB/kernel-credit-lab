@@ -53,14 +53,14 @@ export function ChangeArrow({ tile }: { tile: MetricTile }) {
   if (RATIO_METRICS.has(tile.metric)) {
     if (tile.prior_value === null || tile.value === null) {
       return (
-        <span className="font-mono text-xs text-slate-500" title={vs}>
+        <span className="tabular-nums text-xs text-slate-500" title={vs}>
           —
         </span>
       );
     }
     return (
       <span
-        className="font-mono text-xs text-slate-300"
+        className="tabular-nums text-xs text-slate-300"
         title={vs}
         aria-label={`${vs}: ${formatChangeValue(tile, tile.prior_value)} to ${formatTileValue(tile)}`}
       >
@@ -71,7 +71,7 @@ export function ChangeArrow({ tile }: { tile: MetricTile }) {
   const changePct = tile.change_pct;
   if (changePct === null || changePct === undefined || !Number.isFinite(changePct)) {
     return (
-      <span className="font-mono text-xs text-slate-500" title={vs}>
+      <span className="tabular-nums text-xs text-slate-500" title={vs}>
         —
       </span>
     );
@@ -82,7 +82,7 @@ export function ChangeArrow({ tile }: { tile: MetricTile }) {
   const word = up ? "up" : down ? "down" : "flat";
   return (
     <span
-      className="font-mono text-xs text-slate-300"
+      className="tabular-nums text-xs text-slate-300"
       title={`${vs}: ${word}`}
       aria-label={`${word} ${Math.abs(changePct).toFixed(1)} percent ${vs}`}
     >
@@ -97,7 +97,7 @@ export function Sparkline({ tile }: { tile: MetricTile }) {
     (p): p is typeof p & { value: string } => p.value !== null,
   );
   if (points.length < 2) {
-    return <p className="font-mono text-[11px] text-slate-500">No trend yet</p>;
+    return <p className="tabular-nums text-[11px] text-slate-500">No trend yet</p>;
   }
   const values = points.map((p) => Number(p.value));
   const min = Math.min(...values);
@@ -120,9 +120,9 @@ export function Sparkline({ tile }: { tile: MetricTile }) {
       viewBox={`0 0 ${w} ${h}`}
       className="mt-2"
     >
-      <polyline points={line} fill="none" stroke="#7dd3fc" strokeWidth={1.5} />
+      <polyline points={line} fill="none" stroke="#1C232B" strokeWidth={1.5} />
       {coords.map((c) => (
-        <circle key={c.label} cx={c.x} cy={c.y} r={2} fill="#7dd3fc">
+        <circle key={c.label} cx={c.x} cy={c.y} r={2} fill="#1C232B">
           <title>{`${c.label}: ${formatTileValue({ ...tile, value: c.value })}`}</title>
         </circle>
       ))}
@@ -134,10 +134,10 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
   return (
     <div
       id={`metric-${tile.metric}`}
-      className="scroll-mt-24 rounded-lg border border-slate-700/60 bg-ink-soft/40 p-4"
+      className="scroll-mt-24 border-t border-memo-rule pt-3 pb-1"
     >
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        <h4 className="text-xs font-medium text-slate-400">
           {tile.label}
         </h4>
         <FlagDot flag={tile.flag} />
@@ -150,11 +150,11 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
         </p>
       ) : (
         <>
-          <p className="mt-1 font-mono text-xl text-slate-100">{formatTileValue(tile)}</p>
+          <p className="mt-1 tabular-nums text-xl text-slate-100">{formatTileValue(tile)}</p>
           {tile.peer?.line ? (
-            <p className="mt-0.5 font-mono text-[11px] text-slate-400">{tile.peer.line}</p>
+            <p className="mt-0.5 tabular-nums text-[11px] text-slate-400">{tile.peer.line}</p>
           ) : null}
-          <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+          <p className="mt-0.5 tabular-nums text-[11px] text-slate-500">
             {[
               tile.fiscal_label,
               tile.source_note,
