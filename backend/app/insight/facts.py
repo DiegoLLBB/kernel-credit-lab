@@ -117,6 +117,24 @@ def _metric_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
     return out
 
 
+STALE_SCHEDULE_DAYS = 548  # ~18 months; matches the web page's rule
+
+
+def schedule_is_stale(schedule_as_of: Any, as_of: date) -> bool:
+    """True when the maturity schedule predates ``as_of`` by more than ~18 months."""
+    if not schedule_as_of:
+        return False
+    try:
+        sched = (
+            schedule_as_of
+            if isinstance(schedule_as_of, date)
+            else date.fromisoformat(str(schedule_as_of)[:10])
+        )
+    except ValueError:
+        return False
+    return (as_of - sched).days > STALE_SCHEDULE_DAYS
+
+
 def _wall_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
     from app.tools.maturity import maturity_wall
 
@@ -157,6 +175,18 @@ def _wall_facts(session: Any, issuer_id: str, as_of: date) -> dict[str, Any]:
     schedule_as_of = wall.get("schedule_as_of")
     if hasattr(schedule_as_of, "isoformat"):
         schedule_as_of = schedule_as_of.isoformat()
+    # A schedule far older than the snapshot (e.g. last tagged in a 2012 10-K) can't describe
+    # today's maturities; the page hides it, so the written summary must not cite it either.
+    if schedule_is_stale(schedule_as_of, as_of):
+        return {
+            "as_of": as_of.isoformat(),
+            "as_of_display": format_date_display(as_of),
+            "schedule_as_of": schedule_as_of,
+            "previous_as_of": year_start.isoformat(),
+            "buckets": [],
+            "changes": [],
+            "note": "maturity schedule too old to describe current maturities; not used",
+        }
     return {
         "as_of": as_of.isoformat(),
         "as_of_display": format_date_display(as_of),

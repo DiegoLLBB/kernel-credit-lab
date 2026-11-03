@@ -410,3 +410,17 @@ def test_brief_facts_name_live_forms_in_words(monkeypatch):
     assert "424B" not in str(facts)
     db.close()
     engine.dispose()
+
+
+def test_stale_maturity_schedule_rule():
+    from datetime import date as date_cls
+
+    from app.insight.facts import schedule_is_stale
+
+    today = date_cls(2026, 11, 3)
+    assert schedule_is_stale("2012-12-31", today)  # GM's last tagged schedule
+    assert schedule_is_stale("2022-12-31", today)  # JPMorgan's
+    assert not schedule_is_stale("2025-05-31", today)  # Oracle's FY2025 10-K
+    assert not schedule_is_stale("2025-12-31", today)
+    assert not schedule_is_stale(None, today)
+    assert not schedule_is_stale("not a date", today)
