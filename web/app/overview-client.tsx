@@ -325,8 +325,8 @@ export function OverviewClient() {
             )}
             {metricFeed.length > 0 ? (
               <details className="mt-6">
-                <summary className="cursor-pointer text-sm font-medium text-memo-ink">
-                  Credit-metric moves from new filings ({metricFeed.length})
+                <summary className="cursor-pointer text-sm font-medium text-memo-muted">
+                  Metric changes ({metricFeed.length})
                 </summary>
                 <p className="mt-2 max-w-[70ch] text-sm text-memo-muted">
                   Computed in code from XBRL data when a filing moves a ratio across a band or lifts
