@@ -49,6 +49,9 @@ class CuratedUndrawn:
     filing_url: str
     quote: str
     form: str = "10-K"
+    # 10-K accession + filed date so FY rows still cite the filing.
+    accession: str | None = None
+    filed: date | None = None
 
 
 @dataclass(frozen=True)
@@ -122,16 +125,18 @@ def _parse_curated_undrawn(raw: Any, *, issuer_key: str) -> CuratedUndrawn | Non
         return None
     if not isinstance(raw, dict):
         raise ValueError(f"xbrl config {issuer_key}: undrawn_facilities_curated must be a mapping")
-    required = ("value", "period_end", "filing_url", "quote")
+    required = ("value", "period_end", "filing_url", "quote", "accession", "filed")
     missing = [k for k in required if not raw.get(k)]
     if missing:
         raise ValueError(f"xbrl config {issuer_key}: undrawn_facilities_curated missing {missing}")
     try:
         value = Decimal(str(raw["value"]))
         period_end = date.fromisoformat(str(raw["period_end"]))
+        filed = date.fromisoformat(str(raw["filed"]))
     except Exception as exc:  # noqa: BLE001 — surface as config error
         raise ValueError(
-            f"xbrl config {issuer_key}: undrawn_facilities_curated value/period_end invalid"
+            f"xbrl config {issuer_key}: undrawn_facilities_curated "
+            "value/period_end/filed invalid"
         ) from exc
     return CuratedUndrawn(
         value=value,
@@ -139,6 +144,8 @@ def _parse_curated_undrawn(raw: Any, *, issuer_key: str) -> CuratedUndrawn | Non
         filing_url=str(raw["filing_url"]),
         quote=str(raw["quote"]).strip(),
         form=str(raw.get("form") or "10-K"),
+        accession=str(raw["accession"]),
+        filed=filed,
     )
 
 

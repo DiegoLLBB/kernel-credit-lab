@@ -51,6 +51,8 @@ issuers:
       period_end: "2025-12-31"
       form: "10-K"
       filing_url: "https://www.sec.gov/Archives/edgar/data/1326160/000132616026000014/duk-20251231.htm"
+      accession: "0001326160-26-000014"
+      filed: "2026-02-26"
       quote: "The table below includes borrowing sublimits and available capacity under these credit facilities. Available capacity $7,768"
     undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL (LOC capacity tags end 2014); curated 10-K available capacity used for FY2025 only."
 
@@ -100,6 +102,8 @@ issuers:
       period_end: "2026-05-31"
       form: "10-K"
       filing_url: "https://www.sec.gov/Archives/edgar/data/1341439/000119312526277521/orcl-20260531.htm"
+      accession: "0001193125-26-277521"
+      filed: "2026-06-22"
       quote: "In March 2026, we terminated our existing $6.0 billion, five-year revolving credit agreement. On the same date, we entered into a new $10.0 billion, five-year revolving credit agreement (the Revolving Credit Agreement). As of May 31, 2026, we did not have any outstanding borrowings under the Revolving Credit Agreement."
     undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL; curated 10-K figure used for FY2026 only."
 
@@ -156,6 +160,8 @@ issuers:
       period_end: "2025-12-31"
       form: "10-K"
       filing_url: "https://www.sec.gov/Archives/edgar/data/12927/000162828026004357/ba-20251231.htm"
+      accession: "0001628280-26-004357"
+      filed: "2026-01-30"
       quote: "At December 31, 2025, we had $10.9 billion of cash, $18.5 billion of short-term investments, and $10.0 billion of unused borrowing capacity on revolving credit line agreements."
     undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL; curated 10-K unused capacity used for FY2025 only."
 
@@ -186,6 +192,8 @@ issuers:
       period_end: "2025-12-27"
       form: "10-K"
       filing_url: "https://www.sec.gov/Archives/edgar/data/50863/000005086326000011/intc-20251227.htm"
+      accession: "0000050863-26-000011"
+      filed: "2026-01-23"
       quote: "We expect to replace or amend the 364-day $5.0 billion credit facility agreement prior to its maturity at the end of January 2026. We have other potential sources of liquidity, including a $7.0 billion revolving credit facility, which remains available until February 2029… As of December 27, 2025, we had no commercial paper obligations outstanding and no outstanding borrowings on the revolving credit facilities."
     undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL (CommercialPaper only); curated 10-K undrawn revolvers ($5.0bn + $7.0bn) used for FY2025 only."
 
@@ -217,5 +225,7 @@ issuers:
       period_end: "2025-12-31"
       form: "10-K"
       filing_url: "https://www.sec.gov/Archives/edgar/data/1018724/000101872426000004/amzn-20251231.htm"
+      accession: "0001018724-26-000004"
+      filed: "2026-02-06"
       quote: "We have a $15.0 billion unsecured revolving credit facility… There were no borrowings outstanding under the Credit Agreement as of December 31, 2024 and 2025. In October 2025, we entered into a $5.0 billion unsecured 364-day revolving credit facility… There were no borrowings outstanding under the Short-Term Credit Agreement or the prior 364-day revolving credit agreement as of December 31, 2024 and 2025."
     undrawn_facilities_reason: "Undrawn credit facilities are not tagged in recent XBRL (LOC capacity tags end 2016); curated 10-K undrawn revolvers ($15.0bn + $5.0bn) used for FY2025 only."
