@@ -372,28 +372,47 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
     if row.status in {"empty", "error"} and not (row.sentences or []):
         return None
     links = row.links if isinstance(row.links, list) else []
+    check = row.check if isinstance(row.check, dict) else {}
+    writer_by_sentence = {
+        str(item.get("sentence")): str(item.get("source"))
+        for item in (check.get("sentence_sources") or [])
+        if isinstance(item, dict) and item.get("sentence") and item.get("source")
+    }
     sentences: list[BriefSentenceOut] = []
     if links:
         for item in links:
             if isinstance(item, dict) and item.get("sentence"):
+                text = str(item["sentence"])
                 sentences.append(
                     BriefSentenceOut(
-                        sentence=str(item["sentence"]),
+                        sentence=text,
                         refs=list(item.get("refs") or []),
+                        writer=writer_by_sentence.get(text),
                     )
                 )
     else:
         for s in row.sentences or []:
-            sentences.append(BriefSentenceOut(sentence=str(s), refs=[]))
-    check = row.check if isinstance(row.check, dict) else {}
+            text = str(s)
+            sentences.append(
+                BriefSentenceOut(
+                    sentence=text,
+                    refs=[],
+                    writer=writer_by_sentence.get(text),
+                )
+            )
     verifier = check.get("verifier_models") or []
     check_model = verifier[0] if verifier else "Muse Spark Open"
     refused_rows: list[BriefRefusedOut] = []
     for item in row.dropped or []:
         if not isinstance(item, dict):
             continue
-        # Attribution-only notes (superseded drafts) are not "refused" claims.
-        if item.get("reason") == "superseded by template pack":
+        # Attribution-only notes are not "refused" claims.
+        reason_raw = str(item.get("reason") or "")
+        if reason_raw in {
+            "superseded by template pack",
+            "template unused (Wonder passed ≥3)",
+            "template duplicate of Wonder sentence",
+        }:
             continue
         sentence = item.get("sentence")
         reason = item.get("reason") or item.get("problem")
@@ -437,14 +456,16 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
     if wonder_n or template_n:
         bits: list[str] = []
         if wonder_n and template_n:
+            tmpl = "a template" if template_n == 1 else "templates"
             bits.append(
                 f"{wonder_n} sentence{'s' if wonder_n != 1 else ''} by Muse Wonder, "
-                f"{template_n} from templates"
+                f"{template_n} from {tmpl}"
             )
         elif wonder_n:
             bits.append(f"{wonder_n} sentence{'s' if wonder_n != 1 else ''} by Muse Wonder")
         else:
-            bits.append(f"{template_n} sentence{'s' if template_n != 1 else ''} from templates")
+            tmpl = "a template" if template_n == 1 else "templates"
+            bits.append(f"{template_n} sentence{'s' if template_n != 1 else ''} from {tmpl}")
         bits.append("all checked by Muse Spark Open")
         if refused:
             bits.append(f"{refused} sentence{'s' if refused != 1 else ''} refused")

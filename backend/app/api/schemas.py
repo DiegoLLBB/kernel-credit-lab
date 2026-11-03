@@ -581,6 +581,7 @@ class EvalComparisonOut(BaseModel):
 class BriefSentenceOut(BaseModel):
     sentence: str
     refs: list[dict[str, str]] = Field(default_factory=list)
+    writer: str | None = None  # "wonder" | "template"
 
 
 class BriefRefusedOut(BaseModel):

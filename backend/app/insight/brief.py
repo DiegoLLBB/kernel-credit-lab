@@ -49,7 +49,7 @@ from app.models import Alert, CreditMetric, Event, Issuer
 from app.models.credit import DailyBrief
 from app.models.trace import ModelCall
 
-PROMPT_VERSION = "brief_v7"
+PROMPT_VERSION = "brief_v8"
 BRIEF_COST_CAP_USD = Decimal("0.50")
 BRIEF_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_brief.md").read_text()
 
@@ -721,6 +721,24 @@ async def generate_daily_brief(
     ):
         return existing
 
+    # Before overwriting, surface prior Wonder drafts (template-first era).
+    if force and existing is not None:
+        prior_dropped = existing.dropped if isinstance(existing.dropped, list) else []
+        prior_check = existing.check if isinstance(existing.check, dict) else {}
+        prior_sources = prior_check.get("sentence_sources") or []
+        print(f"insight: prior brief @ {as_of} status={existing.status}")
+        for item in prior_dropped:
+            if not isinstance(item, dict) or not item.get("sentence"):
+                continue
+            print(
+                "insight: prior draft "
+                f"source={item.get('source') or '?'} "
+                f"reason={item.get('reason')}: {item.get('sentence')}"
+            )
+        for item in prior_sources:
+            if isinstance(item, dict) and item.get("sentence"):
+                print(f"insight: prior kept source={item.get('source')}: {item.get('sentence')}")
+
     settings = get_settings()
     wonder = settings.deep_research_model or "muse-wonder-1.0"
     local = client
@@ -772,8 +790,10 @@ async def generate_daily_brief(
         "status": "checked",
         "check_prompt": CHECK_PROMPT_VERSION,
         "cost_cap_usd": float(BRIEF_COST_CAP_USD),
+        "policy": "wonder_first",
     }
-    wonder_raw: list[str] = []
+    wonder_drafts: list[dict[str, Any]] = []
+    wonder_gate_ok: list[str] = []
     if text is None:
         dropped.append({"sentence": None, "reason": "generation failed", "problem": error})
         summary["status"] = "error"
@@ -781,100 +801,56 @@ async def generate_daily_brief(
         raw = [s.strip() for s in text.brief if s and s.strip()]
         if len(raw) < 4 or len(raw) > 5:
             summary["sentence_count_note"] = f"model wrote {len(raw)} sentences (want 4-5)"
-        # Deterministic gate only here; every final sentence is claims-checked below.
         for sentence in raw:
             gate = check_text(sentence, facts)
+            draft = {
+                "sentence": sentence,
+                "source": "wonder",
+                "numbers_ok": bool(gate.get("numbers_ok")),
+                "advice_ok": bool(gate.get("advice_ok")),
+                "number_violations": gate.get("number_violations") or [],
+                "advice_hits": gate.get("advice_hits") or [],
+            }
+            wonder_drafts.append(draft)
+            print(f"insight: wonder draft: {sentence}")
             if not gate.get("numbers_ok") or not gate.get("advice_ok"):
+                draft["reason"] = "deterministic gate"
                 dropped.append(
                     {
                         "sentence": sentence,
                         "reason": "deterministic gate",
                         "number_violations": gate.get("number_violations"),
                         "advice_hits": gate.get("advice_hits"),
+                        "source": "wonder",
                     }
                 )
+                print(
+                    "insight: wonder draft failed deterministic gate "
+                    f"numbers={gate.get('number_violations')} "
+                    f"advice={gate.get('advice_hits')}"
+                )
             else:
-                wonder_raw.append(sentence)
-
-    templates = _template_brief_sentences(facts)
-    template_ok: list[str] = []
-    for sentence in templates:
-        gate = check_text(sentence, facts)
-        if gate.get("numbers_ok") and gate.get("advice_ok"):
-            template_ok.append(sentence)
-        else:
-            dropped.append(
-                {
-                    "sentence": sentence,
-                    "reason": "template failed deterministic gate",
-                    "number_violations": gate.get("number_violations"),
-                    "advice_hits": gate.get("advice_hits"),
-                }
-            )
+                wonder_gate_ok.append(sentence)
 
     def _money_tokens(sentence: str) -> set[str]:
         return {t for t in sentence.replace(",", "").split() if t.startswith("$")}
 
-    # Build candidate list with origin tags (template | wonder).
-    candidates: list[tuple[str, str]] = []
-    if len(template_ok) >= 4:
-        summary["lead"] = "material_wall_move"
-        for sentence in template_ok[:5]:
-            candidates.append((sentence, "template"))
-        for sentence in wonder_raw:
-            if sentence and sentence not in {c[0] for c in candidates}:
-                dropped.append(
-                    {
-                        "sentence": sentence,
-                        "reason": "superseded by template pack",
-                    }
-                )
-    else:
-        if template_ok:
-            candidates.append((template_ok[0], "template"))
-            summary["lead"] = "material_wall_move"
-        for sentence in template_ok[1:]:
-            s = sentence.strip()
-            if not s or s in {c[0] for c in candidates}:
-                continue
-            tokens = _money_tokens(s)
-            if tokens and any(
-                tokens.issubset(_money_tokens(m)) or _money_tokens(m).issubset(tokens)
-                for m, _src in candidates
-            ):
-                continue
-            candidates.append((s, "template"))
-            if len(candidates) >= 5:
-                break
-        for sentence in wonder_raw:
-            s = sentence.strip()
-            if not s or s in {c[0] for c in candidates}:
-                continue
-            tokens = _money_tokens(s)
-            if tokens and any(
-                tokens.issubset(_money_tokens(m)) or _money_tokens(m).issubset(tokens)
-                for m, _src in candidates
-            ):
-                continue
-            low = s.lower()
-            if "largest debt" in low or "largest material" in low:
-                continue
-            candidates.append((s, "wonder"))
-            if len(candidates) >= 5:
-                break
-
-    # Every kept sentence goes through the independent claims check (Spark Open).
+    models_used: list[str] = []
     kept: list[str] = []
     sources: list[dict[str, str]] = []
-    if candidates:
-        verdicts = await verify_sentences([c[0] for c in candidates], facts, client=client)
-        models_used: list[str] = []
-        for verdict, (sentence, source) in zip(verdicts, candidates, strict=True):
+
+    # Wonder first: every gate-ok draft → Spark Open claims check.
+    if wonder_gate_ok:
+        verdicts = await verify_sentences(wonder_gate_ok, facts, client=client)
+        for verdict, sentence in zip(verdicts, wonder_gate_ok, strict=True):
             if verdict.get("model"):
                 models_used.append(str(verdict["model"]))
             if verdict.get("status") == "supported":
                 kept.append(sentence)
-                sources.append({"sentence": sentence, "source": source})
+                sources.append({"sentence": sentence, "source": "wonder"})
+                for draft in wonder_drafts:
+                    if draft.get("sentence") == sentence:
+                        draft["verifier"] = "supported"
             else:
                 dropped.append(
                     {
@@ -882,10 +858,88 @@ async def generate_daily_brief(
                         "reason": f"independent verifier: {verdict.get('status')}",
                         "phrase": verdict.get("phrase"),
                         "problem": verdict.get("problem"),
-                        "source": source,
+                        "source": "wonder",
                     }
                 )
-        summary["verifier_models"] = sorted(set(models_used))
+                for draft in wonder_drafts:
+                    if draft.get("sentence") == sentence:
+                        draft["verifier"] = verdict.get("status")
+                        draft["reason"] = f"independent verifier: {verdict.get('status')}"
+                print(f"insight: wonder draft failed verifier {verdict.get('status')}: {sentence}")
+
+    wonder_kept_n = len(kept)
+    summary["wonder_drafts"] = wonder_drafts
+    summary["wonder_passed_before_fill"] = wonder_kept_n
+
+    # Templates only fill gaps when fewer than 3 Wonder sentences survived.
+    if wonder_kept_n < 3:
+        templates = _template_brief_sentences(facts)
+        template_candidates: list[str] = []
+        for sentence in templates:
+            gate = check_text(sentence, facts)
+            if not gate.get("numbers_ok") or not gate.get("advice_ok"):
+                dropped.append(
+                    {
+                        "sentence": sentence,
+                        "reason": "template failed deterministic gate",
+                        "number_violations": gate.get("number_violations"),
+                        "advice_hits": gate.get("advice_hits"),
+                        "source": "template",
+                    }
+                )
+                continue
+            if sentence in kept:
+                continue
+            tokens = _money_tokens(sentence)
+            if tokens and any(
+                tokens.issubset(_money_tokens(m)) or _money_tokens(m).issubset(tokens) for m in kept
+            ):
+                dropped.append(
+                    {
+                        "sentence": sentence,
+                        "reason": "template duplicate of Wonder sentence",
+                        "source": "template",
+                    }
+                )
+                continue
+            template_candidates.append(sentence)
+            if len(kept) + len(template_candidates) >= 5:
+                break
+        if template_candidates:
+            summary["lead"] = "material_wall_move"
+            t_verdicts = await verify_sentences(template_candidates, facts, client=client)
+            for verdict, sentence in zip(t_verdicts, template_candidates, strict=True):
+                if verdict.get("model"):
+                    models_used.append(str(verdict["model"]))
+                if verdict.get("status") == "supported":
+                    kept.append(sentence)
+                    sources.append({"sentence": sentence, "source": "template"})
+                    if len(kept) >= 5:
+                        break
+                else:
+                    dropped.append(
+                        {
+                            "sentence": sentence,
+                            "reason": f"independent verifier: {verdict.get('status')}",
+                            "phrase": verdict.get("phrase"),
+                            "problem": verdict.get("problem"),
+                            "source": "template",
+                        }
+                    )
+    else:
+        # Wonder covered the brief; record unused templates as unused, not refused.
+        for sentence in _template_brief_sentences(facts):
+            dropped.append(
+                {
+                    "sentence": sentence,
+                    "reason": "template unused (Wonder passed ≥3)",
+                    "source": "template",
+                }
+            )
+
+    kept = kept[:5]
+    sources = [s for s in sources if s.get("sentence") in set(kept)][:5]
+    summary["verifier_models"] = sorted(set(models_used))
     wonder_count = sum(1 for s in sources if s.get("source") == "wonder")
     template_count = sum(1 for s in sources if s.get("source") == "template")
     summary["sentence_sources"] = sources

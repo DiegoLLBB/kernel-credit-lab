@@ -560,6 +560,7 @@ export type EvalComparison = {
 export type BriefSentence = {
   sentence: string;
   refs: { href: string; kind?: string; match?: string }[];
+  writer?: string | null;
 };
 
 export type BriefRefused = {
