@@ -99,9 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.tickers:
         import re
 
-        tickers.extend(
-            t.strip() for t in re.split(r"[,;]+", args.tickers) if t.strip()
-        )
+        tickers.extend(t.strip() for t in re.split(r"[,;]+", args.tickers) if t.strip())
     # De-dupe preserving order.
     seen: set[str] = set()
     ordered: list[str] = []
