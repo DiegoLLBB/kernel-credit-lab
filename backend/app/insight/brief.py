@@ -508,13 +508,25 @@ async def generate_daily_brief(
             else:
                 dropped.extend(lead_dropped)
         if lead_kept:
-            rest = [
-                s
-                for s in kept
-                if s.strip() != lead_kept[0].strip()
-                and "largest debt" not in s.lower()
-                and "largest material" not in s.lower()
-            ]
+            lead_s = lead_kept[0].strip()
+            # Drop near-duplicates of the lead (same FY bucket + same display figures).
+            lead_tokens = {
+                t for t in lead_s.replace(",", "").split() if t.startswith("$") or t.startswith("FY")
+            }
+
+            def _dupes_lead(sentence: str) -> bool:
+                s = sentence.strip()
+                if s == lead_s:
+                    return True
+                low = s.lower()
+                if "largest debt" in low or "largest material" in low:
+                    return True
+                tokens = {
+                    t for t in s.replace(",", "").split() if t.startswith("$") or t.startswith("FY")
+                }
+                return bool(lead_tokens) and lead_tokens.issubset(tokens)
+
+            rest = [s for s in kept if not _dupes_lead(s)]
             kept = lead_kept + rest
             summary["lead"] = "material_wall_move"
             if lead_summary.get("verifier_models"):
