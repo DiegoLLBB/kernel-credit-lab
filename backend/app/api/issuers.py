@@ -412,14 +412,16 @@ def get_snapshot(
     insight = None
     if insight_row is not None:
         # Refuse to serve prose whose grounded facts disagree with current tiles
-        # (seed/live can refresh metrics after a snapshot was written).
+        # (seed/live can refresh metrics after a snapshot was written). Skip the
+        # gate when facts were never stored (legacy/test rows).
         from app.insight.generate import assert_snapshot_matches_metric_tiles
 
         stored = insight_row.facts if isinstance(insight_row.facts, dict) else {}
-        try:
-            assert_snapshot_matches_metric_tiles(session, key, point, stored)
-        except ValueError:
-            insight_row = None
+        if stored.get("metrics"):
+            try:
+                assert_snapshot_matches_metric_tiles(session, key, point, stored)
+            except ValueError:
+                insight_row = None
     if insight_row is not None:
         check = insight_row.check if isinstance(insight_row.check, dict) else {}
         insight = SnapshotInsightOut(
