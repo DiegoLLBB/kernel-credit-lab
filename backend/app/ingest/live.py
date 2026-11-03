@@ -475,11 +475,14 @@ def live_document_rows(session: Session) -> list[dict[str, Any]]:
     from app.models.trace import AgentRun
 
     rows: list[dict[str, Any]] = []
+    # Cap: overview Live section only needs a recent slice; unbounded N+1
+    # (run/alert/issuer/filing per event) dominated overview latency.
     events = list(
         session.scalars(
             select(Event)
             .where(Event.source == "live")
             .order_by(Event.event_date.desc(), Event.detected_at.desc())
+            .limit(40)
         ).all()
     )
     for event in events:

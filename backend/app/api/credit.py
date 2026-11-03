@@ -228,7 +228,11 @@ def metric_tiles(
     """
     rows = session.scalars(
         select(CreditMetric)
-        .where(CreditMetric.issuer_id == issuer.id, CreditMetric.filed <= as_of)
+        .where(
+            CreditMetric.issuer_id == issuer.id,
+            CreditMetric.filed <= as_of,
+            CreditMetric.metric.in_(only),
+        )
         .order_by(CreditMetric.period_end.asc())
     ).all()
     by_metric: dict[str, list[CreditMetric]] = {}
@@ -438,15 +442,49 @@ def _chart_crosscheck_summary(session: Session) -> ChartCrosscheckSummaryOut | N
         return None
 
 
-def _comparison_out(session: Session) -> EvalComparisonOut | None:
-    try:
-        data = build_comparison(session)
-    except Exception:
-        return None
-    if not data.get("rows"):
-        return None
+def _comparison_out(
+    session: Session,
+    *,
+    agent: EvalSummaryOut | None = None,
+    baseline: EvalSummaryOut | None = None,
+) -> EvalComparisonOut | None:
+    """Build the Kernel vs baseline table without re-running eval queries."""
+    if agent is None and baseline is None:
+        try:
+            data = build_comparison(session)
+        except Exception:
+            return None
+        if not data.get("rows"):
+            return None
+        rows = [EvalComparisonRowOut(**r) for r in data["rows"]]
+    else:
+
+        def _row(summary: EvalSummaryOut | None, *, keeps: str, kind: str) -> EvalComparisonRowOut:
+            if summary is None:
+                return EvalComparisonRowOut(
+                    label="Kernel agent" if kind == "agent" else "one-shot model",
+                    kind=kind,
+                    keeps_records=keeps,
+                )
+            return EvalComparisonRowOut(
+                label=summary.label or ("Kernel agent" if kind == "agent" else "one-shot model"),
+                kind=summary.kind or kind,
+                caught=summary.caught,
+                expected_material=summary.expected_material,
+                accurate_caught=summary.accurate_caught,
+                accurate_total=summary.accurate_total,
+                false_alert_count=summary.false_alert_count,
+                unsupported_claims=summary.unsupported_claims,
+                keeps_records=summary.keeps_records or keeps,
+                cost_usd=summary.cost_usd,
+            )
+
+        rows = [
+            _row(agent, keeps="yes", kind="agent"),
+            _row(baseline, keeps="—", kind="baseline"),
+        ]
     return EvalComparisonOut(
-        rows=[EvalComparisonRowOut(**r) for r in data["rows"]],
+        rows=rows,
         # Walkthrough: table + footnote + chart line only — no prose that repeats the table.
         note=None,
         # Chart cross-check loads SEC companyfacts for every CIK and dominated
@@ -582,7 +620,19 @@ def _brief_out(session: Session) -> DailyBriefOut | None:
     )
 
 
-def _feed_item(session: Session, alert: Alert, *, live: bool) -> FeedItemOut | None:
+def _feed_item(
+    session: Session,
+    alert: Alert,
+    *,
+    live: bool,
+    heavy: bool = True,
+) -> FeedItemOut | None:
+    """Build one feed row.
+
+    ``heavy=False`` skips replay-verdict and wall before/after (each agent alert
+    otherwise reloads ReplayEvaluation + expectations). Overview uses the light
+    path; alert list/detail keep full badges.
+    """
     issuer = session.get(Issuer, alert.issuer_id)
     if issuer is None:
         return None
@@ -623,8 +673,11 @@ def _feed_item(session: Session, alert: Alert, *, live: bool) -> FeedItemOut | N
             )
     else:
         sentence, pending, _ = impact_for_alert(session, alert)
-        verdict, verdict_reason = replay_verdict_for_alert(session, alert)
-        ba = _feed_before_after(session, alert)
+        if heavy:
+            verdict, verdict_reason = replay_verdict_for_alert(session, alert)
+            ba = _feed_before_after(session, alert)
+        else:
+            verdict, verdict_reason, ba = None, None, None
     return FeedItemOut(
         alert_id=alert.id,
         issuer=_issuer_ref(issuer),
@@ -737,7 +790,7 @@ def credit_overview(
     for alert in recent_alerts:
         event = session.get(Event, alert.event_id) if alert.event_id else None
         live = event is not None and event.source == "live"
-        item = _feed_item(session, alert, live=live)
+        item = _feed_item(session, alert, live=live, heavy=False)
         if item is not None:
             feed_items.append(item)
     feed_items.sort(
@@ -792,14 +845,16 @@ def credit_overview(
         for iss in roots
         if iss.key
     ]
+    evaluation = _eval_summary_out(session, kind="agent")
+    baseline = _eval_summary_out(session, kind="baseline")
     return CreditOverviewOut(
         header=header,
         brief=_brief_out(session),
         feed=feed,
         watchlist=watchlist,
-        evaluation=_eval_summary_out(session, kind="agent"),
-        baseline=_eval_summary_out(session, kind="baseline"),
-        comparison=_comparison_out(session),
+        evaluation=evaluation,
+        baseline=baseline,
+        comparison=_comparison_out(session, agent=evaluation, baseline=baseline),
         live=live_section,
         thresholds=threshold_legend(),
     )
