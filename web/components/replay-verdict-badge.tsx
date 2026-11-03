@@ -7,16 +7,16 @@ export function ReplayVerdictBadge({
 }) {
   if (!verdict) return null;
   const styles: Record<string, string> = {
-    correct: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
-    "caught, numbers wrong": "border-amber-500/40 bg-amber-500/10 text-amber-200",
-    "false alert": "border-rose-500/40 bg-rose-500/10 text-rose-200",
-    missed: "border-slate-500/40 bg-slate-500/10 text-slate-300",
-    "not yet scored": "border-sky-500/40 bg-sky-500/10 text-sky-200",
+    correct: "border-memo-reduced/50 bg-[#E7F0EB] text-memo-reduced",
+    "caught, numbers wrong": "border-memo-watch/50 bg-[#F4EEDF] text-memo-watch",
+    "false alert": "border-memo-added/50 bg-[#F6EAE5] text-memo-added",
+    missed: "border-memo-rule text-memo-muted",
+    "not yet scored": "border-memo-info/40 text-memo-info",
   };
-  const cls = styles[verdict] ?? "border-slate-500/40 bg-slate-500/10 text-slate-300";
+  const cls = styles[verdict] ?? "border-memo-rule text-memo-muted";
   return (
     <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 tabular-nums text-[11px] ${cls}`}
+      className={`inline-flex items-center rounded border px-2 py-0.5 text-xs ${cls}`}
       title={reason ?? undefined}
     >
       {verdict}

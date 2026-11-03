@@ -176,7 +176,11 @@ export function AlertDetailClient() {
               <p className="mt-3 max-w-[70ch] text-sm text-memo-muted">
                 Why it matters:{" "}
                 {alert.materiality_reasons
-                  .map((r) => r.replace(/\$([\d,]{10,})/g, (_, n: string) => formatUsdDisplay(n)))
+                  .map((r) =>
+                    r
+                      .replace(/\$([\d,]{10,})/g, (_, n: string) => formatUsdDisplay(n))
+                      .replace(/\bFY(20\d\d)\b/g, "$1"),
+                  )
                   .join("; ")}
                 .
               </p>
@@ -308,7 +312,7 @@ export function AlertDetailClient() {
                         before = "—";
                         after =
                           diff.amount_outstanding != null
-                            ? `${diff.name ?? c.instrument_key ?? "new"} · ${formatUsdMillions(String(diff.amount_outstanding))} ${String(diff.currency ?? "")}`
+                            ? `${diff.name ?? c.instrument_key ?? "new"}, ${formatUsdMillions(String(diff.amount_outstanding))} ${String(diff.currency ?? "")}`
                             : JSON.stringify(diff);
                       }
                       return (
@@ -369,7 +373,7 @@ export function AlertDetailClient() {
             </h3>
             <p className="mt-2 text-sm text-memo-muted">
               Status: <AlertStatusChip status={displayStatus} />
-              {browserOnly ? " · saved in this browser only; the shared demo stays read-only." : null}
+              {browserOnly ? ". Saved in this browser only; the shared demo stays read-only." : null}
             </p>
             <label className="mt-4 block max-w-xl text-sm text-memo-muted">
               Note (optional)

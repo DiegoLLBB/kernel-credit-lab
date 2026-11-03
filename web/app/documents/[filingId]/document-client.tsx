@@ -76,27 +76,32 @@ export function DocumentClient() {
   return (
     <div>
       <header className="mb-6">
-        <h2 className="text-2xl font-semibold text-white">
-          {doc?.title ?? "Document"}
+        <p className="text-sm text-memo-muted">
+          <button type="button" onClick={() => window.history.back()} className="underline-offset-2 hover:underline">
+            Back
+          </button>
+          <span>, source document</span>
+        </p>
+        <h2 className="mt-2 break-words text-2xl font-semibold leading-tight text-memo-ink sm:text-[32px] sm:leading-[40px]">
+          {(doc?.title ?? "Document").replace(/\.html?$/i, "")}
         </h2>
         {doc ? (
-          <p className="mt-1 tabular-nums text-xs text-slate-500">
-            {[doc.form_type, formatDate(doc.filed_at), `page ${doc.page + 1} of ${doc.pages}`]
-              .filter(Boolean)
-              .join(" · ")}
+          <p className="mt-2 text-sm text-memo-muted">
+            {[doc.form_type, doc.filed_at ? `filed ${formatDate(doc.filed_at)}` : null].filter(Boolean).join(", ")}
             {doc.url ? (
               <>
-                {" · "}
-                <a
-                  href={doc.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                >
-                  Source
+                {". "}
+                <a href={doc.url} target="_blank" rel="noreferrer" className="text-memo-info underline underline-offset-2">
+                  Original on SEC EDGAR
                 </a>
               </>
             ) : null}
+          </p>
+        ) : null}
+        {factId && doc?.highlight ? (
+          <p className="mt-4 max-w-[70ch] border-l-[3px] border-memo-highlight pl-3 text-base text-memo-ink">
+            The highlighted passage is the exact quote the agent recorded. Kernel only accepts a fact when
+            its quote appears word for word in the filing.
           </p>
         ) : null}
       </header>
@@ -106,31 +111,35 @@ export function DocumentClient() {
 
       {doc ? (
         <>
-          <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
             <button
               type="button"
               disabled={page <= 0 || pageLoading}
               onClick={() => setPage((p) => Math.max(0, p - 1))}
-              className="rounded border border-slate-700 px-3 py-1.5 text-xs enabled:hover:bg-ink-soft disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="rounded-md border border-memo-ink px-3 py-1.5 text-memo-ink enabled:hover:bg-[#EEF0EC] disabled:border-memo-rule disabled:text-memo-muted"
             >
               Previous page
             </button>
-            <span className="tabular-nums text-xs text-slate-400">
-              Page {doc.page + 1} / {doc.pages}
-              {pageLoading ? " · updating…" : ""}
+            <span className="text-memo-muted" aria-live="polite">
+              Page {doc.page + 1} of {doc.pages}
+              {pageLoading ? ", loading" : ""}
             </span>
             <button
               type="button"
               disabled={page + 1 >= doc.pages || pageLoading}
               onClick={() => setPage((p) => p + 1)}
-              className="rounded border border-slate-700 px-3 py-1.5 text-xs enabled:hover:bg-ink-soft disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="rounded-md border border-memo-ink px-3 py-1.5 text-memo-ink enabled:hover:bg-[#EEF0EC] disabled:border-memo-rule disabled:text-memo-muted"
             >
               Next page
             </button>
-            {factId ? (
-              <span className="tabular-nums text-[11px] text-slate-500">
-                Highlighting cited passage
-              </span>
+            {doc.highlight ? (
+              <button
+                type="button"
+                onClick={() => highlightRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                className="text-memo-info underline underline-offset-2"
+              >
+                Go to the highlighted quote
+              </button>
             ) : null}
           </div>
           <pre

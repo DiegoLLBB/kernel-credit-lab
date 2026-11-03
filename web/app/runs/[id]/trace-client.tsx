@@ -7,7 +7,7 @@ import { ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
 import { JsonCollapse } from "@/components/json-collapse";
 import { PassFailChip } from "@/components/status-chip";
 import { getJson, type RunTraceOut, type TraceTurnOut } from "@/lib/api";
-import { formatCost, formatDurationMs, formatNumber } from "@/lib/format";
+import { formatCost, formatDurationMs, formatNumber, formatUsdDisplay } from "@/lib/format";
 
 const READ_TOOLS = new Set(["read_document", "search_document"]);
 
@@ -70,9 +70,13 @@ function buildSummary(trace: RunTraceOut): TraceSummary {
       const name = String(change.name || change.action || "change");
       const amount = change.amount != null ? String(change.amount) : "";
       const maturity = change.maturity != null ? String(change.maturity) : "";
-      const detail = [change.action, amount && `amount ${amount}`, maturity && `maturity ${maturity}`]
+      const detail = [
+        typeof change.action === "string" ? change.action.replace(/_/g, " ") : null,
+        amount && `amount ${money(amount)}`,
+        maturity && `matures ${maturity}`,
+      ]
         .filter(Boolean)
-        .join(" · ");
+        .join(", ");
       changes.push({ name, detail, sequence: t.sequence });
     }
     if (tool === "compute_metrics" && result.ok) {
@@ -80,7 +84,7 @@ function buildSummary(trace: RunTraceOut): TraceSummary {
       const issuer = (metrics.issuer || {}) as Record<string, unknown>;
       const buckets = (issuer.changed_buckets || {}) as Record<string, { before?: string; after?: string }>;
       const parts = Object.entries(buckets).map(([label, ba]) => {
-        return `${label}: ${ba.before ?? "—"} → ${ba.after ?? "—"}`;
+        return `${label.replace(/^FY/, "")}: ${money(ba.before)} → ${money(ba.after)}`;
       });
       metricsLine = parts.length ? parts.join("; ") : "Metrics recomputed.";
     }
@@ -150,43 +154,39 @@ const TOOL_WORDS: Record<string, string> = {
   submit_alert: "Submitted the alert",
 };
 
+function money(v: unknown): string {
+  const n = Number(v);
+  return v != null && v !== "" && Number.isFinite(n) && Math.abs(n) >= 1_000_000 ? formatUsdDisplay(n) : String(v ?? "–");
+}
+
 function TurnBody({ t }: { t: TraceTurnOut }) {
   const refused = Boolean(t.refusal_reason);
+  const meta = [t.status, t.cost_label ?? (t.cost_usd != null || t.model ? formatCost(t.cost_usd, { model: t.model }) : null)]
+    .filter(Boolean)
+    .join(", ");
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-base font-medium text-memo-ink">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h4 className={`text-base font-medium ${refused ? "text-memo-added" : "text-memo-ink"}`}>
           {t.tool ? (TOOL_WORDS[t.tool] ?? t.tool.replace(/_/g, " ")) : "Thinking, no tool call"}
-        </h3>
+        </h4>
         {t.tool ? <span className="font-mono text-xs text-memo-muted">{t.tool}</span> : null}
-        {t.status ? (
-          <span className="tabular-nums text-[11px] text-slate-500">{t.status}</span>
-        ) : null}
-        {t.cost_label || t.cost_usd != null || t.model ? (
-          <span className="tabular-nums text-[11px] text-slate-500">
-            {t.cost_label ?? formatCost(t.cost_usd, { model: t.model })}
-          </span>
-        ) : null}
+        {meta ? <span className="text-xs text-memo-muted">{meta}</span> : null}
       </div>
-      {t.commentary ? <p className="text-sm text-slate-400">{t.commentary}</p> : null}
+      {t.commentary ? <p className="max-w-[75ch] text-sm text-memo-muted">{t.commentary}</p> : null}
       {refused ? (
-        <p
-          className="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200"
-          role="alert"
-        >
-          Refusal: {t.refusal_reason}
+        <p className="max-w-[75ch] border-l-[3px] border-memo-added bg-[#F6EAE5] px-3 py-2 text-sm text-memo-ink" role="note">
+          <span className="font-semibold text-memo-added">Refused: </span>
+          {t.refusal_reason}
         </p>
       ) : null}
       {t.checks.length > 0 ? (
         <ul className="flex flex-wrap gap-2">
           {t.checks.map((c, i) => (
-            <li key={`${c.check_name}-${i}`}>
-              <PassFailChip
-                passed={c.passed}
-                label={`${c.check_name}: ${c.passed ? "pass" : "fail"}`}
-              />
+            <li key={`${c.check_name}-${i}`} className="text-sm">
+              <PassFailChip passed={c.passed} label={`${c.check_name.replace(/_/g, " ")}: ${c.passed ? "passed" : "failed"}`} />
               {!c.passed && c.problems != null ? (
-                <span className="ml-2 tabular-nums text-[11px] text-rose-300">
+                <span className="ml-2 text-xs text-memo-added">
                   {typeof c.problems === "string" ? c.problems : JSON.stringify(c.problems)}
                 </span>
               ) : null}
@@ -195,11 +195,28 @@ function TurnBody({ t }: { t: TraceTurnOut }) {
         </ul>
       ) : null}
       <div className="grid gap-2 sm:grid-cols-2">
-        {t.arguments != null ? <JsonCollapse label="Arguments" value={t.arguments} /> : null}
-        {t.result != null ? <JsonCollapse label="Result" value={t.result} /> : null}
+        {t.arguments != null ? <JsonCollapse label="What the agent sent" value={t.arguments} /> : null}
+        {t.result != null ? <JsonCollapse label="What came back" value={t.result} /> : null}
       </div>
     </div>
   );
+}
+
+function leadSentence(s: TraceSummary): string {
+  const parts = [
+    `It made ${s.readCount} ${s.readCount === 1 ? "read or search" : "reads and searches"} of the filing`,
+    `recorded ${s.facts.length} exact ${s.facts.length === 1 ? "quote" : "quotes"}`,
+  ];
+  if (s.refusals.length > 0)
+    parts.push(`had ${s.refusals.length} ${s.refusals.length === 1 ? "step" : "steps"} refused by Kernel's checks`);
+  if (s.changes.length > 0)
+    parts.push(`proposed ${s.changes.length} ${s.changes.length === 1 ? "change" : "changes"} to the records`);
+  let out = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}.` : `${parts[0]}.`;
+  if (s.claims) {
+    const ok = /^(pass|supported|ok)$/i.test(s.claims.verdict);
+    out += ok ? " A second model then checked its claims and passed them." : ` A second model then checked its claims: ${s.claims.verdict}.`;
+  }
+  return out;
 }
 
 export function TraceClient() {
@@ -228,242 +245,241 @@ export function TraceClient() {
   const turns = useMemo(() => {
     if (!trace) return [];
     if (!onlyInteresting) return trace.turns;
-    return trace.turns.filter(
-      (t) => Boolean(t.refusal_reason) || (t.checks?.length ?? 0) > 0,
-    );
+    return trace.turns.filter((t) => Boolean(t.refusal_reason) || (t.checks?.length ?? 0) > 0);
   }, [trace, onlyInteresting]);
 
   const summary = useMemo(() => (trace ? buildSummary(trace) : null), [trace]);
   const steps = useMemo(() => groupTurns(turns), [turns]);
 
   return (
-    <PageShell title="Run trace">
+    <PageShell title="How the agent got here">
       {error ? <ErrorLine message={error} /> : null}
-      {!error && !trace ? <LoadingLine label="Loading trace…" /> : null}
+      {!error && !trace ? <LoadingLine label="Loading the agent's record…" /> : null}
 
       {trace && summary ? (
-        <div className="space-y-8">
-          <header>
-            <p className="tabular-nums text-xs text-slate-500">Run {trace.id}</p>
-            <h2 className="mt-1 text-3xl font-semibold text-memo-ink sm:text-[40px] sm:leading-[46px]">How the agent got here</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">
-              Summary of what the agent read and proposed, then the step list. Use it to audit an
-              alert — refusals and checks are the analyst signals.
-            </p>
-            <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <div>
-                <dt className="text-xs text-slate-500">Status</dt>
-                <dd className="tabular-nums text-sm text-slate-200">{trace.status}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-slate-500">Duration</dt>
-                <dd className="tabular-nums text-sm text-slate-200">{summary.duration}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-slate-500">Turns</dt>
-                <dd className="tabular-nums text-sm text-slate-200">{trace.turn_count}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-slate-500">Tokens</dt>
-                <dd className="tabular-nums text-sm text-slate-200">
-                  {formatNumber(trace.total_tokens)}
+        <div className="space-y-12">
+          <header className="grid gap-x-12 gap-y-6 md:grid-cols-[minmax(0,1fr)_17rem] md:items-start">
+            <div>
+              <p className="text-sm text-memo-muted">The agent&apos;s record</p>
+              <h2 className="mt-2 text-3xl font-semibold leading-tight text-memo-ink sm:text-[42px] sm:leading-[48px]">
+                How the agent got here
+              </h2>
+              <p className="mt-4 max-w-[62ch] text-lg leading-8 text-memo-ink">{leadSentence(summary)}</p>
+              <p className="mt-3 max-w-[70ch] text-sm text-memo-muted">
+                Every tool call, check and refusal is stored. Kernel&apos;s tools refuse a step that
+                breaks a rule, such as a quote that isn&apos;t word for word in the filing, and the
+                agent has to correct it before it can go on.
+              </p>
+            </div>
+            <dl className="border-t border-memo-ink text-sm">
+              {(
+                [
+                  ["Result", trace.status.replace(/_/g, " ")],
+                  ["Steps", String(trace.turn_count)],
+                  ["Time taken", summary.duration],
+                  ["Tokens", formatNumber(trace.total_tokens)],
+                  ["Cost", trace.total_cost_label ?? formatCost(trace.total_cost_usd, { hasUnpriced: true })],
+                  ["Prompt version", trace.prompt_version ?? "–"],
+                ] as [string, string][]
+              ).map(([k, v]) => (
+                <div key={k} className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                  <dt className="text-memo-muted">{k}</dt>
+                  <dd className="text-right font-medium text-memo-ink">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </header>
+
+          {summary.refusals.length > 0 ? (
+            <section aria-labelledby="refusals-heading" className="border-t-[3px] border-memo-added pt-6">
+              <h3 id="refusals-heading" className="text-lg font-semibold text-memo-ink">
+                Steps Kernel refused
+              </h3>
+              <p className="mt-1 max-w-[70ch] text-sm text-memo-muted">
+                Each was blocked by a rule in the agent&apos;s tools; nothing from a refused step reached the
+                records.
+              </p>
+              <ol className="mt-3 border-t border-memo-rule">
+                {summary.refusals.map((r) => (
+                  <li key={`ref-${r.sequence}`} className="grid grid-cols-1 gap-x-6 border-b border-memo-rule py-3 sm:grid-cols-[7.5rem_minmax(0,1fr)]">
+                    <span className="text-sm text-memo-muted">
+                      Step {r.sequence}
+                      {r.tool ? <span className="block font-mono text-xs">{r.tool}</span> : null}
+                    </span>
+                    <span className="text-base text-memo-ink">{r.reason}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ) : null}
+
+          <section aria-labelledby="facts-heading" className="border-t border-memo-rule pt-8">
+            <h3 id="facts-heading" className="text-lg font-semibold text-memo-ink">
+              Quotes it recorded
+            </h3>
+            {summary.facts.length === 0 ? (
+              <p className="mt-2 text-sm text-memo-muted">None.</p>
+            ) : (
+              <ol className="mt-3 space-y-6">
+                {summary.facts.map((f, i) => {
+                  const href =
+                    f.filingId && f.factId
+                      ? `/documents/${f.filingId}?fact=${f.factId}${f.page != null ? `&page=${f.page}` : ""}`
+                      : null;
+                  const q = f.quote.length > 240 ? `${f.quote.slice(0, 237)}…` : f.quote;
+                  return (
+                    <li key={`fact-${i}`} className="max-w-[75ch]">
+                      <p className="text-sm font-medium text-memo-ink">{f.claim || "Fact"}</p>
+                      {f.quote ? (
+                        <blockquote className="mt-1 leading-8">
+                          <span className="quote-mark text-base">{q}</span>
+                        </blockquote>
+                      ) : null}
+                      {href ? (
+                        <Link href={href} className="mt-1 inline-block text-sm text-memo-info underline underline-offset-2">
+                          Open in the document
+                        </Link>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </section>
+
+          <section aria-labelledby="outcome-heading" className="border-t border-memo-rule pt-8">
+            <h3 id="outcome-heading" className="text-lg font-semibold text-memo-ink">
+              What it changed and how it was checked
+            </h3>
+            <dl className="mt-3 grid gap-x-8 gap-y-5 sm:grid-cols-3">
+              <div className="border-t border-memo-rule pt-3">
+                <dt className="text-sm text-memo-muted">Changes proposed to the records</dt>
+                <dd className="mt-1 text-sm text-memo-ink">
+                  {summary.changes.length === 0 ? (
+                    "None kept."
+                  ) : (
+                    <ul className="space-y-1">
+                      {summary.changes.map((c) => (
+                        <li key={`ch-${c.sequence}`}>
+                          {c.name.replace(/_/g, " ")}
+                          {c.detail ? <span className="block text-xs text-memo-muted">{c.detail}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </dd>
               </div>
-              <div>
-                <dt className="text-xs text-slate-500">Cost</dt>
-                <dd className="tabular-nums text-sm text-slate-200">
-                  {trace.total_cost_label ??
-                    formatCost(trace.total_cost_usd, { hasUnpriced: true })}
+              <div className="border-t border-memo-rule pt-3">
+                <dt className="text-sm text-memo-muted">Debt by year, recomputed in code</dt>
+                <dd className="mt-1 text-sm text-memo-ink">{summary.metricsLine ?? "Not recomputed in this run."}</dd>
+              </div>
+              <div className="border-t border-memo-rule pt-3">
+                <dt className="text-sm text-memo-muted">Independent check</dt>
+                <dd className="mt-1 text-sm text-memo-ink">
+                  {summary.claims ? (
+                    <>
+                      <PassFailChip
+                        passed={/^(pass|supported|ok)$/i.test(summary.claims.verdict)}
+                        label={summary.claims.verdict}
+                      />
+                      {summary.claims.model ? (
+                        <span className="mt-1 block text-xs text-memo-muted">
+                          {summary.claims.model.replace(/^meta-models\//, "")}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    "No alert was submitted, so nothing to check."
+                  )}
                 </dd>
               </div>
             </dl>
-            <p className="mt-2 tabular-nums text-xs text-slate-500">
-              Prompt version: {trace.prompt_version ?? "—"}
-            </p>
-          </header>
-
-          <section
-            aria-labelledby="trace-summary-heading"
-            className="border-t border-memo-rule pt-8"
-          >
-            <h3
-              id="trace-summary-heading"
-              className="text-lg font-semibold text-memo-ink"
-            >
-              Summary
-            </h3>
-            <ul className="mt-3 space-y-3 text-sm text-slate-200">
-              <li>
-                <span className="text-slate-400">Documents read: </span>
-                {summary.readCount} read{summary.readCount === 1 ? "" : "s"}/search
-                {summary.readCount === 1 ? "" : "es"}
-              </li>
-              <li>
-                <span className="text-slate-400">Facts recorded: </span>
-                {summary.facts.length === 0 ? (
-                  "none"
-                ) : (
-                  <ul className="mt-1 space-y-2">
-                    {summary.facts.map((f, i) => {
-                      const href =
-                        f.filingId && f.factId
-                          ? `/documents/${f.filingId}?fact=${f.factId}${
-                              f.page != null ? `&page=${f.page}` : ""
-                            }`
-                          : null;
-                      return (
-                        <li key={`fact-${i}`} className="border-l border-slate-700 pl-3">
-                          <p>{f.claim || "Fact"}</p>
-                          {f.quote ? (
-                            <p className="mt-1 leading-7">
-                              {href ? (
-                                <Link
-                                  href={href}
-                                  className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                                >
-                                  <span className="quote-mark text-base">{f.quote.length > 180 ? `${f.quote.slice(0, 177)}…` : f.quote}</span>
-                                </Link>
-                              ) : (
-                                <><span className="quote-mark text-base">{f.quote.length > 180 ? `${f.quote.slice(0, 177)}…` : f.quote}</span></>
-                              )}
-                            </p>
-                          ) : null}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </li>
-              <li>
-                <span className="text-slate-400">Refusals: </span>
-                {summary.refusals.length === 0 ? (
-                  "none"
-                ) : (
-                  <ul className="mt-1 list-disc space-y-1 pl-5 text-rose-200/90">
-                    {summary.refusals.map((r) => (
-                      <li key={`ref-${r.sequence}`}>
-                        <span className="tabular-nums text-xs text-slate-500">
-                          #{r.sequence} {r.tool}:{" "}
-                        </span>
-                        {r.reason}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-              <li>
-                <span className="text-slate-400">Changes proposed: </span>
-                {summary.changes.length === 0 ? (
-                  "none kept"
-                ) : (
-                  <ul className="mt-1 list-disc space-y-1 pl-5">
-                    {summary.changes.map((c) => (
-                      <li key={`ch-${c.sequence}`}>
-                        {c.name}
-                        {c.detail ? (
-                          <span className="tabular-nums text-xs text-slate-500"> — {c.detail}</span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-              <li>
-                <span className="text-slate-400">Metrics: </span>
-                {summary.metricsLine ?? "—"}
-              </li>
-              <li>
-                <span className="text-slate-400">Claims check: </span>
-                {summary.claims ? (
-                  <>
-                    <span className="tabular-nums">{summary.claims.verdict}</span>
-                    {summary.claims.model ? (
-                      <span className="tabular-nums text-xs text-slate-500">
-                        {" "}
-                        · {summary.claims.model}
-                      </span>
-                    ) : null}
-                  </>
-                ) : (
-                  "—"
-                )}
-              </li>
-              <li>
-                <span className="text-slate-400">Duration: </span>
-                {summary.duration}
-              </li>
-            </ul>
           </section>
 
-          <label className="inline-flex items-center gap-2 text-sm text-slate-300">
-            <input
-              type="checkbox"
-              className="rounded border-slate-600 bg-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              checked={onlyInteresting}
-              onChange={(e) => setOnlyInteresting(e.target.checked)}
-            />
-            Only refusals and checks
-          </label>
-
-          {steps.length === 0 ? (
-            <p className="text-sm text-slate-400">
-              {onlyInteresting ? "No refusals or checks in this run." : "No turns recorded."}
-            </p>
-          ) : (
-            <ol className="relative space-y-0 border-l border-slate-700/80 pl-6">
-              {steps.map((item) => {
-                if (item.kind === "group") {
-                  const first = item.turns[0];
-                  const last = item.turns[item.turns.length - 1];
+          <section aria-labelledby="steps-heading" className="border-t border-memo-rule pt-8">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <h3 id="steps-heading" className="text-lg font-semibold text-memo-ink">
+                Every step, in order
+              </h3>
+              <div role="group" aria-label="Show" className="flex rounded-md border border-memo-rule text-sm">
+                {(
+                  [
+                    [false, "Every step"],
+                    [true, "Only refusals and checks"],
+                  ] as const
+                ).map(([v, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={onlyInteresting === v}
+                    onClick={() => setOnlyInteresting(v)}
+                    className={`px-3 py-1.5 first:rounded-l-md last:rounded-r-md ${
+                      onlyInteresting === v ? "bg-memo-ink text-paper" : "text-memo-ink hover:bg-[#EEF0EC]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {steps.length === 0 ? (
+              <p className="mt-3 text-sm text-memo-muted">
+                {onlyInteresting ? "No refusals or checks in this run." : "No steps recorded."}
+              </p>
+            ) : (
+              <ol className="relative mt-5 border-l border-memo-rule pl-7">
+                {steps.map((item) => {
+                  if (item.kind === "group") {
+                    const first = item.turns[0];
+                    const last = item.turns[item.turns.length - 1];
+                    return (
+                      <li key={`g-${first.sequence}`} className="relative pb-8">
+                        <span
+                          className="absolute -left-[2.45rem] top-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-memo-rule bg-paper text-[11px] text-memo-muted"
+                          aria-hidden
+                        >
+                          {first.sequence}
+                        </span>
+                        <details>
+                          <summary className="cursor-pointer text-base text-memo-ink">
+                            {item.label}
+                            <span className="ml-2 text-xs text-memo-muted">
+                              steps {first.sequence}–{last.sequence}
+                            </span>
+                          </summary>
+                          <ol className="mt-3 space-y-6 border-l border-memo-rule pl-4">
+                            {item.turns.map((t) => (
+                              <li key={t.sequence}>
+                                <p className="mb-1 text-xs text-memo-muted">Step {t.sequence}</p>
+                                <TurnBody t={t} />
+                              </li>
+                            ))}
+                          </ol>
+                        </details>
+                      </li>
+                    );
+                  }
+                  const t = item.turn;
+                  const refused = Boolean(t.refusal_reason);
                   return (
-                    <li key={`g-${first.sequence}`} className="relative pb-8">
+                    <li key={t.sequence} className="relative pb-8">
                       <span
-                        className="absolute -left-[1.625rem] top-1 flex h-5 w-5 items-center justify-center rounded-full border border-slate-600 bg-ink text-[10px] tabular-nums text-slate-400"
+                        className={`absolute -left-[2.45rem] top-0.5 flex h-6 w-6 items-center justify-center rounded-full border text-[11px] ${
+                          refused
+                            ? "border-memo-added bg-memo-added text-paper"
+                            : "border-memo-rule bg-paper text-memo-muted"
+                        }`}
                         aria-hidden
                       >
-                        {first.sequence}
+                        {t.sequence}
                       </span>
-                      <details className="space-y-2">
-                        <summary className="cursor-pointer tabular-nums text-sm text-slate-100">
-                          {item.label}
-                          <span className="ml-2 tabular-nums text-[11px] text-slate-500">
-                            steps {first.sequence}–{last.sequence}
-                          </span>
-                        </summary>
-                        <ol className="mt-3 space-y-6 border-l border-slate-800 pl-4">
-                          {item.turns.map((t) => (
-                            <li key={t.sequence}>
-                              <p className="mb-1 tabular-nums text-[11px] text-slate-500">
-                                #{t.sequence}
-                              </p>
-                              <TurnBody t={t} />
-                            </li>
-                          ))}
-                        </ol>
-                      </details>
+                      <TurnBody t={t} />
                     </li>
                   );
-                }
-                const t = item.turn;
-                const refused = Boolean(t.refusal_reason);
-                return (
-                  <li key={t.sequence} className="relative pb-8">
-                    <span
-                      className={`absolute -left-[1.625rem] top-1 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] tabular-nums ${
-                        refused
-                          ? "border-rose-500 bg-rose-500/20 text-rose-200"
-                          : "border-slate-600 bg-ink text-slate-400"
-                      }`}
-                      aria-hidden
-                    >
-                      {t.sequence}
-                    </span>
-                    <TurnBody t={t} />
-                  </li>
-                );
-              })}
-            </ol>
-          )}
+                })}
+              </ol>
+            )}
+          </section>
         </div>
       ) : null}
     </PageShell>

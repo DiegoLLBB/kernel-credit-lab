@@ -1,15 +1,15 @@
 import type { AlertStatus } from "@/lib/api";
 
 const ALERT_STYLES: Record<AlertStatus, string> = {
-  new: "border-sky-500/40 bg-sky-500/10 text-sky-200",
-  confirmed: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
-  dismissed: "border-slate-500/40 bg-slate-500/10 text-slate-300",
+  new: "border-memo-info/40 text-memo-info",
+  confirmed: "border-memo-reduced/50 bg-[#E7F0EB] text-memo-reduced",
+  dismissed: "border-memo-rule text-memo-muted",
 };
 
 export function AlertStatusChip({ status }: { status: AlertStatus }) {
   return (
     <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 tabular-nums text-[11px] ${ALERT_STYLES[status]}`}
+      className={`inline-flex items-center rounded border px-2 py-0.5 text-xs ${ALERT_STYLES[status]}`}
     >
       {status}
     </span>
@@ -19,13 +19,13 @@ export function AlertStatusChip({ status }: { status: AlertStatus }) {
 export function MaterialBadge({ material }: { material: boolean }) {
   if (!material) {
     return (
-      <span className="inline-flex items-center rounded border border-slate-600/50 bg-slate-800/40 px-2 py-0.5 tabular-nums text-[11px] text-slate-400">
+      <span className="inline-flex items-center rounded border border-memo-rule px-2 py-0.5 text-xs text-memo-muted">
         not material
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 tabular-nums text-[11px] text-amber-200">
+    <span className="inline-flex items-center rounded border border-memo-watch/50 px-2 py-0.5 text-xs text-memo-watch">
       material
     </span>
   );
@@ -41,10 +41,10 @@ export function PassFailChip({
   const text = label ?? (passed ? "pass" : "fail");
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 tabular-nums text-[11px] ${
+      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs ${
         passed
-          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-          : "border-rose-500/40 bg-rose-500/10 text-rose-200"
+          ? "border-memo-reduced/50 bg-[#E7F0EB] text-memo-reduced"
+          : "border-memo-added/50 bg-[#F6EAE5] text-memo-added"
       }`}
       role="status"
     >
@@ -60,12 +60,12 @@ export function ClaimsStatusChip({ status }: { status: string | null }) {
   const bad = s === "fail" || s === "failed" || s === "unsupported" || s === "reject";
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 tabular-nums text-[11px] ${
+      className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs ${
         ok
-          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+          ? "border-memo-reduced/50 bg-[#E7F0EB] text-memo-reduced"
           : bad
-            ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
-            : "border-slate-500/40 bg-slate-500/10 text-slate-300"
+            ? "border-memo-added/50 bg-[#F6EAE5] text-memo-added"
+            : "border-memo-rule text-memo-muted"
       }`}
     >
       <span aria-hidden="true">{ok ? "✓" : bad ? "✕" : "·"}</span>
