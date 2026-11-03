@@ -609,7 +609,11 @@ def _feed_item(session: Session, alert: Alert, *, live: bool) -> FeedItemOut | N
     return FeedItemOut(
         alert_id=alert.id,
         issuer=_issuer_ref(issuer),
-        event_date=event.event_date if event else (alert.created_at.date() if alert.created_at else None),
+        event_date=(
+            event.event_date
+            if event
+            else (alert.created_at.date() if alert.created_at else None)
+        ),
         title=alert.title,
         impact_sentence=sentence or alert.summary,
         impact_pending=pending,

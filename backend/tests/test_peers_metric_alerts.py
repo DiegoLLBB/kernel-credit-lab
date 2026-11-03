@@ -10,9 +10,9 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.db import Base
 from app.metrics.metric_alerts import _dedupe_key, scan_metric_alerts
 from app.metrics.peers import BANK_NA_REASON, is_bank_sector, peer_comparison
-from app.db import Base
 from app.models import Alert, CreditMetric, Issuer
 
 

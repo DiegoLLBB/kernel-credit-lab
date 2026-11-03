@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -143,7 +141,10 @@ def scan_metric_alerts(
                     Alert(
                         issuer_id=issuer.id,
                         kind="metric",
-                        title=f"{issuer.name}: {label} {before_flag} → {after_flag} ({row.fiscal_label})",
+                        title=(
+                            f"{issuer.name}: {label} {before_flag} → {after_flag} "
+                            f"({row.fiscal_label})"
+                        ),
                         summary=summary,
                         before_metrics={
                             "metric": metric,

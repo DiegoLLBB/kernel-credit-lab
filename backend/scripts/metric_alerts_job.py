@@ -8,7 +8,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 from datetime import date
 
 from app.db import SessionLocal
