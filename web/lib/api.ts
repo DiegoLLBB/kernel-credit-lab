@@ -37,6 +37,8 @@ export type AlertListItem = {
   live?: boolean;
   replay_verdict?: string | null;
   replay_verdict_reason?: string | null;
+  kind?: "agent" | "metric";
+  filing_url?: string | null;
 };
 
 export type AlertListOut = {
@@ -440,6 +442,16 @@ export type SparkPoint = {
   value: string | null;
 };
 
+export type MetricPeer = {
+  sector: string | null;
+  n: number;
+  median: string | null;
+  rank: number | null;
+  ordinal: string | null;
+  note: string | null;
+  line: string | null;
+};
+
 export type MetricTile = {
   metric: string;
   label: string;
@@ -461,6 +473,7 @@ export type MetricTile = {
   wall_value: string | null;
   source_note: string | null;
   sparkline: SparkPoint[];
+  peer?: MetricPeer | null;
 };
 
 export type ThresholdBand = {
@@ -496,6 +509,8 @@ export type FeedItem = {
   replay_verdict?: string | null;
   replay_verdict_reason?: string | null;
   created_at?: string | null;
+  kind?: "agent" | "metric";
+  filing_url?: string | null;
 };
 
 export type EvalDetailEvent = {
@@ -506,6 +521,7 @@ export type EvalDetailEvent = {
 export type WatchlistRow = {
   issuer: IssuerRef;
   ticker: string | null;
+  sector?: string | null;
   metrics: MetricTile[];
 };
 

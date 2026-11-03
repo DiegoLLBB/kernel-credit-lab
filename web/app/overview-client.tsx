@@ -301,15 +301,22 @@ export function OverviewClient() {
                         <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-slate-400">
                           <span>{item.issuer.name}</span>
                           <span className="text-slate-500">{formatDate(item.event_date)}</span>
+                          {item.kind === "metric" ? (
+                            <span className="rounded border border-sky-500/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-300">
+                              metric
+                            </span>
+                          ) : null}
                           {item.live ? (
                             <span className="rounded border border-accent/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
                               live
                             </span>
                           ) : null}
-                          <ReplayVerdictBadge
-                            verdict={item.replay_verdict}
-                            reason={item.replay_verdict_reason}
-                          />
+                          {item.kind === "metric" ? null : (
+                            <ReplayVerdictBadge
+                              verdict={item.replay_verdict}
+                              reason={item.replay_verdict_reason}
+                            />
+                          )}
                         </div>
                         <p className="mt-1 text-sm text-slate-200">
                           {item.impact_sentence ?? item.title}
@@ -323,6 +330,11 @@ export function OverviewClient() {
                           <p className="mt-1 font-mono text-xs text-slate-400">
                             {item.before_after?.field ? `${item.before_after.field}: ` : null}
                             {change}
+                          </p>
+                        ) : null}
+                        {item.kind === "metric" && item.filing_url ? (
+                          <p className="mt-1 font-mono text-[11px] text-sky-400/90">
+                            Filing linked
                           </p>
                         ) : null}
                       </Link>
@@ -345,6 +357,9 @@ export function OverviewClient() {
                       <button type="button" onClick={() => toggleSort("name")} className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
                         Company{sortKey === "name" ? (sortAsc ? " ↑" : " ↓") : ""}
                       </button>
+                    </th>
+                    <th className="px-3 py-2 font-mono text-[11px] uppercase tracking-wide text-slate-500">
+                      Sector
                     </th>
                     {WATCH_METRICS.map((m) => (
                       <th key={m} className="px-3 py-2">
@@ -371,6 +386,9 @@ export function OverviewClient() {
                             {row.ticker ?? key}
                           </div>
                         </td>
+                        <td className="px-3 py-2 font-mono text-xs text-slate-400">
+                          {row.sector ?? "—"}
+                        </td>
                         {WATCH_METRICS.map((m) => {
                           const tile: MetricTile | undefined = row.metrics.find(
                             (t) => t.metric === m,
@@ -381,7 +399,11 @@ export function OverviewClient() {
                               <span className="flex items-center gap-1.5 font-mono text-xs text-slate-200">
                                 <FlagDot flag={tile.flag} />
                                 {tile.value === null ? (
-                                  <span title={tile.missing_reason ?? "No data yet"}>Missing</span>
+                                  <span title={tile.missing_reason ?? "No data yet"}>
+                                    {tile.missing_reason === "not meaningful for banks"
+                                      ? "n/a (banks)"
+                                      : "Missing"}
+                                  </span>
                                 ) : (
                                   formatTileValue(tile)
                                 )}

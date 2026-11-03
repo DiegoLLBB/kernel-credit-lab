@@ -308,6 +308,10 @@ class Alert(TimestampMixin, Base):
     materiality_reasons: Mapped[list[Any] | None] = mapped_column(JsonType)
     # Independent claims check result: {status, problems, findings}.
     claims_check: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
+    # agent (research run) | metric (XBRL band / due_12m code path)
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="agent", server_default="agent", index=True
+    )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="new", index=True
     )  # new | confirmed | dismissed

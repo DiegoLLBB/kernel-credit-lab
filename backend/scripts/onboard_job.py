@@ -1,7 +1,8 @@
-"""Cloud job: add a company by ticker (SEC resolve → XBRL → wall → snapshot).
+"""Cloud job: add companies by ticker (SEC resolve → XBRL → wall → snapshot).
 
 Usage (from backend/):
     python -m scripts.onboard_job --ticker MSFT
+    python -m scripts.onboard_job --ticker JPM --ticker JNJ --ticker WMT
     python -m scripts.onboard_job --ticker T --no-insight
 """
 
@@ -15,10 +16,11 @@ from datetime import date
 
 from app.config import get_settings
 from app.db import SessionLocal
+from app.metrics.metric_alerts import scan_metric_alerts
 from app.onboard import OnboardError, onboard_ticker
 
 
-async def _run(ticker: str, *, as_of: date | None, insight: bool) -> int:
+async def _run_one(ticker: str, *, as_of: date | None, insight: bool) -> int:
     settings = get_settings()
     if not (settings.sec_user_agent or "").strip():
         print("onboard: SEC_USER_AGENT is required", file=sys.stderr)
@@ -32,10 +34,13 @@ async def _run(ticker: str, *, as_of: date | None, insight: bool) -> int:
                 as_of=as_of,
                 generate_insight=insight,
             )
+            alert_stats = scan_metric_alerts(
+                session, as_of=as_of or date.today(), issuer_keys=[result.issuer_key]
+            )
             session.commit()
         except OnboardError as exc:
             session.rollback()
-            print(f"onboard: refused: {exc}", file=sys.stderr)
+            print(f"onboard: {ticker}: refused: {exc}", file=sys.stderr)
             return 1
         except Exception:
             session.rollback()
@@ -52,12 +57,29 @@ async def _run(ticker: str, *, as_of: date | None, insight: bool) -> int:
         print("onboard: missing fields:")
         for m in result.missing:
             print(f"  - {m['field']}: {m['reason']}")
+    print(
+        f"onboard: metric_alerts created={alert_stats.get('created', 0)} "
+        f"skipped={alert_stats.get('skipped', 0)}"
+    )
     return 0
 
 
+async def _run(tickers: list[str], *, as_of: date | None, insight: bool) -> int:
+    worst = 0
+    for ticker in tickers:
+        code = await _run_one(ticker, as_of=as_of, insight=insight)
+        worst = max(worst, code)
+    return worst
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Onboard an issuer by ticker")
-    parser.add_argument("--ticker", required=True, help="Equity ticker, e.g. MSFT")
+    parser = argparse.ArgumentParser(description="Onboard issuer(s) by ticker")
+    parser.add_argument(
+        "--ticker",
+        action="append",
+        required=True,
+        help="Equity ticker, e.g. MSFT (repeatable)",
+    )
     parser.add_argument("--as-of", default=None, help="YYYY-MM-DD cutoff (default: today)")
     parser.add_argument(
         "--no-insight",

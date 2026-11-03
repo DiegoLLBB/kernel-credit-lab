@@ -232,6 +232,39 @@ async def onboard_ticker(
     # Ensure wall_for_issuer sees the schedule we just wrote.
     _ = wall_for_issuer(session, issuer.id)
 
+    from app.metrics.peers import BANK_NA_METRICS, BANK_NA_REASON, is_bank_sector
+
+    if is_bank_sector(sector):
+        from app.models import CreditMetric
+
+        for row in session.scalars(
+            select(CreditMetric).where(
+                CreditMetric.issuer_id == issuer.id,
+                CreditMetric.metric.in_(tuple(BANK_NA_METRICS)),
+            )
+        ).all():
+            row.value = None
+            detail = dict(row.detail or {})
+            detail["missing"] = BANK_NA_REASON
+            row.detail = detail
+        # De-dupe missing; ensure every bank-NA metric is listed (never guessed).
+        seen_fields: set[str] = set()
+        deduped: list[dict[str, str]] = []
+        for m in missing:
+            f = m.get("field") or ""
+            if f in seen_fields:
+                continue
+            seen_fields.add(f)
+            if f in BANK_NA_METRICS:
+                deduped.append({"field": f, "reason": BANK_NA_REASON})
+            else:
+                deduped.append(m)
+        for metric in sorted(BANK_NA_METRICS):
+            if metric not in seen_fields:
+                deduped.append({"field": metric, "reason": BANK_NA_REASON})
+                seen_fields.add(metric)
+        missing = deduped
+
     snapshot_status = None
     cost_usd = None
     if generate_insight:

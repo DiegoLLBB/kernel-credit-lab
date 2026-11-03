@@ -38,6 +38,8 @@ class AlertListItem(BaseModel):
     live: bool = False
     replay_verdict: str | None = None
     replay_verdict_reason: str | None = None
+    kind: Literal["agent", "metric"] = "agent"
+    filing_url: str | None = None
 
 
 class AlertListOut(BaseModel):
@@ -423,6 +425,16 @@ class SparkPoint(BaseModel):
     value: Decimal | None = None
 
 
+class MetricPeerOut(BaseModel):
+    sector: str | None = None
+    n: int = 0
+    median: Decimal | None = None
+    rank: int | None = None
+    ordinal: str | None = None
+    note: str | None = None
+    line: str | None = None  # ready-to-show "5.2× · utilities median 5.6× · 2nd of 3"
+
+
 class MetricTileOut(BaseModel):
     metric: str
     label: str
@@ -442,6 +454,7 @@ class MetricTileOut(BaseModel):
     wall_value: Decimal | None = None
     source_note: str | None = None
     sparkline: list[SparkPoint] = Field(default_factory=list)
+    peer: MetricPeerOut | None = None
 
 
 class InsightHowOut(BaseModel):
@@ -529,11 +542,14 @@ class FeedItemOut(BaseModel):
     replay_verdict: str | None = None
     replay_verdict_reason: str | None = None
     created_at: datetime | None = None
+    kind: Literal["agent", "metric"] = "agent"
+    filing_url: str | None = None
 
 
 class WatchlistRowOut(BaseModel):
     issuer: IssuerRef
     ticker: str | None = None
+    sector: str | None = None
     metrics: list[MetricTileOut] = Field(default_factory=list)
 
 

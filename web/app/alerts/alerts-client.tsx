@@ -144,15 +144,22 @@ export function AlertsClient() {
                     </span>
                     <MaterialBadge material={a.material} />
                     <AlertStatusChip status={a.status} />
+                    {a.kind === "metric" ? (
+                      <span className="rounded border border-sky-500/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-sky-300">
+                        metric
+                      </span>
+                    ) : null}
                     {a.live ? (
                       <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-sky-200">
                         live
                       </span>
                     ) : null}
-                    <ReplayVerdictBadge
-                      verdict={a.replay_verdict}
-                      reason={a.replay_verdict_reason}
-                    />
+                    {a.kind === "metric" ? null : (
+                      <ReplayVerdictBadge
+                        verdict={a.replay_verdict}
+                        reason={a.replay_verdict_reason}
+                      />
+                    )}
                   </div>
                   <p className="mt-1 text-sm text-slate-100">{a.title}</p>
                   {a.impact_sentence ? (

@@ -81,8 +81,16 @@ def _list_item(session: Session, alert: Alert) -> AlertListItem:
     if issuer is None:
         raise HTTPException(status_code=500, detail="alert issuer missing")
     event = session.get(Event, alert.event_id) if alert.event_id else None
-    sentence, _, impact_status = impact_for_alert(session, alert)
-    verdict, verdict_reason = replay_verdict_for_alert(session, alert)
+    kind = getattr(alert, "kind", None) or "agent"
+    filing_url = None
+    if kind == "metric":
+        after = alert.after_metrics if isinstance(alert.after_metrics, dict) else {}
+        filing_url = after.get("filing_url")
+        sentence, impact_status = alert.summary, "complete"
+        verdict, verdict_reason = None, None
+    else:
+        sentence, _, impact_status = impact_for_alert(session, alert)
+        verdict, verdict_reason = replay_verdict_for_alert(session, alert)
     return AlertListItem(
         id=alert.id,
         issuer=_issuer_ref(issuer),
@@ -100,6 +108,8 @@ def _list_item(session: Session, alert: Alert) -> AlertListItem:
         live=bool(event is not None and event.source == "live"),
         replay_verdict=verdict,
         replay_verdict_reason=verdict_reason,
+        kind=kind if kind in {"agent", "metric"} else "agent",
+        filing_url=filing_url,
     )
 
 

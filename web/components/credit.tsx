@@ -144,11 +144,16 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
       </div>
       {tile.value === null ? (
         <p className="mt-2 text-sm text-slate-300">
-          Missing{tile.missing_reason ? `: ${tile.missing_reason}` : ""}
+          {tile.missing_reason === "not meaningful for banks"
+            ? "Not meaningful for banks"
+            : `Missing${tile.missing_reason ? `: ${tile.missing_reason}` : ""}`}
         </p>
       ) : (
         <>
           <p className="mt-1 font-mono text-xl text-slate-100">{formatTileValue(tile)}</p>
+          {tile.peer?.line ? (
+            <p className="mt-0.5 font-mono text-[11px] text-slate-400">{tile.peer.line}</p>
+          ) : null}
           <p className="mt-0.5 font-mono text-[11px] text-slate-500">
             {[
               tile.fiscal_label,

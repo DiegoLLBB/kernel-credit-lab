@@ -33,6 +33,7 @@ from app.api.schemas import (
     FeedItemOut,
     LiveDocumentOut,
     LiveSectionOut,
+    MetricPeerOut,
     MetricTileOut,
     OverviewHeaderOut,
     SparkPoint,
@@ -47,8 +48,16 @@ from app.eval.rescore import build_comparison
 from app.eval.summary import build_eval_summary
 from app.ingest.live import live_stats
 from app.insight.brief import latest_brief
+from app.insight.display import format_multiple_display, format_usd_display
 from app.metrics.compute import METRIC_IDS
 from app.metrics.config import load_metric_config
+from app.metrics.peers import (
+    BANK_NA_METRICS,
+    BANK_NA_REASON,
+    is_bank_sector,
+    peer_comparison,
+    sector_label_for_display,
+)
 from app.metrics.periods import prior_same_period
 from app.models import Alert, CreditMetric, Event, Filing, Issuer, LiveConfig
 from app.models.trace import AgentRun
@@ -85,6 +94,9 @@ def load_thresholds() -> dict[str, Any]:
 
 
 _NEAR_ZERO = Decimal("0.05")
+_RATIO_METRICS = frozenset(
+    {"leverage", "net_leverage", "interest_coverage", "liquidity_coverage", "fcf_to_debt"}
+)
 
 
 def _bands_for(metric: str, sector: str | None) -> dict[str, Any] | None:
@@ -154,6 +166,52 @@ def _prior_for_display(then: Decimal | None) -> Decimal | None:
     return then
 
 
+def _format_peer_figure(value: Decimal | None, unit: str) -> str | None:
+    if value is None:
+        return None
+    if unit == "USD":
+        return format_usd_display(float(value))
+    return format_multiple_display(float(value))
+
+
+def _peer_out(
+    session: Session,
+    issuer: Issuer,
+    metric: str,
+    as_of: date,
+    *,
+    value: Decimal | None,
+    unit: str,
+) -> MetricPeerOut | None:
+    raw = peer_comparison(session, issuer, metric, as_of, value=value)
+    if raw is None:
+        return None
+    sector = raw.get("sector")
+    n = int(raw.get("n") or 0)
+    median = raw.get("median")
+    rank = raw.get("rank")
+    ordinal = raw.get("ordinal")
+    note = raw.get("note")
+    value_disp = _format_peer_figure(value, unit)
+    if note and (rank is None or median is None):
+        line = note
+    elif value_disp and median is not None and ordinal and n:
+        med_disp = _format_peer_figure(Decimal(str(median)), unit)
+        sector_bit = sector_label_for_display(sector if isinstance(sector, str) else None)
+        line = f"{value_disp} · {sector_bit} median {med_disp} · {ordinal} of {n}"
+    else:
+        line = note
+    return MetricPeerOut(
+        sector=sector if isinstance(sector, str) else None,
+        n=n,
+        median=Decimal(str(median)) if median is not None else None,
+        rank=rank if isinstance(rank, int) else None,
+        ordinal=ordinal if isinstance(ordinal, str) else None,
+        note=note if isinstance(note, str) else None,
+        line=line,
+    )
+
+
 def metric_tiles(
     session: Session,
     issuer: Issuer,
@@ -171,8 +229,20 @@ def metric_tiles(
     for row in rows:
         by_metric.setdefault(row.metric, []).append(row)
     cfg = load_metric_config().for_issuer(issuer.key or "")
+    bank = is_bank_sector(issuer.sector)
     tiles: list[MetricTileOut] = []
     for metric in only:
+        if bank and metric in BANK_NA_METRICS:
+            tiles.append(
+                MetricTileOut(
+                    metric=metric,
+                    label=METRIC_LABELS[metric],
+                    value=None,
+                    unit="x" if metric in _RATIO_METRICS else "USD",
+                    missing_reason=BANK_NA_REASON,
+                )
+            )
+            continue
         series = by_metric.get(metric, [])
         missing_reason: str | None = None
         if not series and cfg is not None:
@@ -217,6 +287,18 @@ def metric_tiles(
             and latest.value is not None
         ):
             source_note = f"from the {latest.fiscal_label} 10-K"
+        peer = (
+            _peer_out(
+                session,
+                issuer,
+                metric,
+                as_of,
+                value=latest.value,
+                unit=latest.unit,
+            )
+            if latest.value is not None and metric in _RATIO_METRICS
+            else None
+        )
         tiles.append(
             MetricTileOut(
                 metric=metric,
@@ -236,6 +318,7 @@ def metric_tiles(
                 wall_disagrees=detail.get("wall_agrees") is False,
                 wall_value=Decimal(str(detail["wall_due"])) if detail.get("wall_due") else None,
                 source_note=source_note,
+                peer=peer,
                 sparkline=[
                     SparkPoint(period_end=r.period_end, label=r.fiscal_label, value=r.value)
                     for r in series
@@ -243,11 +326,6 @@ def metric_tiles(
             )
         )
     return tiles
-
-
-_RATIO_METRICS = frozenset(
-    {"leverage", "net_leverage", "interest_coverage", "liquidity_coverage", "fcf_to_debt"}
-)
 
 
 def _fields_for_metric(metric: str) -> tuple[str, ...]:
@@ -496,20 +574,52 @@ def _feed_item(session: Session, alert: Alert, *, live: bool) -> FeedItemOut | N
     if issuer is None:
         return None
     event = session.get(Event, alert.event_id) if alert.event_id else None
-    sentence, pending, _ = impact_for_alert(session, alert)
-    verdict, verdict_reason = replay_verdict_for_alert(session, alert)
+    kind = getattr(alert, "kind", None) or "agent"
+    filing_url = None
+    if kind == "metric":
+        after = alert.after_metrics if isinstance(alert.after_metrics, dict) else {}
+        filing_url = after.get("filing_url")
+        sentence, pending = alert.summary, False
+        verdict, verdict_reason = None, None
+        ba = None
+        if after.get("metric") and alert.before_metrics:
+            before = alert.before_metrics if isinstance(alert.before_metrics, dict) else {}
+            from app.insight.display import format_usd_display
+
+            b, a = before.get("value"), after.get("value")
+            ba = BeforeAfterOut(
+                field=str(after.get("period") or after.get("metric")),
+                before=b,
+                after=a,
+                before_display=(
+                    format_usd_display(b)
+                    if after.get("metric") == "due_12m" and b is not None
+                    else (f"{float(b):.2f}×" if b is not None else None)
+                ),
+                after_display=(
+                    format_usd_display(a)
+                    if after.get("metric") == "due_12m" and a is not None
+                    else (f"{float(a):.2f}×" if a is not None else None)
+                ),
+            )
+    else:
+        sentence, pending, _ = impact_for_alert(session, alert)
+        verdict, verdict_reason = replay_verdict_for_alert(session, alert)
+        ba = _feed_before_after(session, alert)
     return FeedItemOut(
         alert_id=alert.id,
         issuer=_issuer_ref(issuer),
-        event_date=event.event_date if event else None,
+        event_date=event.event_date if event else (alert.created_at.date() if alert.created_at else None),
         title=alert.title,
         impact_sentence=sentence or alert.summary,
         impact_pending=pending,
-        before_after=_feed_before_after(session, alert),
+        before_after=ba,
         live=live,
         replay_verdict=verdict,
         replay_verdict_reason=verdict_reason,
         created_at=alert.created_at,
+        kind=kind if kind in {"agent", "metric"} else "agent",
+        filing_url=filing_url,
     )
 
 
@@ -531,7 +641,10 @@ def credit_overview(
         session.scalar(
             select(func.count())
             .select_from(Alert)
-            .where(Alert.event_id.is_(None) | ~Alert.event_id.in_(live_event_ids))
+            .where(
+                Alert.kind == "agent",
+                Alert.event_id.is_(None) | ~Alert.event_id.in_(live_event_ids),
+            )
         )
         or 0
     )
@@ -600,6 +713,7 @@ def credit_overview(
         WatchlistRowOut(
             issuer=_issuer_ref(iss),
             ticker=iss.ticker,
+            sector=iss.sector,
             metrics=metric_tiles(
                 session,
                 iss,
