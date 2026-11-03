@@ -31,17 +31,11 @@ def is_bank_sector(sector: str | None) -> bool:
 
 
 def _ordinal(n: int) -> str:
-    suffix = (
-        "th"
-        if 10 <= n % 100 <= 20
-        else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    )
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
     return f"{n}{suffix}"
 
 
-def _latest_value(
-    session: Session, issuer_id: str, metric: str, as_of: date
-) -> Decimal | None:
+def _latest_value(session: Session, issuer_id: str, metric: str, as_of: date) -> Decimal | None:
     rows = list(
         session.scalars(
             select(CreditMetric)

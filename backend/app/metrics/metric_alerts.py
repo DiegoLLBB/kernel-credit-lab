@@ -52,9 +52,7 @@ def _filing_link(issuer: Issuer, row: CreditMetric) -> str | None:
     return accession_url(issuer.cik, row.accession)
 
 
-def _series(
-    session: Session, issuer_id: str, metric: str, as_of: date
-) -> list[CreditMetric]:
+def _series(session: Session, issuer_id: str, metric: str, as_of: date) -> list[CreditMetric]:
     since = as_of - timedelta(days=_LOOKBACK_DAYS)
     return list(
         session.scalars(
@@ -201,8 +199,7 @@ def scan_metric_alerts(
                     issuer_id=issuer.id,
                     kind="metric",
                     title=(
-                        f"{issuer.name}: debt due in 12 months up {pct:.1f}% "
-                        f"({row.fiscal_label})"
+                        f"{issuer.name}: debt due in 12 months up {pct:.1f}% ({row.fiscal_label})"
                     ),
                     summary=summary,
                     before_metrics={

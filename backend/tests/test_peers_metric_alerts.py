@@ -57,9 +57,7 @@ def test_peer_comparison_under_three(db_session: Session) -> None:
             )
         )
     db_session.flush()
-    raw = peer_comparison(
-        db_session, a, "leverage", date(2026, 11, 1), value=Decimal("5.2")
-    )
+    raw = peer_comparison(db_session, a, "leverage", date(2026, 11, 1), value=Decimal("5.2"))
     assert raw is not None
     assert raw["n"] == 2
     assert raw["median"] is None
@@ -87,9 +85,7 @@ def test_peer_comparison_rank(db_session: Session) -> None:
         )
     db_session.flush()
     mid = peers[1][0]
-    raw = peer_comparison(
-        db_session, mid, "leverage", date(2026, 11, 1), value=Decimal("5.0")
-    )
+    raw = peer_comparison(db_session, mid, "leverage", date(2026, 11, 1), value=Decimal("5.0"))
     assert raw is not None
     assert raw["n"] == 3
     assert raw["rank"] == 2
