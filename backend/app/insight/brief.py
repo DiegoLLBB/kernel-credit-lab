@@ -393,7 +393,10 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
     docs = live.get("documents") or []
     reviewed = int(live.get("reviewed_no_alert") or live.get("logged") or 0)
     paused_docs = [d for d in docs if d.get("outcome") == "paused"]
-    analyst_docs = [d for d in docs if d.get("outcome") == "needs an analyst"]
+    analyst_docs = sorted(
+        [d for d in docs if d.get("outcome") == "needs an analyst"],
+        key=lambda d: 0 if str(d.get("form") or "").upper().startswith("424B") else 1,
+    )
     live_bits: list[str] = []
     if reviewed:
         noun = "document" if reviewed == 1 else "documents"
@@ -416,7 +419,7 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
         label = "10-Q" if form.startswith("10-Q") else (d.get("form") or "filing")
         live_bits.append(f"{short}'s {label} is paused at its turn limit")
     analyst_names: list[str] = []
-    for d in analyst_docs[:2]:
+    for d in analyst_docs[:3]:
         short = issuer_short_name(d.get("issuer_key"), d.get("issuer_name"))
         form = (d.get("form") or "").upper()
         if form.startswith("424B"):
@@ -429,8 +432,12 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
     if analyst_names:
         if len(analyst_names) == 1:
             live_bits.append(f"{analyst_names[0]} needs an analyst")
-        else:
+        elif len(analyst_names) == 2:
             live_bits.append(f"{analyst_names[0]} and {analyst_names[1]} need an analyst")
+        else:
+            live_bits.append(
+                f"{analyst_names[0]}, {analyst_names[1]}, and {analyst_names[2]} need an analyst"
+            )
     live_line = None
     if live_bits:
         if len(live_bits) == 1:
@@ -439,31 +446,31 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
             live_line = live_bits[0] + "; " + "; ".join(live_bits[1:]) + "."
 
     watch: list[str] = []
+    # Prefer FY movers first (Oracle etc.), then one TTM name — never mix in one line.
+    fy_rows: list[dict[str, Any]] = []
+    ttm_rows: list[dict[str, Any]] = []
     for row in facts.get("watchlist") or []:
+        td = (row.get("metrics") or {}).get("total_debt") or {}
+        if not isinstance(td, dict) or not td.get("value_display") or not td.get("period"):
+            continue
+        period = str(td.get("period") or "")
+        (ttm_rows if period.upper().startswith("TTM") else fy_rows).append(row)
+    for row in fy_rows + ttm_rows:
         short = row.get("issuer_short") or issuer_short_name(
             row.get("issuer_key"), row.get("issuer_name")
         )
-        metrics = row.get("metrics") or {}
-        # Prefer FY total_debt change when present (one period only).
-        td = metrics.get("total_debt") or {}
-        if not isinstance(td, dict):
-            continue
+        td = (row.get("metrics") or {}).get("total_debt") or {}
         now_d = td.get("value_display")
         then_d = td.get("previous_value_display")
         period = td.get("period")
         prior_period = td.get("previous_period")
-        if not now_d or not period:
-            continue
-        # Skip TTM lines that would later be mixed with FY elsewhere.
-        if str(period).upper().startswith("TTM"):
-            # Still allow a pure TTM watch line.
-            watch.append(f"{short}'s total debt is {now_d} in {period}.")
-        elif then_d and prior_period:
+        if then_d and prior_period and not str(period).upper().startswith("TTM"):
             watch.append(
-                f"{short}'s total debt is {now_d} in {period}, up from {then_d} in {prior_period}."
+                f"What to watch: {short}'s total debt is {now_d} in {period}, "
+                f"up from {then_d} in {prior_period}."
             )
         else:
-            watch.append(f"{short}'s total debt is {now_d} in {period}.")
+            watch.append(f"What to watch: {short}'s total debt is {now_d} in {period}.")
         if len(watch) >= 2:
             break
 

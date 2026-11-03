@@ -354,7 +354,8 @@ def _template_impact(facts: dict[str, Any]) -> str | None:
         for d in ordered:
             before_d = d.get("before_display") or format_usd_display(d.get("before"))
             after_d = d.get("after_display") or format_usd_display(d.get("after"))
-            if not before_d or not after_d:
+            if not before_d or not after_d or before_d == after_d:
+                # Skip FX noise that rounds to the same display string.
                 continue
             try:
                 rises = float(d.get("after") or 0) >= float(d.get("before") or 0)
@@ -411,35 +412,36 @@ async def generate_impact(
         hit = _cached(session, alert.issuer_id, as_of, "impact", alert_id, digest)
         if hit is not None:
             return hit
-    text, provider, model, error = await _spark_text(
-        IMPACT_SYSTEM, facts, ImpactTextModel, "insight_impact", client
-    )
     dropped: list[dict[str, Any]] = []
     summary: dict[str, Any] = {"check_prompt": CHECK_PROMPT_VERSION}
     kept: list[str] = []
-    if text is None or not isinstance(text, ImpactTextModel):
-        dropped.append({"sentence": None, "reason": "generation failed", "problem": error})
-        summary["status"] = "error"
-    else:
-        kept, dropped, gate_summary = await _gate_sentences([text.impact.strip()], facts, client)
-        summary.update({"status": "checked", **gate_summary})
+    provider: str | None = None
+    model: str | None = None
+    # Prefer the deterministic wall template whenever buckets moved — it lists
+    # every year in order with short names and 3-sig-fig displays.
+    template = _template_impact(facts)
+    if template is not None:
+        t_kept, t_dropped, t_summary = await _gate_sentences([template], facts, client)
+        if t_kept:
+            kept = t_kept
+            dropped = t_dropped
+            summary.update({"status": "checked", "source": "template", **t_summary})
+            provider, model = "template", "wall_deltas"
+        else:
+            dropped.extend(t_dropped)
     if not kept:
-        template = _template_impact(facts)
-        if template is not None:
-            t_kept, t_dropped, t_summary = await _gate_sentences([template], facts, client)
-            if t_kept:
-                kept = t_kept
-                dropped = (
-                    dropped
-                    + [{"sentence": None, "reason": "fell back to template after model refusal"}]
-                    + t_dropped
-                )
-                summary["fallback"] = "template"
-                summary.update(t_summary)
-                provider = provider or "template"
-                model = model or "wall_deltas"
-            else:
-                dropped.extend(t_dropped)
+        text, provider, model, error = await _spark_text(
+            IMPACT_SYSTEM, facts, ImpactTextModel, "insight_impact", client
+        )
+        if text is None or not isinstance(text, ImpactTextModel):
+            dropped.append({"sentence": None, "reason": "generation failed", "problem": error})
+            summary["status"] = "error"
+        else:
+            kept, m_dropped, gate_summary = await _gate_sentences(
+                [text.impact.strip()], facts, client
+            )
+            dropped.extend(m_dropped)
+            summary.update({"status": "checked", **gate_summary})
     status = "complete" if kept else ("error" if summary.get("status") == "error" else "empty")
     return _store(
         session,
