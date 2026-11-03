@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
+import { ErrorLine, PageShell } from "@/components/loading-error";
+import { PageSkeleton } from "@/components/skeleton";
 import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
 import { AlertStatusChip } from "@/components/status-chip";
 import { DebtByYear, sourceLine, yearLabel } from "@/components/debt-by-year";
@@ -140,7 +141,7 @@ export function AlertDetailClient() {
   return (
     <PageShell title="Alert detail">
       {error ? <ErrorLine message={error} /> : null}
-      {!error && !alert ? <LoadingLine label="Loading alert…" /> : null}
+      {!error && !alert ? <PageSkeleton kind="alert" /> : null}
 
       {alert ? (
         <article className="max-w-4xl">

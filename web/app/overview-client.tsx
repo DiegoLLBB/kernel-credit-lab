@@ -6,7 +6,8 @@ import { ChangeArrow, FlagDot, formatTileValue } from "@/components/credit";
 import { ComingDue } from "@/components/coming-due";
 import { FeaturedChange } from "@/components/featured-change";
 import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
-import { EmptyLine, ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
+import { EmptyLine, ErrorLine, PageShell } from "@/components/loading-error";
+import { PageSkeleton } from "@/components/skeleton";
 import {
   API_URL,
   getJson,
@@ -253,7 +254,7 @@ export function OverviewClient() {
       </header>
 
       {error ? <ErrorLine message={`API unreachable: ${error}`} /> : null}
-      {!error && !overview ? <LoadingLine label="Loading dashboard…" /> : null}
+      {!error && !overview ? <PageSkeleton kind="overview" /> : null}
 
       {overview ? (
         <>

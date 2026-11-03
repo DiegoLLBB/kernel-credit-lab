@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
+import { ErrorLine, PageShell } from "@/components/loading-error";
+import { PageSkeleton } from "@/components/skeleton";
 import { MaturityWallChart } from "@/components/maturity-wall-chart";
 import { VerifiedCharts } from "@/components/verified-charts";
 import {
@@ -223,7 +224,7 @@ export function IssuerDetailClient() {
   return (
     <PageShell title="Issuer">
       {error && !issuer ? <ErrorLine message={error} /> : null}
-      {loading && !issuer ? <LoadingLine label="Loading issuer…" /> : null}
+      {loading && !issuer ? <PageSkeleton kind="issuer" /> : null}
 
       {issuer ? (
         <div className="space-y-10">
