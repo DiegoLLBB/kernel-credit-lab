@@ -77,8 +77,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--ticker",
         action="append",
-        required=True,
-        help="Equity ticker, e.g. MSFT (repeatable)",
+        default=None,
+        help="Equity ticker, e.g. MSFT (repeatable; prefer --tickers for Cloud Run)",
+    )
+    parser.add_argument(
+        "--tickers",
+        default=None,
+        help="Comma-separated tickers (Cloud Run-safe), e.g. JPM,JNJ,WMT",
     )
     parser.add_argument("--as-of", default=None, help="YYYY-MM-DD cutoff (default: today)")
     parser.add_argument(
@@ -87,8 +92,22 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip snapshot generation (metrics + wall only)",
     )
     args = parser.parse_args(argv)
+    tickers: list[str] = list(args.ticker or [])
+    if args.tickers:
+        tickers.extend(t.strip() for t in args.tickers.split(",") if t.strip())
+    # De-dupe preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for t in tickers:
+        u = t.upper()
+        if u in seen:
+            continue
+        seen.add(u)
+        ordered.append(u)
+    if not ordered:
+        parser.error("provide --ticker and/or --tickers")
     as_of = date.fromisoformat(args.as_of) if args.as_of else None
-    return asyncio.run(_run(args.ticker, as_of=as_of, insight=not args.no_insight))
+    return asyncio.run(_run(ordered, as_of=as_of, insight=not args.no_insight))
 
 
 if __name__ == "__main__":
