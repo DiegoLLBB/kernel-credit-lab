@@ -139,6 +139,9 @@ export function MetricTileCard({ tile }: { tile: MetricTile }) {
       ) : (
         <>
           <p className="mt-1 text-2xl font-medium text-memo-ink">{formatTileValue(tile)}</p>
+          {tile.peer?.watchlist_line ? (
+            <p className="mt-0.5 text-xs text-memo-muted">{tile.peer.watchlist_line}</p>
+          ) : null}
           {tile.peer?.line && !/fewer than 3/i.test(tile.peer.line) ? (
             <p className="mt-0.5 tabular-nums text-[11px] text-slate-400">{tile.peer.line}</p>
           ) : null}

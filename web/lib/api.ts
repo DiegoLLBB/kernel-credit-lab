@@ -450,6 +450,35 @@ export type MetricPeer = {
   ordinal: string | null;
   note: string | null;
   line: string | null;
+  watchlist_n?: number | null;
+  watchlist_rank?: number | null;
+  watchlist_ordinal?: string | null;
+  watchlist_line?: string | null;
+};
+
+export type UpcomingInstrument = {
+  issuer: IssuerRef;
+  instrument_key: string | null;
+  instrument_name: string;
+  instrument_type: string;
+  amount: string;
+  currency: string;
+  maturity_date: string;
+  status: string;
+};
+
+export type UpcomingMaturities = {
+  as_of: string;
+  months: number;
+  until: string;
+  instruments: UpcomingInstrument[];
+  issuer_due_12m: {
+    issuer: IssuerRef;
+    due_12m: string | null;
+    period_end: string | null;
+    missing_reason: string | null;
+    source_tag: string | null;
+  }[];
 };
 
 export type MetricTile = {

@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ChangeArrow, FlagDot, formatTileValue } from "@/components/credit";
+import { ComingDue } from "@/components/coming-due";
 import { FeaturedChange } from "@/components/featured-change";
 import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
 import { EmptyLine, ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
 import {
+  API_URL,
   getJson,
   type BriefSentence,
   type CreditOverview,
@@ -318,9 +320,19 @@ export function OverviewClient() {
           )}
 
           <section aria-labelledby="feed-heading" className="mb-12">
-            <h2 id="feed-heading" className="text-lg font-semibold text-memo-ink">
-              Changes found by the agent, newest first
-            </h2>
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 id="feed-heading" className="text-lg font-semibold text-memo-ink">
+                Changes found by the agent, newest first
+              </h2>
+              <span className="flex gap-4 text-sm">
+                <a href={`${API_URL}/api/alerts.csv`} className="text-memo-info underline underline-offset-2">
+                  Download as CSV
+                </a>
+                <a href={`${API_URL}/api/alerts.rss`} className="text-memo-info underline underline-offset-2">
+                  RSS feed
+                </a>
+              </span>
+            </div>
             {agentFeed.length === 0 ? (
               <EmptyLine>No material changes found yet.</EmptyLine>
             ) : (
@@ -340,10 +352,17 @@ export function OverviewClient() {
             ) : null}
           </section>
 
+          <ComingDue />
+
           <section aria-labelledby="watchlist-heading" className="mb-10">
-            <h2 id="watchlist-heading" className="mb-3 text-lg font-semibold text-memo-ink">
-              Watchlist
-            </h2>
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+              <h2 id="watchlist-heading" className="text-lg font-semibold text-memo-ink">
+                Watchlist
+              </h2>
+              <a href={`${API_URL}/api/watchlist.csv`} className="text-sm text-memo-info underline underline-offset-2">
+                Download as CSV
+              </a>
+            </div>
             <div className="overflow-x-auto border-t border-memo-ink">
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-ink-soft tabular-nums text-[11px] text-slate-500">

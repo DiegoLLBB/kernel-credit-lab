@@ -5,9 +5,8 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorLine, LoadingLine, PageShell } from "@/components/loading-error";
 import { MaturityWallChart } from "@/components/maturity-wall-chart";
-import { PassFailChip } from "@/components/status-chip";
+import { VerifiedCharts } from "@/components/verified-charts";
 import {
-  chartImageUrl,
   getJson,
   type ChartListOut,
   type InstrumentOut,
@@ -712,168 +711,11 @@ export function IssuerDetailClient() {
             )}
           </section>
 
-          <section aria-labelledby="charts-heading">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-              <h3
-                id="charts-heading"
-                className="text-lg font-semibold text-memo-ink"
-              >
-                Verified charts
-              </h3>
-              <label className="inline-flex items-center gap-2 text-xs text-slate-400">
-                <input
-                  type="checkbox"
-                  className="rounded border-slate-600 bg-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  checked={showUnverified}
-                  onChange={(e) => setShowUnverified(e.target.checked)}
-                />
-                Show unverified
-              </label>
-            </div>
-            <p className="mb-4 text-sm text-slate-500">
-              Located in the slide image, read by an automated chart reader, accepted only if bar
-              heights match the printed values.
-            </p>
-            {!charts ? (
-              <LoadingLine label="Loading charts…" />
-            ) : charts.items.length === 0 ? (
-              <p className="text-sm text-slate-400">
-                {showUnverified ? "No charts for this issuer." : "No verified charts."}
-              </p>
-            ) : (
-              <ul className="grid gap-6 sm:grid-cols-2">
-                {charts.items.map((c) => {
-                  const checks = c.verification_detail?.checks ?? [];
-                  return (
-                    <li
-                      key={c.id}
-                      className="border-t border-memo-ink "
-                    >
-                      {c.has_overlay || c.has_crop ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={chartImageUrl(c.id, true)}
-                          alt={c.title ?? "Chart"}
-                          className="w-full border-b border-slate-800 bg-black/40 object-contain"
-                        />
-                      ) : (
-                        <div className="flex h-32 items-center justify-center text-xs text-slate-500">
-                          No image
-                        </div>
-                      )}
-                      <div className="space-y-2 p-4">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h4 className="text-sm font-medium text-slate-100">
-                            {c.title ?? "Untitled chart"}
-                          </h4>
-                          <PassFailChip
-                            passed={c.verified}
-                            label={c.verified ? "verified" : "unverified"}
-                          />
-                        </div>
-                        <p className="tabular-nums text-[11px] text-slate-500">
-                          {[c.filing_title, c.page != null ? `p.${c.page + 1}` : null, c.unit]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </p>
-                        {!c.verified && c.verification_detail?.reason ? (
-                          <p className="text-xs text-rose-300" role="status">
-                            Refusal: {c.verification_detail.reason}
-                          </p>
-                        ) : null}
-                        {c.categories.length > 0 ? (
-                          <table className="mt-2 w-full text-left tabular-nums text-[11px]">
-                            <thead className="text-slate-500">
-                              <tr>
-                                <th className="py-1 pr-2 font-medium">Category</th>
-                                <th className="py-1 pr-2 font-medium">Value</th>
-                                <th className="py-1 font-medium">Deviation</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {c.categories.map((cat, i) => {
-                                const check = checks.find(
-                                  (ch) => String(ch.category) === String(cat),
-                                ) ?? checks[i];
-                                return (
-                                  <tr key={`${String(cat)}-${i}`} className="text-slate-300">
-                                    <td className="py-0.5 pr-2">{String(cat)}</td>
-                                    <td className="py-0.5 pr-2">
-                                      {c.values[i] != null
-                                        ? `${String(c.values[i])}${c.unit ? ` ${c.unit}` : ""}`
-                                        : "—"}
-                                    </td>
-                                    <td className="py-0.5">
-                                      {check?.deviation != null
-                                        ? `${(check.deviation * 100).toFixed(2)}%`
-                                        : "—"}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        ) : null}
-                        {c.verified && c.filing_crosscheck ? (
-                          <div className="mt-3 border-t border-slate-800 pt-3 text-xs text-slate-300">
-                            <p>
-                              Checked against SEC filings:{" "}
-                              <span className="font-medium text-slate-100">
-                                {c.filing_crosscheck.summary_status === "agree"
-                                  ? "agrees"
-                                  : c.filing_crosscheck.summary_status === "differ"
-                                    ? "differs"
-                                    : c.filing_crosscheck.summary_status === "not_applicable"
-                                      ? "not comparable (metric not configured for this title)"
-                                      : c.filing_crosscheck.values?.some(
-                                            (v) => v.reason === "segment",
-                                          )
-                                        ? "not comparable (segment)"
-                                        : "not comparable"}
-                              </span>
-                              {c.filing_crosscheck.metric_label
-                                ? ` · ${c.filing_crosscheck.metric_label}`
-                                : ""}
-                            </p>
-                            <ul className="mt-2 space-y-1 tabular-nums text-[11px] text-slate-400">
-                              {c.filing_crosscheck.values
-                                .filter((v) => v.status !== "skipped")
-                                .map((v) => (
-                                  <li key={`${c.id}-${v.category}`}>
-                                    {v.category}: chart{" "}
-                                    {v.chart_value != null ? v.chart_value : "—"}
-                                    {v.xbrl_value != null
-                                      ? ` · filing ${v.xbrl_value}${
-                                          v.xbrl_unit ? ` ${v.xbrl_unit}` : ""
-                                        }`
-                                      : ""}{" "}
-                                    · {v.status}
-                                    {v.reason ? ` (${v.reason})` : ""}
-                                    {v.filing_url ? (
-                                      <>
-                                        {" · "}
-                                        <a
-                                          href={v.filing_url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="text-accent hover:underline"
-                                        >
-                                          XBRL filing
-                                        </a>
-                                      </>
-                                    ) : null}
-                                  </li>
-                                ))}
-                            </ul>
-                          </div>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
+          <VerifiedCharts
+            charts={charts}
+            showUnverified={showUnverified}
+            onToggleUnverified={setShowUnverified}
+          />
         </div>
       ) : null}
     </PageShell>
