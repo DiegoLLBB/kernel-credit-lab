@@ -57,3 +57,19 @@ See [CONTEXT.md](CONTEXT.md), Part B, for the full model plan.
 | Nov | Replay rescore / comparison table | Number-accuracy + wall checks; **replay denominator paused** for some groups |
 | Nov | SAM chart crosscheck vs XBRL | TTM/LTM sums; segment charts marked not comparable |
 | Nov | P0 live-site audit | Replay verdict badges; combined feed; `instrument_state_at` after seed clobber (Verizon tender); maturity wall in insight facts; **refinancing in agent tools reverted after agent freeze**; scorer first-candidate binding noted; stale snapshots fixed; Verizon records reconciliation |
+
+## Building Kernel: late hackathon (1–3 Nov)
+
+Muse Wonder credits lasted through **2 Nov** and into early **3 Nov** (commits still tagged
+`(Muse Wonder)` in history). After credits ran out on **3 Nov**, further build work used
+**other tools** (not Meta coding models). Runtime product still uses Muse Spark / Spark Open /
+Wonder / SAM as in the table above. Agent tree stays frozen at `f997487c2fbf` / `event_v10`.
+
+| Date | Tool | Task | Commit(s) | Review |
+|---|---|---|---|---|
+| 2 Nov | Muse Wonder | Onboard-by-ticker (`POST /api/issuers`, `kernel-onboard`), daily brief, baseline job, live smoke, chart crosscheck vs XBRL, P0 live-site audit (walls, verdicts, snapshots) | `de7439d`…`7d0b8be`, `cbe8d13` | Agent freeze respected (no prompt edits). Onboard cost readout wrongly read `CreditInsight.cost_usd` — fixed. Chart crosscheck marked segment bars not-comparable; TTM vs four quarters. Review writes stay off in prod |
+| 2–3 Nov | Muse Wonder | Periods: FY 10-K source notes, same-period cash cover, no mixed TTM/FY snapshot prose; README live Amazon term-loan story | `fb6e069`, `7cc9e26` | Live Verizon still briefly showed stale $161bn / 0.17× prose until insight regen + later gate |
+| 3 Nov | Muse Wonder → other tools | Peer sector ranks, bank-NA metrics, code-side metric alerts; GICS sector map; XBRL flow fallbacks; onboard 8 watchlist tickers; Cloud Run ticker-list arg bugs (comma → semicolon) | `8fc4ec9`, `b3116d8`, `bc34193` | Ruff/format CI failures on first peer/metric-alert PRs. gcloud `--args` comma-split tickers — fixed to semicolons. Metric-alert purge helper rename broke import once |
+| 3 Nov | other tools | UI redesign (credit-memo overview/issuer/alert/document); chart bn scale and phone width | `e4df9a7`…`684d39d` | Briefly overwrote metric feed group label — restored as “Metric changes (n)”. Agent / `web/` freeze rules applied as requested per task |
+| 3 Nov | other tools | Snapshot regression: every path builds facts from tiles + numbers-must-match-tiles gate (`insight_v8`); force-regen 19 snapshots; overview latency ~5s → ~1.3s; restore feed verdicts via `alert_counts.feed_verdicts` | `345239f`, `bf60b88`, `0675543` | First gate broke `test_snapshot_shape` (legacy rows without facts) — skip gate when metrics missing. Light feed had dropped verdicts — restored with precomputed map, not per-alert eval walks |
+| 3 Nov | other tools | Hardening: gitleaks/trufflehog history scan, MIT license, diagnostics/ tidy, logged-event timeline summary, monitoring uptime + $20 budget note | `eb4adb5`, `b2eb38e`, `49c7472`, `0ece7e0`, … | Scan: 331 gitleaks hits, all false positives (newsroom UUIDs / instrument keys); trufflehog verified **0**. `make seed` failed on dummy FRED key — Makefile now skips rates with a warning |

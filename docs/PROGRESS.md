@@ -337,3 +337,20 @@ per M tokens, third-party figures to confirm in the Meta console), so a full 29-
     recorded `StateChange` rows correctly via `instrument_state_at`, so walls no longer
     ignore tenders/redemptions after a seed clobber. Live agent runs after that timestamp
     see the corrected walls; the frozen agent image itself remains `f997487c2fbf`.
+37. **Tue 3 Nov — sectors, peers, metric alerts, onboard, snapshot gate, UI, harden:**
+    - **GICS sectors** via `issuer_sectors.yaml` + refresh job; peer medians/ranks on ratio
+      tiles; banks mark leverage/coverage N/A.
+    - **Metric alerts** (code-side band / due_12m changes, feed group “Metric changes (n)”,
+      window from 2026-01-01); Cloud Run onboard tickers use semicolons (gcloud comma-split).
+    - **Onboarded** eight more roots onto the live watchlist (MSFT, JPM, JNJ, CAT, NEE, PG, T,
+      WMT) via `kernel-onboard` / Issuers UI; agent tree still frozen.
+    - **Snapshot regression:** post-seed / live / onboard could write prose that disagreed with
+      tiles ($161bn / 0.17× vs $166bn / 0.71×). Fix: facts from `metric_tiles`, assert before
+      generate/cache/serve, `insight_v8`, force-regen; overview light path then **feed_verdicts**
+      map so badges stay correct under ~1.5s.
+    - **UI redesign** (credit-memo overview, issuer chart, alert/document pages) — `web/` edits
+      only on that track; later hardening left `web/` and agent frozen.
+    - **Hardening:** secret scan (no real keys), MIT license, `scripts/diagnostics/`, fresh-clone
+      `make seed` tolerates missing FRED key, logged-run summary on snapshot timeline, Cloud
+      Monitoring `/health` uptime + email, confirm min-instances=1 and live schedulers, DEPLOY
+      notes SQL trial ≈27 Jan 2027 and $20 budget already present.
