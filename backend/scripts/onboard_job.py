@@ -83,7 +83,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--tickers",
         default=None,
-        help="Comma-separated tickers (Cloud Run-safe), e.g. JPM,JNJ,WMT",
+        help=(
+            "Ticker list for Cloud Run: prefer semicolons "
+            "(gcloud --args splits on commas), e.g. JPM;JNJ;WMT. Commas also accepted."
+        ),
     )
     parser.add_argument("--as-of", default=None, help="YYYY-MM-DD cutoff (default: today)")
     parser.add_argument(
@@ -94,7 +97,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     tickers: list[str] = list(args.ticker or [])
     if args.tickers:
-        tickers.extend(t.strip() for t in args.tickers.split(",") if t.strip())
+        import re
+
+        tickers.extend(
+            t.strip() for t in re.split(r"[,;]+", args.tickers) if t.strip()
+        )
     # De-dupe preserving order.
     seen: set[str] = set()
     ordered: list[str] = []

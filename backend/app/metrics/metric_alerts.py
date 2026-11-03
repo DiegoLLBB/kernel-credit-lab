@@ -133,7 +133,7 @@ def scan_metric_alerts(
     """
     as_of = as_of or date.today()
     stats = {"created": 0, "skipped": 0, "issuers": 0, "purged": 0}
-    stats["purged"] = _purge_out_of_window(session)
+    stats["purged"] = _purge_stale_metric_alerts(session)
     q = select(Issuer).where(Issuer.parent_id.is_(None))
     if issuer_keys:
         q = q.where(Issuer.key.in_(issuer_keys))
