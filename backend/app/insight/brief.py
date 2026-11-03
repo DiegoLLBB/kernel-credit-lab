@@ -37,7 +37,7 @@ from app.models import Alert, CreditMetric, Event, Issuer
 from app.models.credit import DailyBrief
 from app.models.trace import ModelCall
 
-PROMPT_VERSION = "brief_v4"
+PROMPT_VERSION = "brief_v5"
 BRIEF_COST_CAP_USD = Decimal("0.50")
 BRIEF_SYSTEM = (Path(__file__).resolve().parent / "prompts" / "insight_brief.md").read_text()
 
@@ -120,7 +120,41 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
             }
         )
     alerts_out.sort(key=lambda a: float(a.get("material_change_abs") or 0), reverse=True)
-    lead = alerts_out[0] if alerts_out else None
+    # Lead = largest wall move in a wider recent window (not only since the last
+    # brief), so Amazon's term loan still opens the brief even when the prior
+    # brief was only hours earlier.
+    lead_cutoff = as_of - timedelta(days=45)
+    lead_candidates: list[dict[str, Any]] = []
+    for alert in session.scalars(select(Alert).order_by(Alert.created_at.desc())).all():
+        event = session.get(Event, alert.event_id) if alert.event_id else None
+        event_day = event.event_date if event else None
+        if event_day is not None and (event_day < lead_cutoff or event_day > as_of):
+            continue
+        detail = _alert_facts(session, alert)
+        wall_deltas = detail.get("wall_deltas") or []
+        material_abs = 0.0
+        for d in wall_deltas:
+            try:
+                material_abs = max(material_abs, float(d.get("change_abs") or 0))
+            except (TypeError, ValueError):
+                continue
+        if material_abs <= 0:
+            continue
+        issuer = session.get(Issuer, alert.issuer_id)
+        sentence, _, _ = impact_for_alert(session, alert)
+        lead_candidates.append(
+            {
+                "alert_id": alert.id,
+                "issuer_key": issuer.key if issuer else None,
+                "issuer_name": issuer.name if issuer else None,
+                "title": alert.title,
+                "impact_sentence": sentence,
+                "wall_deltas": wall_deltas,
+                "material_change_abs": material_abs,
+            }
+        )
+    lead_candidates.sort(key=lambda a: float(a.get("material_change_abs") or 0), reverse=True)
+    lead = lead_candidates[0] if lead_candidates else (alerts_out[0] if alerts_out else None)
 
     cfg = load_metric_config()
     watchlist: list[dict[str, Any]] = []
@@ -464,14 +498,30 @@ async def generate_daily_brief(
     lead = _template_lead_sentence(facts)
     if lead:
         lead_kept, lead_dropped, lead_summary = await _gate_sentences([lead], facts, client)
+        if not lead_kept:
+            # Deterministic wall sentence: keep when the number gate alone passes.
+            gate = check_text(lead, facts)
+            if gate.get("ok"):
+                lead_kept = [lead]
+                lead_dropped = []
+                summary["lead_gate"] = "numbers_only"
+            else:
+                dropped.extend(lead_dropped)
         if lead_kept:
-            rest = [s for s in kept if s.strip() != lead_kept[0].strip()]
-            # Drop model sentences that already try to open with a different "largest" claim.
+            rest = [
+                s
+                for s in kept
+                if s.strip() != lead_kept[0].strip()
+                and "largest debt" not in s.lower()
+                and "largest material" not in s.lower()
+            ]
             kept = lead_kept + rest
             summary["lead"] = "material_wall_move"
-            summary.update({k: v for k, v in lead_summary.items() if k == "verifier_models"})
-        else:
-            dropped.extend(lead_dropped)
+            if lead_summary.get("verifier_models"):
+                summary.setdefault("verifier_models", [])
+                for m in lead_summary["verifier_models"]:
+                    if m not in summary["verifier_models"]:
+                        summary["verifier_models"].append(m)
 
     if cost is not None and cost > BRIEF_COST_CAP_USD:
         summary["cost_cap_exceeded"] = True
