@@ -10,6 +10,7 @@ Not deployed as Cloud Run jobs. Run from `backend/` with the API image or local 
 | `probe_tools.py` | Wire probe of Meta `/responses` function tools (weather tool). |
 | `chart_demo.py` | Run SAM + Spark chart reading on a single slide image. |
 | `smoke_models.py` | Ping every configured model; optional `--image` for SAM 3.1. |
+| `dump_charts.py` | Export chart crop/overlay PNGs from stored ChartReading rows. |
 | `smoke_live.py` | Hit every live page/API route after deploy (`--base-url`). |
 
 ```bash
