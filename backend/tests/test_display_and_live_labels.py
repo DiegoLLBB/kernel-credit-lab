@@ -117,3 +117,69 @@ def test_template_impact_term_loan_hook():
     assert sentence is not None
     assert "Amazon's debt due in 2029 rises from $12.9bn to $30.4bn" in sentence
     assert "after it drew a $17.5bn term loan" in sentence
+
+
+def test_template_impact_skips_sub_100m_noise():
+    sentence = _template_impact(
+        {
+            "issuer_short": "Amazon",
+            "title": "Amazon 10-Q: $17.5bn Term Loan drawn Sep 2026 due Sep 2029",
+            "term_loan_display": "$17.5bn",
+            "wall_deltas": [
+                {
+                    "bucket": "FY2029",
+                    "before": 12_921_875_000,
+                    "after": 30_421_875_000,
+                    "before_display": "$12.9bn",
+                    "after_display": "$30.4bn",
+                    "change_abs": 17_500_000_000,
+                },
+                {
+                    "bucket": "after FY2030",
+                    "before": 109_482_800_000,
+                    "after": 109_507_850_000,
+                    "before_display": "$109bn",
+                    "after_display": "$110bn",
+                    "change_abs": 25_050_000,
+                },
+            ],
+        }
+    )
+    assert sentence is not None
+    assert "2029" in sentence
+    assert "after 2030" not in sentence
+    assert "$109bn" not in sentence
+
+
+def test_template_impact_redemption_hook_before_notes():
+    sentence = _template_impact(
+        {
+            "issuer_short": "Verizon",
+            "title": (
+                "Verizon announced full redemption of $1.25bn 4.329% Notes "
+                "due 2028 on September 21, 2026 at make-whole price."
+            ),
+            "wall_deltas": [
+                {
+                    "bucket": "FY2028",
+                    "before": 11_889_019_000,
+                    "after": 10_639_019_000,
+                    "before_display": "$11.9bn",
+                    "after_display": "$10.6bn",
+                    "change_abs": 1_250_000_000,
+                },
+                {
+                    "bucket": "after FY2030",
+                    "before": 107_884_720_000,
+                    "after": 107_885_785_000,
+                    "before_display": "$108bn",
+                    "after_display": "$108bn",
+                    "change_abs": 1_065_000,
+                },
+            ],
+        }
+    )
+    assert sentence is not None
+    assert sentence == (
+        "Verizon's debt due in 2028 falls from $11.9bn to $10.6bn after the notes redemption."
+    )

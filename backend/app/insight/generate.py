@@ -322,13 +322,36 @@ def _impact_hook(facts: dict[str, Any]) -> str:
         return " after it closed a euro notes offering"
     if "convertible" in title:
         return " after convertible notes"
-    if "redeem" in title:
+    # "redem" matches redeem / redemption / redeemed (before bare "note").
+    if "redem" in title:
         return " after the notes redemption"
     if "tender" in title:
         return " after the tender"
     if "note" in title:
         return " after the notes offering"
     return ""
+
+
+def _material_wall_deltas(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Buckets whose rounded display moved and abs change clears the floor."""
+    from app.insight.display import MIN_WALL_CHANGE_ABS, format_usd_display
+
+    out: list[dict[str, Any]] = []
+    for d in deltas:
+        before_d = d.get("before_display") or format_usd_display(d.get("before"))
+        after_d = d.get("after_display") or format_usd_display(d.get("after"))
+        if not before_d or not after_d or before_d == after_d:
+            continue
+        try:
+            change_abs = abs(float(d.get("change_abs") or 0))
+            if change_abs <= 0:
+                change_abs = abs(float(d.get("after") or 0) - float(d.get("before") or 0))
+        except (TypeError, ValueError):
+            change_abs = 0.0
+        if change_abs < MIN_WALL_CHANGE_ABS:
+            continue
+        out.append({**d, "before_display": before_d, "after_display": after_d})
+    return out
 
 
 def _template_impact(facts: dict[str, Any]) -> str | None:
@@ -347,16 +370,13 @@ def _template_impact(facts: dict[str, Any]) -> str | None:
     issuer = facts.get("issuer_short") or issuer_short_name(
         facts.get("issuer_key"), facts.get("issuer")
     )
-    deltas = list(facts.get("wall_deltas") or [])
+    deltas = _material_wall_deltas(list(facts.get("wall_deltas") or []))
     parts: list[str] = []
     if deltas:
         ordered = sorted(deltas, key=lambda d: bucket_sort_key(d.get("bucket")))
         for d in ordered:
-            before_d = d.get("before_display") or format_usd_display(d.get("before"))
-            after_d = d.get("after_display") or format_usd_display(d.get("after"))
-            if not before_d or not after_d or before_d == after_d:
-                # Skip FX noise that rounds to the same display string.
-                continue
+            before_d = d.get("before_display")
+            after_d = d.get("after_display")
             try:
                 rises = float(d.get("after") or 0) >= float(d.get("before") or 0)
             except (TypeError, ValueError):
@@ -371,7 +391,7 @@ def _template_impact(facts: dict[str, Any]) -> str | None:
         for change in facts.get("before_after") or []:
             before_d = change.get("before_display") or format_usd_display(change.get("before"))
             after_d = change.get("after_display") or format_usd_display(change.get("after"))
-            if not before_d or not after_d:
+            if not before_d or not after_d or before_d == after_d:
                 continue
             field = change.get("bucket") or change.get("field") or "the figure"
             year = bucket_year_label(str(field))
@@ -418,17 +438,31 @@ async def generate_impact(
     provider: str | None = None
     model: str | None = None
     # Prefer the deterministic wall template whenever buckets moved — it lists
-    # every year in order with short names and 3-sig-fig displays.
+    # every year in order with short names and 3-sig-fig displays. Templates are
+    # already grounded in facts, so only the deterministic gate applies (same as
+    # the brief); skip the flaky model verifier on ground-truth prose.
     template = _template_impact(facts)
     if template is not None:
-        t_kept, t_dropped, t_summary = await _gate_sentences([template], facts, client)
-        if t_kept:
-            kept = t_kept
-            dropped = t_dropped
-            summary.update({"status": "checked", "source": "template", **t_summary})
+        gate = check_text(template, facts)
+        if gate.get("numbers_ok") and gate.get("advice_ok"):
+            kept = [template]
+            summary.update(
+                {
+                    "status": "checked",
+                    "source": "template",
+                    "verifier_models": [],
+                }
+            )
             provider, model = "template", "wall_deltas"
         else:
-            dropped.extend(t_dropped)
+            dropped.append(
+                {
+                    "sentence": template,
+                    "reason": "template failed deterministic gate",
+                    "number_violations": gate.get("number_violations"),
+                    "advice_hits": gate.get("advice_hits"),
+                }
+            )
     if not kept:
         text, provider, model, error = await _spark_text(
             IMPACT_SYSTEM, facts, ImpactTextModel, "insight_impact", client

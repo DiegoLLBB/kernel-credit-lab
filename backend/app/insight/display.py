@@ -21,6 +21,9 @@ _MONTHS = (
     "Dec",
 )
 
+# Ignore FX / rounding ripples under this floor when listing changed wall buckets.
+MIN_WALL_CHANGE_ABS = 100_000_000.0
+
 # Short names for natural impact/brief prose.
 ISSUER_SHORT: dict[str, str] = {
     "amazon": "Amazon",

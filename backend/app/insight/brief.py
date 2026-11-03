@@ -217,9 +217,23 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
                 continue
             latest = rows[-1]
             prior = prior_same_period(rows, latest)
-            now_val = _num(latest.value)
+            # Prefer a fiscal-year row with YoY when the latest is TTM-only —
+            # better "what to watch" copy (Oracle FY2026 vs FY2025, etc.).
+            pick = latest
+            if prior is None:
+                fy_rows = [
+                    r
+                    for r in rows
+                    if not str(getattr(r, "fiscal_label", "") or "").upper().startswith("TTM")
+                ]
+                if fy_rows:
+                    fy_latest = fy_rows[-1]
+                    fy_prior = prior_same_period(rows, fy_latest)
+                    if fy_prior is not None:
+                        pick, prior = fy_latest, fy_prior
+            now_val = _num(pick.value)
             then_val = _num(prior.value) if prior else None
-            unit = latest.unit
+            unit = pick.unit
             if unit == "USD":
                 now_disp = format_usd_display(now_val)
                 then_disp = format_usd_display(then_val)
@@ -233,7 +247,7 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
                 "value": now_val,
                 "value_display": now_disp,
                 "unit": unit,
-                "period": latest.fiscal_label,
+                "period": pick.fiscal_label,
                 "previous_value": then_val,
                 "previous_value_display": then_disp,
                 "previous_period": prior.fiscal_label if prior else None,
@@ -282,6 +296,20 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
         if lead
         else None
     )
+    # Wider 45-day material moves for "other changes" (beyond since-last-brief).
+    recent_material = [
+        {
+            "alert_id": c.get("alert_id"),
+            "issuer_key": c.get("issuer_key"),
+            "issuer_name": c.get("issuer_name"),
+            "issuer_short": c.get("issuer_short"),
+            "title": c.get("title"),
+            "impact_sentence": c.get("impact_sentence"),
+            "wall_deltas": c.get("wall_deltas") or [],
+            "material_change_abs": c.get("material_change_abs"),
+        }
+        for c in lead_candidates
+    ]
     payload = {
         "as_of": as_of.isoformat(),
         "as_of_display": format_date_display(as_of),
@@ -289,6 +317,7 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
         "window_since": since.isoformat(),
         "lead_change": lead_out,
         "alerts": alerts_out,
+        "recent_material": recent_material,
         "watchlist": watchlist,
         "live": {
             "go_live_at": stats.get("go_live_at"),
@@ -312,11 +341,18 @@ def build_brief_facts(session: Any, as_of: date) -> dict[str, Any]:
 
 
 def _wall_move_clause(delta: dict[str, Any]) -> str | None:
+    from app.insight.display import MIN_WALL_CHANGE_ABS
+
     before_d = delta.get("before_display") or format_usd_display(delta.get("before"))
     after_d = delta.get("after_display") or format_usd_display(delta.get("after"))
-    if not before_d or not after_d:
+    if not before_d or not after_d or before_d == after_d:
         return None
     try:
+        change_abs = abs(float(delta.get("change_abs") or 0))
+        if change_abs <= 0:
+            change_abs = abs(float(delta.get("after") or 0) - float(delta.get("before") or 0))
+        if change_abs < MIN_WALL_CHANGE_ABS:
+            return None
         rises = float(delta.get("after") or 0) >= float(delta.get("before") or 0)
     except (TypeError, ValueError):
         rises = True
@@ -341,7 +377,11 @@ def _template_lead_sentence(facts: dict[str, Any]) -> str | None:
         impact = (lead.get("impact_sentence") or "").strip()
         return impact or None
     ranked = sorted(deltas, key=lambda d: float(d.get("change_abs") or 0), reverse=True)
-    clause = _wall_move_clause(ranked[0])
+    clause = None
+    for delta in ranked:
+        clause = _wall_move_clause(delta)
+        if clause:
+            break
     if not clause:
         return None
     title = (lead.get("title") or "").lower()
@@ -351,6 +391,10 @@ def _template_lead_sentence(facts: dict[str, Any]) -> str | None:
         meaning = ", lifting near-term maturities"
     elif "convertible" in title:
         hook, meaning = " after convertible notes", ""
+    elif "redem" in title:
+        hook, meaning = " after the notes redemption", ""
+    elif "tender" in title:
+        hook, meaning = " after the tender", ""
     elif "note" in title:
         hook, meaning = " after the notes offering", ""
     else:
@@ -361,10 +405,11 @@ def _template_lead_sentence(facts: dict[str, Any]) -> str | None:
 def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
     """Pre-built, display-string-only lines the writer (and templates) may quote."""
     lead = _template_lead_sentence(facts)
-    # Other alerts (skip the lead).
+    # Other material moves in the wider recent window (not only since last brief).
     lead_id = (facts.get("lead_change") or {}).get("alert_id")
+    other_pool = list(facts.get("recent_material") or []) or list(facts.get("alerts") or [])
     others: list[str] = []
-    for alert in facts.get("alerts") or []:
+    for alert in other_pool:
         if alert.get("alert_id") == lead_id:
             continue
         short = alert.get("issuer_short") or issuer_short_name(
@@ -374,7 +419,11 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
         if not deltas:
             continue
         ranked = sorted(deltas, key=lambda d: float(d.get("change_abs") or 0), reverse=True)
-        clause = _wall_move_clause(ranked[0])
+        clause = None
+        for delta in ranked:
+            clause = _wall_move_clause(delta)
+            if clause:
+                break
         if not clause:
             continue
         who = short if short.endswith("s") else f"{short}'s"
@@ -386,7 +435,7 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
         other_line = (
             "Other changes this period: " + " ".join(others)
             if len(others) > 1
-            else f"Also this period, {others[0][0].lower() + others[0][1:]}"
+            else f"Also this period, {others[0]}"
         )
 
     live = facts.get("live") or {}
@@ -709,27 +758,43 @@ async def generate_daily_brief(
     def _money_tokens(sentence: str) -> set[str]:
         return {t for t in sentence.replace(",", "").split() if t.startswith("$")}
 
-    merged: list[str] = []
-    if template_kept:
-        merged.append(template_kept[0])
+    model_survivors = list(kept)
+    # When the template pack already covers the brief structure, use it as-is —
+    # model lines only fill gaps (avoids partial briefs when Wonder under-writes).
+    if len(template_kept) >= 4:
+        kept = template_kept[:5]
         summary["lead"] = "material_wall_move"
-    for sentence in template_kept[1:] + kept:
-        s = sentence.strip()
-        if not s or s in merged:
-            continue
-        # Drop near-duplicates of anything already kept (same $-tokens).
-        tokens = _money_tokens(s)
-        if tokens and any(
-            tokens.issubset(_money_tokens(m)) or _money_tokens(m).issubset(tokens) for m in merged
-        ):
-            continue
-        low = s.lower()
-        if "largest debt" in low or "largest material" in low:
-            continue
-        merged.append(s)
-        if len(merged) >= 5:
-            break
-    kept = merged[:5]
+        summary["source"] = "template"
+        for sentence in model_survivors:
+            if sentence and sentence not in kept:
+                dropped.append(
+                    {
+                        "sentence": sentence,
+                        "reason": "superseded by template pack",
+                    }
+                )
+    else:
+        merged: list[str] = []
+        if template_kept:
+            merged.append(template_kept[0])
+            summary["lead"] = "material_wall_move"
+        for sentence in template_kept[1:] + model_survivors:
+            s = sentence.strip()
+            if not s or s in merged:
+                continue
+            tokens = _money_tokens(s)
+            if tokens and any(
+                tokens.issubset(_money_tokens(m)) or _money_tokens(m).issubset(tokens)
+                for m in merged
+            ):
+                continue
+            low = s.lower()
+            if "largest debt" in low or "largest material" in low:
+                continue
+            merged.append(s)
+            if len(merged) >= 5:
+                break
+        kept = merged[:5]
 
     if cost is not None and cost > BRIEF_COST_CAP_USD:
         summary["cost_cap_exceeded"] = True
