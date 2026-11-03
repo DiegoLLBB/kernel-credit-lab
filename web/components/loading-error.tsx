@@ -25,7 +25,7 @@ export function PageShell({
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
       <h1 className="sr-only">{title}</h1>
       {children}
-      <footer className="mt-16 border-t border-slate-800/80 pt-6 text-xs text-slate-500">
+      <footer className="no-print mt-16 border-t border-slate-800/80 pt-6 text-xs text-slate-500">
         Research support only. Not investment advice.
       </footer>
     </main>

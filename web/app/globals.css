@@ -41,3 +41,18 @@ body {
   transform-origin: bottom;
   animation: grow-up 500ms ease-out 200ms both;
 }
+
+/* Tear sheet: the issuer page printed or saved as PDF, without controls or navigation. */
+.print-only { display: none; }
+@media print {
+  @page { size: A4; margin: 14mm 12mm; }
+  html, body { background: #ffffff !important; font-size: 11pt; }
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+  a { color: inherit !important; text-decoration: none !important; }
+  section, li, tr, svg { break-inside: avoid; }
+  h2, h3, h4 { break-after: avoid; }
+  details > summary { display: none; }
+  .quote-mark { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  svg { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

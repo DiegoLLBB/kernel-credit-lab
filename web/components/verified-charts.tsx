@@ -219,7 +219,7 @@ export function VerifiedCharts({
   onToggleUnverified: (v: boolean) => void;
 }) {
   return (
-    <section aria-labelledby="charts-heading" className="border-t border-memo-rule pt-8">
+    <section aria-labelledby="charts-heading" className="no-print border-t border-memo-rule pt-8">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h3 id="charts-heading" className="text-lg font-semibold text-memo-ink">
           Charts read from investor presentations

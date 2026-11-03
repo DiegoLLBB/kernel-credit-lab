@@ -7,6 +7,7 @@ import { ErrorLine, PageShell } from "@/components/loading-error";
 import { PageSkeleton } from "@/components/skeleton";
 import { MaturityWallChart } from "@/components/maturity-wall-chart";
 import { VerifiedCharts } from "@/components/verified-charts";
+import { LiquidityLine } from "@/components/liquidity-line";
 import {
   getJson,
   type ChartListOut,
@@ -229,7 +230,21 @@ export function IssuerDetailClient() {
       {issuer ? (
         <div className="space-y-10">
           <header>
-            <h2 className="text-2xl font-semibold text-white">{issuer.name}</h2>
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 className="text-2xl font-semibold text-white">{issuer.name}</h2>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="no-print rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink"
+              >
+                Print tear sheet
+              </button>
+            </div>
+            <p className="print-only mt-1 text-sm text-memo-muted">
+              Kernel Credit Lab tear sheet, figures as of {formatDate(asOf)}, printed{" "}
+              {formatDate(new Date().toISOString().slice(0, 10))}. Every figure is computed from SEC filings;
+              sources at kernel-credit-lab.web.app/issuers/{issuer.key ?? ""}.
+            </p>
             <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 tabular-nums text-xs text-slate-400">
               {issuer.ticker ? (
                 <div>
@@ -298,7 +313,7 @@ export function IssuerDetailClient() {
                   setPlaying((v) => !v);
                 }}
                 aria-pressed={playing}
-                className="rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink"
+                className="no-print rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink"
               >
                 {playing ? "Pause" : "Play 2026"}
               </button>
@@ -308,7 +323,7 @@ export function IssuerDetailClient() {
               same year on 1 Jan 2026.
             </p>
 
-            <div className="mt-5">
+            <div className="no-print mt-5">
               <label className="block">
                 <span className="sr-only">Date</span>
                 <input
@@ -370,6 +385,8 @@ export function IssuerDetailClient() {
               ) : null}
             </div>
 
+            <LiquidityLine metrics={snapshot?.metrics} />
+
             {snapshot?.wall && snapshot.wall.changes.length > 0 ? (
               <div className="mt-8">
                 <h4 className="text-sm font-medium text-memo-muted">What moved it this year</h4>
@@ -417,7 +434,7 @@ export function IssuerDetailClient() {
               ) : refinancing?.missing ? (
                 <p className="mt-2 text-sm text-amber-400">{refinancing.missing}</p>
               ) : null}
-              <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400">
+              <div className="no-print mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400">
                 <label className="flex items-center gap-2">
                   <span className="tabular-nums text-slate-500">Tenor</span>
                   <select
