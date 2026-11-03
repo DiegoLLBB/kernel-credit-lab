@@ -36,40 +36,38 @@ is not listed here and is not attributed to Meta's models.
 
 ## Inside Kernel: models used at runtime
 
-| Model | Role | Status |
-|---|---|---|
-| Muse Spark (`muse-spark-1.3`) | Per-event agent; chart reading from images | Production agent (frozen post go-live) |
-| Muse Wonder (`muse-wonder-1.0`) | Credit snapshot, impact sentences, daily brief | Insight job + overview |
-| SAM 3.1 (`sam-3.1`) | Chart segmentation; bar geometry; deck cross-check | Deck pipeline + chart crosscheck |
-| Muse Spark Open (`meta-models/muse-spark-open-1026`, Baseten) | Claims check, insight verifier, coverage judge | Baseten-hosted |
+| Model | Role |
+|---|---|
+| Muse Spark (`muse-spark-1.3`) | Per-event agent (frozen at `f997487c2fbf` / `event_v10`); reads chart values from images; writes snapshot and impact sentences from computed facts |
+| Muse Spark Open (`meta-models/muse-spark-open-1026` on Baseten) | Independent claims check on alerts, snapshot sentences and the daily brief |
+| Muse Wonder (`muse-wonder-1.0`) | Daily brief across the watchlist (from computed facts only) |
+| SAM 3.1 (`sam-3.1`) | Locates charts and bars in investor decks; bar geometry verifies Spark’s readings |
 
-See [CONTEXT.md](CONTEXT.md), Part B, for the full model plan.
+See [CONTEXT.md](CONTEXT.md), Part B, for the full model plan. Everything below was built
+**during the hackathon** (27 Oct – 4 Nov 2026).
 
-## Post-hackathon product rows (since 30 Oct)
+## Built 30 Oct – 3 Nov
 
-| Date | Task | Notes / review catches |
-|---|---|---|
-| 30 Oct–Nov | Dashboard read API, Firebase deploy, Cloud Run jobs (seed, replay, insight, live) | Public demo; review writes disabled in prod |
-| Nov | Analyst layer: metric tiles, credit overview, issuer snapshot, checked insight text | Numbers from DB only; stale snapshot rows refused when `as_of` mismatches |
-| Nov | Live ingestion + overview live section | Never mixed into replay score; `last_check` uses live job timestamps |
-| Nov | Refinancing panel (+0 bp base scenario line) | Display-only; EBITDA ÷ interest from stored metrics |
-| Nov | Daily brief (Wonder + Spark Open verifier) | Hash-cached |
-| Nov | Replay rescore / comparison table | Number-accuracy + wall checks; **replay denominator paused** for some groups |
-| Nov | SAM chart crosscheck vs XBRL | TTM/LTM sums; segment charts marked not comparable |
-| Nov | P0 live-site audit | Replay verdict badges; combined feed; `instrument_state_at` after seed clobber (Verizon tender); maturity wall in insight facts; **refinancing in agent tools reverted after agent freeze**; scorer first-candidate binding noted; stale snapshots fixed; Verizon records reconciliation |
-
-## Building Kernel: late hackathon (1–3 Nov)
-
-Muse Wonder credits lasted through **2 Nov** and into early **3 Nov** (commits still tagged
-`(Muse Wonder)` in history). After credits ran out on **3 Nov**, further build work used
-**other tools** (not Meta coding models). Runtime product still uses Muse Spark / Spark Open /
-Wonder / SAM as in the table above. Agent tree stays frozen at `f997487c2fbf` / `event_v10`.
+**Tool switch:** Muse Wonder coding credits ran out on the afternoon of **3 Nov 2026**. Commits whose
+messages still say `(Muse Wonder)` used that model; work after the cutover is attributed to
+**other tools** (not Meta coding models). Runtime product models are unchanged (table above).
 
 | Date | Tool | Task | Commit(s) | Review |
 |---|---|---|---|---|
-| 2 Nov | Muse Wonder | Onboard-by-ticker (`POST /api/issuers`, `kernel-onboard`), daily brief, baseline job, live smoke, chart crosscheck vs XBRL, P0 live-site audit (walls, verdicts, snapshots) | `de7439d`…`7d0b8be`, `cbe8d13` | Agent freeze respected (no prompt edits). Onboard cost readout wrongly read `CreditInsight.cost_usd` — fixed. Chart crosscheck marked segment bars not-comparable; TTM vs four quarters. Review writes stay off in prod |
-| 2–3 Nov | Muse Wonder | Periods: FY 10-K source notes, same-period cash cover, no mixed TTM/FY snapshot prose; README live Amazon term-loan story | `fb6e069`, `7cc9e26` | Live Verizon still briefly showed stale $161bn / 0.17× prose until insight regen + later gate |
-| 3 Nov | Muse Wonder → other tools | Peer sector ranks, bank-NA metrics, code-side metric alerts; GICS sector map; XBRL flow fallbacks; onboard 8 watchlist tickers; Cloud Run ticker-list arg bugs (comma → semicolon) | `8fc4ec9`, `b3116d8`, `bc34193` | Ruff/format CI failures on first peer/metric-alert PRs. gcloud `--args` comma-split tickers — fixed to semicolons. Metric-alert purge helper rename broke import once |
-| 3 Nov | other tools | UI redesign (credit-memo overview/issuer/alert/document); chart bn scale and phone width | `e4df9a7`…`684d39d` | Briefly overwrote metric feed group label — restored as “Metric changes (n)”. Agent / `web/` freeze rules applied as requested per task |
-| 3 Nov | other tools | Snapshot regression: every path builds facts from tiles + numbers-must-match-tiles gate (`insight_v8`); force-regen 19 snapshots; overview latency ~5s → ~1.3s; restore feed verdicts via `alert_counts.feed_verdicts` | `345239f`, `bf60b88`, `0675543` | First gate broke `test_snapshot_shape` (legacy rows without facts) — skip gate when metrics missing. Light feed had dropped verdicts — restored with precomputed map, not per-alert eval walks |
-| 3 Nov | other tools | Hardening: gitleaks/trufflehog history scan, MIT license, diagnostics/ tidy, logged-event timeline summary, monitoring uptime + $20 budget note | `eb4adb5`, `b2eb38e`, `49c7472`, `0ece7e0`, … | Scan: 331 gitleaks hits, all false positives (newsroom UUIDs / instrument keys); trufflehog verified **0**. `make seed` failed on dummy FRED key — Makefile now skips rates with a warning |
+| 30 Oct | Muse Wonder | Dashboard (overview, alerts, trace, issuer wall slider, charts, documents) | `81a4fc5` | Public read paths; review writes later disabled in prod |
+| 30 Oct | Muse Wonder | Cloud jobs: seed, replay, decks against Cloud SQL; eval in DB; run-job workflow | `46cfb77` | Production readiness without Redis |
+| 30 Oct | Muse Wonder | SAM chart reader in product (decks → ChartReading, `read_chart`, prompt v10) | `dd13f31` | First real pass 15/32 verified; reviewer fixed merge/pixel/null-bar issues → 26/34 |
+| 31 Oct | Muse Wonder | Analyst layer: XBRL metrics, checked insight text, What-changed overview, issuer snapshot | `1ea8205` (+ `2643878`…`eebf4a5` 1 Nov) | Numbers from DB only; migration index/import fixes in follow-ups |
+| 1 Nov | Muse Wonder | Overview: sector leverage bands, cash-only liquidity, impact wall deltas | `b13694a` | Liquidity never risk-banded |
+| 2 Nov | Muse Wonder | Live mode: scheduled EDGAR/newsroom poll, frozen agent, YoY periods, read-only reviews | `affe597`…`f997487` | Agent freeze commit `f997487`; CI fixture/Edgar fixes |
+| 2 Nov | Muse Wonder | Resume paused live runs; incomplete replay alerts count as misses; live document outcomes | `2f60118` | **Replay denominator:** paused/failed expected alerts must stay in the miss count (not dropped) |
+| 2 Nov | Muse Wonder | Wonder daily brief, plain-RAG baseline job, live smoke | `7d95a85` | Brief cost-capped; baseline scored like the agent |
+| 2 Nov | Muse Wonder | Live polish + **scorer fixes** (rescoring scripts) | `2932c3b` | **Scorer bound every tranche to `candidates[0]`** — under-counted accurate year/amount; fixed to best-match. Baseline null `fiscal_year` failed even when the quote named the year |
+| 2 Nov | Muse Wonder | SAM chart values checked against XBRL on issuer pages | `dae7a25`, `d8c0d88`, `4cc2230`, `cbe8d13` | TTM vs four quarters; segment bars marked not-comparable (not false differs) |
+| 2 Nov | Muse Wonder | Onboard by ticker (`POST /api/issuers`, `kernel-onboard`, Issuers UI) | `de7439d`, `3c5cfea`, `9e6b031` | Cost readout wrongly read `CreditInsight.cost_usd` — fixed |
+| 2 Nov | Muse Wonder | P0 live-site audit: walls, verdicts, snapshots, feed, charts | `7d0b8be` | **`instrument_state_at` after seed clobber** so Verizon tender/redemption apply to the wall. **Refinancing briefly wired into agent tools after the freeze — caught and reverted.** Stale snapshot prose vs tiles noted |
+| 2 Nov | Muse Wonder | Periods: FY 10-K source notes, same-period cash cover, no mixed TTM/FY prose | `fb6e069` | Insight regen for Verizon $166bn / ~0.7× |
+| 3 Nov | Muse Wonder → other tools | Peer ranks, bank-NA metrics, metric alerts; GICS map; XBRL flow fallbacks; onboard 8 tickers | `8fc4ec9`, `b3116d8`, `bc34193` | gcloud `--args` comma-split tickers → semicolons. Ruff/format CI noise |
+| 3 Nov | other tools | UI redesign (credit-memo overview/issuer/alert/document) | `e4df9a7`…`684d39d` | Metric feed label briefly overwritten — restored as “Metric changes (n)” |
+| 3 Nov | other tools | **Snapshot regression + tile gate** (`insight_v8`); overview ~5s→~1.3s; feed verdicts map | `345239f`, `bf60b88`, `0675543` | **Stale snapshots** ($161bn / 0.17×) overwritten after seed/live; **numbers-must-match-tiles** gate on every generate path + serve-time refuse. Light feed dropped verdicts — restored via `alert_counts.feed_verdicts` |
+| 3 Nov | other tools | Hardening: secret scan, MIT license, `scripts/diagnostics/`, logged-event timeline summary, uptime + budget notes | `eb4adb5`, `b2eb38e`, `49c7472`, `0ece7e0`, `2e6e242`, `fcb1704` | gitleaks false positives only; trufflehog verified 0; `make seed` skips dummy FRED keys |
