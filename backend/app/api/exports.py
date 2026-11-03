@@ -9,7 +9,7 @@ from email.utils import format_datetime
 from typing import Annotated, Any
 from xml.sax.saxutils import escape
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -138,12 +138,9 @@ def alerts_rss(session: DbSession, request: Request) -> Response:
 
 
 @router.get("/api/watchlist.csv")
-def watchlist_csv(
-    session: DbSession,
-    as_of: date | None = Query(None),
-) -> Response:
+def watchlist_csv(session: DbSession) -> Response:
     """Watchlist metric tiles as CSV; plain numeric units; source tag per metric."""
-    point = as_of or date.today()
+    point = date.today()
     roots = session.scalars(
         select(Issuer).where(Issuer.parent_id.is_(None)).order_by(Issuer.key.asc())
     ).all()
