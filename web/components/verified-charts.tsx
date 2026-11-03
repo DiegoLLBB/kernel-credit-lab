@@ -32,6 +32,83 @@ function crossCheckLine(c: ChartReadingOut): string | null {
   return "Not compared with SEC filings: no matching figure for the same period.";
 }
 
+/** The verified values redrawn in Kernel's own style; filing matches marked under each bar. */
+function NativeBars({
+  c,
+  cross,
+}: {
+  c: ChartReadingOut;
+  cross: Map<string, { status: string }>;
+}) {
+  const vals = c.categories.map((cat, i) => ({
+    cat: String(cat),
+    v: c.values[i] == null ? null : Number(c.values[i]),
+  }));
+  const nums = vals.map((x) => x.v).filter((x): x is number => x != null && Number.isFinite(x));
+  if (nums.length === 0) return null;
+  const max = Math.max(...nums.map(Math.abs), 1e-9);
+  const col = 84;
+  const barW = 46;
+  const H = 150;
+  const top = 26;
+  const W = Math.max(vals.length * col, 200);
+  const unit = c.unit ?? "";
+  const label = (v: number) => {
+    const money = /\$|usd|bn|b\b/i.test(unit);
+    const suffix = /b/i.test(unit) && money ? "bn" : /m/i.test(unit) && money ? "M" : "";
+    return money ? `$${v.toLocaleString("en-US")}${suffix}` : `${v.toLocaleString("en-US")}${unit && !money ? ` ${unit}` : ""}`;
+  };
+  return (
+    <svg
+      role="img"
+      aria-label={`${c.title ?? "Chart"}: ${vals.map((x) => `${x.cat} ${x.v ?? "not printed"}`).join(", ")}`}
+      viewBox={`0 0 ${W} ${top + H + 40}`}
+      width="100%"
+      preserveAspectRatio="xMinYMin meet"
+      style={{ maxWidth: W, height: "auto" }}
+    >
+      <line x1={0} x2={W} y1={top + H} y2={top + H} stroke="#1C232B" />
+      {vals.map((x, i) => {
+        const cx = i * col + col / 2;
+        const h = x.v == null ? 0 : (Math.abs(x.v) / max) * H;
+        const st = cross.get(x.cat)?.status;
+        return (
+          <g key={`${x.cat}-${i}`}>
+            {x.v != null ? (
+              <rect x={cx - barW / 2} y={top + H - h} width={barW} height={h} fill="#1C232B" />
+            ) : (
+              <rect
+                x={cx - barW / 2 + 0.75}
+                y={top + H - 20}
+                width={barW - 1.5}
+                height={20}
+                fill="none"
+                stroke="#AEB6BA"
+                strokeDasharray="3 3"
+              />
+            )}
+            <text x={cx} y={top + H - h - 8} textAnchor="middle" fontSize={13} fontWeight={600} fill="#1C232B">
+              {x.v != null ? label(x.v) : "not printed"}
+            </text>
+            <text x={cx} y={top + H + 18} textAnchor="middle" fontSize={13} fill="#1C232B">
+              {x.cat}
+            </text>
+            {st === "agree" ? (
+              <text x={cx} y={top + H + 34} textAnchor="middle" fontSize={12} fill="#2E6B57">
+                ✓ filing
+              </text>
+            ) : st === "differ" ? (
+              <text x={cx} y={top + H + 34} textAnchor="middle" fontSize={12} fill="#B4472E">
+                ≠ filing
+              </text>
+            ) : null}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function ChartCard({ c }: { c: ChartReadingOut }) {
   const [overlay, setOverlay] = useState(false);
   const checks = c.verification_detail?.checks ?? [];
@@ -44,36 +121,38 @@ function ChartCard({ c }: { c: ChartReadingOut }) {
   const xline = crossCheckLine(c);
 
   return (
-    <li className="grid gap-6 border-t border-memo-rule py-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-      <figure>
+    <li className="grid gap-8 border-t border-memo-rule py-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div>
+        <NativeBars c={c} cross={cross} />
         {c.has_overlay || c.has_crop ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={chartImageUrl(c.id, overlay && c.has_overlay)}
-            alt={`${c.title ?? "Chart"} from the investor presentation`}
-            className="w-full border border-memo-rule bg-white object-contain p-2"
-          />
-        ) : (
-          <div className="flex h-40 items-center justify-center border border-memo-rule text-sm text-memo-muted">
-            No image stored
-          </div>
-        )}
-        {c.has_overlay ? (
-          <button
-            type="button"
-            onClick={() => setOverlay((v) => !v)}
-            aria-pressed={overlay}
-            className="mt-2 text-sm text-memo-info underline underline-offset-2"
-          >
-            {overlay ? "Show the original chart" : "Show how it was checked"}
-          </button>
+          <details className="mt-4 text-sm">
+            <summary className="cursor-pointer text-memo-info underline underline-offset-2">
+              See the original slide
+            </summary>
+            <div className="mt-3 max-w-xs">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={chartImageUrl(c.id, overlay && c.has_overlay)}
+                alt={`Original slide: ${c.title ?? "chart"}`}
+                className="w-full border border-memo-rule bg-white"
+              />
+              {c.has_overlay ? (
+                <button
+                  type="button"
+                  onClick={() => setOverlay((v) => !v)}
+                  aria-pressed={overlay}
+                  className="mt-2 text-xs text-memo-info underline underline-offset-2"
+                >
+                  {overlay ? "Hide the check" : "Show the bars SAM 3.1 found"}
+                </button>
+              ) : null}
+              <p className="mt-1 text-xs text-memo-muted">
+                The source image, kept as evidence. The chart beside it is redrawn from the verified values.
+              </p>
+            </div>
+          </details>
         ) : null}
-        {overlay ? (
-          <figcaption className="mt-1 text-xs text-memo-muted">
-            Boxes are the bars SAM 3.1 found; green bars matched the value Muse Spark read.
-          </figcaption>
-        ) : null}
-      </figure>
+      </div>
 
       <div>
         <h4 className="text-base font-semibold text-memo-ink">{c.title ?? "Untitled chart"}</h4>
