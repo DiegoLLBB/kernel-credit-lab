@@ -218,6 +218,15 @@ export function VerifiedCharts({
   showUnverified: boolean;
   onToggleUnverified: (v: boolean) => void;
 }) {
+  // Charts compared with the SEC filings come first. Segment slides repeat titles like
+  // "Net Sales" for one part of the business, so on their own they read as duplicates of the
+  // company-wide chart; they sit in a fold below with the reason they weren't compared.
+  const items = charts?.items ?? [];
+  const isChecked = (c: ChartReadingOut) =>
+    c.verified && (c.filing_crosscheck?.summary_status === "agree" || c.filing_crosscheck?.summary_status === "differ");
+  const checked = items.filter(isChecked);
+  const others = items.filter((c) => !isChecked(c));
+
   return (
     <section aria-labelledby="charts-heading" className="no-print border-t border-memo-rule pt-8">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -246,11 +255,28 @@ export function VerifiedCharts({
             : "No verified charts for this company yet."}
         </p>
       ) : (
-        <ul className="mt-2">
-          {charts.items.map((c) => (
-            <ChartCard key={c.id} c={c} />
-          ))}
-        </ul>
+        <>
+          {checked.length > 0 ? (
+            <ul className="mt-2">
+              {checked.map((c) => (
+                <ChartCard key={c.id} c={c} />
+              ))}
+            </ul>
+          ) : null}
+          {others.length > 0 ? (
+            <details className="mt-4 border-t border-memo-rule pt-4" open={checked.length === 0}>
+              <summary className="cursor-pointer text-sm text-memo-info underline underline-offset-2">
+                {checked.length > 0 ? "More charts from the same presentations" : "Charts from the presentations"} (
+                {others.length}): business segments and figures with no matching SEC number
+              </summary>
+              <ul className="mt-2">
+                {others.map((c) => (
+                  <ChartCard key={c.id} c={c} />
+                ))}
+              </ul>
+            </details>
+          ) : null}
+        </>
       )}
     </section>
   );
