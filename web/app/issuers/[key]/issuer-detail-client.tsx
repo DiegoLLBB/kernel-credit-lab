@@ -3,7 +3,7 @@
 import { SectionBoundary } from "@/components/section-boundary";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorLine, PageShell } from "@/components/loading-error";
 import { PageSkeleton } from "@/components/skeleton";
 import { MaturityWallChart } from "@/components/maturity-wall-chart";
@@ -113,6 +113,40 @@ export function IssuerDetailClient() {
   const [charts, setCharts] = useState<ChartListOut | null>(null);
   const [showUnverified, setShowUnverified] = useState(false);
   const [snapshot, setSnapshot] = useState<IssuerSnapshot | null>(null);
+
+  // Keep "Debt due by year" still while the date changes. Moving the slider re-renders the
+  // snapshot above it for that date, and its height changes (summary length, what-to-watch lines,
+  // the "Updating" note). Chrome and Firefox anchor the scroll position themselves; Safari does
+  // not, so there the chart jumped. In browsers without anchoring, after each render: if the
+  // section moved on the page while it was on or above the screen, scroll by the same amount.
+  const wallRef = useRef<HTMLElement | null>(null);
+  const wallOffset = useRef<number | null>(null);
+  const nativeAnchoring = useRef<boolean | null>(null);
+  useLayoutEffect(() => {
+    if (nativeAnchoring.current === null) {
+      nativeAnchoring.current = typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
+    }
+    const el = wallRef.current;
+    if (nativeAnchoring.current || !el) {
+      wallOffset.current = null;
+      return;
+    }
+    const top = el.getBoundingClientRect().top;
+    const offset = top + window.scrollY;
+    const prev = wallOffset.current;
+    wallOffset.current = offset;
+    if (prev === null) return;
+    const shift = offset - prev;
+    if (shift !== 0 && top - shift < window.innerHeight) window.scrollBy(0, shift);
+  });
+  useEffect(() => {
+    // A resize moves things for other reasons; start again from a fresh measurement.
+    const reset = () => {
+      wallOffset.current = null;
+    };
+    window.addEventListener("resize", reset);
+    return () => window.removeEventListener("resize", reset);
+  }, []);
   const [playing, setPlaying] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [eventDates, setEventDates] = useState<string[]>([]);
@@ -390,7 +424,7 @@ export function IssuerDetailClient() {
           </div>
 
           <SectionBoundary name="debt by year">
-          <section aria-labelledby="wall-heading" className="border-t border-memo-rule pt-8">
+          <section ref={wallRef} aria-labelledby="wall-heading" className="border-t border-memo-rule pt-8">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <h3 id="wall-heading" className="text-lg font-semibold text-memo-ink">
                 Debt due by year, as of {formatDate(asOf)}
