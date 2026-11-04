@@ -13,8 +13,18 @@ import {
 } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
-const PAGE_SIZE = 20;
 const STATUSES: Array<AlertStatus | ""> = ["", "new", "confirmed", "dismissed"];
+const TYPES = [
+  { value: "agent", label: "Changes found by the agent" },
+  { value: "metric", label: "Ratio moves from the filings" },
+  { value: "all", label: "All" },
+] as const;
+
+/** Ratio alerts carry the filing URL inside their text; the alert page links it properly. */
+function tidyMetricText(t: string | null | undefined): string {
+  return (t ?? "").replace(/\s*Filing:\s*https?:\/\/\S+/g, "").trim();
+}
+
 const SIZES = [
   { value: "", label: "Any size" },
   { value: "500000000", label: "$500M or more" },
@@ -26,7 +36,9 @@ export function AlertsClient() {
   const router = useRouter();
   const status = (searchParams.get("status") ?? "") as AlertStatus | "";
   const issuer = searchParams.get("issuer") ?? "";
-  const offset = Math.max(0, Number(searchParams.get("offset") ?? "0") || 0);
+  const kind = TYPES.some((x) => x.value === (searchParams.get("type") ?? ""))
+    ? (searchParams.get("type") as "agent" | "metric" | "all")
+    : "agent";
   const minSize = SIZES.some((x) => x.value === (searchParams.get("min") ?? ""))
     ? (searchParams.get("min") ?? "")
     : "";
@@ -47,8 +59,8 @@ export function AlertsClient() {
     setLoading(true);
     setError(null);
     const qs = new URLSearchParams();
-    qs.set("limit", String(PAGE_SIZE));
-    qs.set("offset", String(offset));
+    // Small table (tens of alerts): load it whole and split agent / ratio alerts here.
+    qs.set("limit", "200");
     if (status) qs.set("status", status);
     if (issuer) qs.set("issuer", issuer);
     if (minSize) qs.set("min_change_usd", minSize);
@@ -65,9 +77,15 @@ export function AlertsClient() {
     return () => {
       cancelled = true;
     };
-  }, [status, issuer, offset, minSize]);
+  }, [status, issuer, minSize]);
 
-  function updateQuery(next: { status?: string; issuer?: string; min?: string; offset?: number }) {
+  const items = (data?.items ?? [])
+    .filter((a) => kind === "all" || (a.kind ?? "agent") === kind)
+    .sort((x, y) =>
+      String(y.event_date ?? y.created_at ?? "").localeCompare(String(x.event_date ?? x.created_at ?? "")),
+    );
+
+  function updateQuery(next: { status?: string; issuer?: string; min?: string; type?: string; offset?: number }) {
     const qs = new URLSearchParams();
     const s = next.status !== undefined ? next.status : status;
     const i = next.issuer !== undefined ? next.issuer : issuer;
@@ -76,6 +94,8 @@ export function AlertsClient() {
     if (s) qs.set("status", s);
     if (i) qs.set("issuer", i);
     if (m) qs.set("min", m);
+    const t = next.type !== undefined ? next.type : kind;
+    if (t && t !== "agent") qs.set("type", t);
     if (o > 0) qs.set("offset", String(o));
     const q = qs.toString();
     router.push(q ? `/alerts?${q}` : "/alerts");
@@ -95,6 +115,24 @@ export function AlertsClient() {
         className="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end"
         onSubmit={(e) => e.preventDefault()}
       >
+        <div className="block text-sm text-memo-muted sm:basis-full">
+          Show
+          <div role="group" aria-label="Show" className="mt-1 flex w-fit flex-wrap rounded-md border border-memo-rule text-sm">
+            {TYPES.map((x) => (
+              <button
+                key={x.value}
+                type="button"
+                aria-pressed={kind === x.value}
+                onClick={() => updateQuery({ type: x.value, offset: 0 })}
+                className={`px-3 py-1.5 first:rounded-l-md last:rounded-r-md ${
+                  kind === x.value ? "bg-memo-ink text-paper" : "text-memo-ink hover:bg-[#EEF0EC]"
+                }`}
+              >
+                {x.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <label className="block text-sm text-memo-muted">
           Status
           <select
@@ -150,23 +188,25 @@ export function AlertsClient() {
       {error ? <ErrorLine message={error} /> : null}
       {loading ? <LoadingLine label="Loading alerts…" /> : null}
 
-      {!loading && data && data.items.length === 0 ? (
+      {!loading && data && items.length === 0 ? (
         <EmptyLine>
           No material changes yet. Alerts appear after the historical replay (or a live filing) finds a
           debt move large enough to surface here.
         </EmptyLine>
       ) : null}
 
-      {!loading && data && data.items.length > 0 ? (
+      {!loading && data && items.length > 0 ? (
         <>
           <ol className="border-t border-memo-ink">
-            {data.items.map((a) => (
+            {items.map((a) => (
               <li key={a.id} className="border-b border-memo-rule">
                 <Link
                   href={`/alerts/${a.id}`}
                   className="grid grid-cols-1 gap-x-6 gap-y-1 py-4 hover:bg-[#EEF0EC] sm:grid-cols-[7.5rem_1fr]"
                 >
-                  <span className="text-sm text-memo-muted">{formatDate(a.event_date)}</span>
+                  <span className="text-sm text-memo-muted">
+                    {a.event_date ? formatDate(a.event_date) : a.created_at ? formatDate(a.created_at.slice(0, 10)) : ""}
+                  </span>
                   <span>
                     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                       <span className="font-semibold text-memo-ink">{a.issuer.name}</span>
@@ -177,16 +217,16 @@ export function AlertsClient() {
                       ) : null}
                       {a.kind === "metric" ? (
                         <span className="rounded border border-memo-rule px-1.5 py-0.5 text-xs text-memo-muted">
-                          credit metric
+                          ratio move
                         </span>
                       ) : (
                         <ReplayVerdictBadge verdict={a.replay_verdict} reason={a.replay_verdict_reason} />
                       )}
                     </span>
                     <span className="mt-1 block max-w-[70ch] text-base text-memo-ink">
-                      {a.impact_sentence ?? a.title}
+                      {a.kind === "metric" ? tidyMetricText(a.impact_sentence ?? a.title) : (a.impact_sentence ?? a.title)}
                     </span>
-                    {a.impact_sentence ? (
+                    {a.impact_sentence && a.kind !== "metric" ? (
                       <span className="mt-0.5 block max-w-[70ch] text-sm text-memo-muted">{a.title}</span>
                     ) : null}
                   </span>
@@ -194,29 +234,9 @@ export function AlertsClient() {
               </li>
             ))}
           </ol>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
-            <span className="tabular-nums text-xs">
-              {data.offset + 1}–{Math.min(data.offset + data.items.length, data.total)} of {data.total}
-            </span>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={offset <= 0}
-                className="rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink enabled:hover:bg-[#EEF0EC] disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                onClick={() => updateQuery({ offset: Math.max(0, offset - PAGE_SIZE) })}
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                disabled={offset + PAGE_SIZE >= data.total}
-                className="rounded-md border border-memo-ink px-3 py-1.5 text-sm text-memo-ink enabled:hover:bg-[#EEF0EC] disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                onClick={() => updateQuery({ offset: offset + PAGE_SIZE })}
-              >
-                Next
-              </button>
-            </div>
-          </div>
+          <p className="mt-3 text-xs text-memo-muted">
+            {items.length} {items.length === 1 ? "alert" : "alerts"}
+          </p>
         </>
       ) : null}
     </div>

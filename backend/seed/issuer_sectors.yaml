@@ -34,3 +34,15 @@ tickers:
   MSFT: Information Technology
   ORCL: Information Technology
   INTC: Information Technology
+
+# Display names by ticker. SEC company names come in capitals ("JPMORGAN CHASE & CO");
+# the refresh-sectors job re-stamps issuers listed here with their usual written name.
+names:
+  CAT: Caterpillar Inc.
+  JNJ: Johnson & Johnson
+  JPM: JPMorgan Chase & Co.
+  MSFT: Microsoft Corporation
+  NEE: NextEra Energy, Inc.
+  PG: The Procter & Gamble Company
+  T: AT&T Inc.
+  GM: General Motors Company

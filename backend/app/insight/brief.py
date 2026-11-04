@@ -404,6 +404,26 @@ def _template_lead_sentence(facts: dict[str, Any]) -> str | None:
     return f"{who} {clause}{hook}{meaning}."
 
 
+_COUNT_WORDS = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+}
+
+
+def _docs_phrase(n: int) -> str:
+    """'one document is' / 'five documents are'."""
+    word = _COUNT_WORDS.get(n, str(n))
+    return f"{word} document is" if n == 1 else f"{word} documents are"
+
+
 def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
     """Pre-built, display-string-only lines the writer (and templates) may quote."""
     lead = _template_lead_sentence(facts)
@@ -464,30 +484,17 @@ def _brief_copy_block(facts: dict[str, Any]) -> dict[str, Any]:
             10: "ten",
         }.get(reviewed, str(reviewed))
         live_bits.append(f"Kernel reviewed {word} {noun} with no alert")
-    for d in paused_docs[:1]:
-        short = issuer_short_name(d.get("issuer_key"), d.get("issuer_name"))
-        label = str(d.get("form") or "filing")
-        live_bits.append(f"{short}'s {label} is paused at its turn limit")
-    analyst_names: list[str] = []
-    for d in analyst_docs[:3]:
-        short = issuer_short_name(d.get("issuer_key"), d.get("issuer_name"))
-        form = str(d.get("form") or "")
-        if form.startswith("prospectus"):
-            doc = f"{short}'s prospectus supplement"
-        elif form.startswith("quarterly report"):
-            doc = f"{short}'s quarterly report"
-        else:
-            doc = f"{short}'s filing"
-        analyst_names.append(doc)
-    if analyst_names:
-        if len(analyst_names) == 1:
-            live_bits.append(f"{analyst_names[0]} needs an analyst")
-        elif len(analyst_names) == 2:
-            live_bits.append(f"{analyst_names[0]} and {analyst_names[1]} need an analyst")
-        else:
-            live_bits.append(
-                f"{analyst_names[0]}, {analyst_names[1]}, and {analyst_names[2]} need an analyst"
-            )
+    # Counts only: naming every paused or analyst document made one long, hard-to-read
+    # sentence; the overview lists each document under Live.
+    n_paused = len(paused_docs)
+    n_analyst = len(analyst_docs)
+    parts = []
+    if n_paused:
+        parts.append(f"{_docs_phrase(n_paused)} paused at a turn limit")
+    if n_analyst:
+        parts.append(f"{_docs_phrase(n_analyst)} left for an analyst")
+    if parts:
+        live_bits.append(" and ".join(parts) + " (listed under Live)")
     live_line = None
     if live_bits:
         if len(live_bits) == 1:

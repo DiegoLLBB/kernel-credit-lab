@@ -424,3 +424,50 @@ def test_stale_maturity_schedule_rule():
     assert not schedule_is_stale("2025-12-31", today)
     assert not schedule_is_stale(None, today)
     assert not schedule_is_stale("not a date", today)
+
+
+def test_name_map_replaces_capitalised_sec_names():
+    from app.models import Issuer
+    from app.onboard.sectors import apply_name_map, load_name_map
+
+    names = load_name_map()
+    assert names["JPM"] == "JPMorgan Chase & Co."
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    jpm = Issuer(key="jpm", name="JPMORGAN CHASE & CO", ticker="JPM", sector="Financials")
+    amzn = Issuer(key="amazon", name="Amazon.com, Inc.", ticker="AMZN")
+    db.add_all([jpm, amzn])
+    db.flush()
+    stats = apply_name_map(db)
+    assert jpm.name == "JPMorgan Chase & Co."
+    assert amzn.name == "Amazon.com, Inc."  # not in the map: untouched
+    assert stats["renamed"] == 1
+    db.close()
+    engine.dispose()
+
+
+def test_brief_live_line_counts_instead_of_listing_documents():
+    from app.insight.brief import _brief_copy_block
+
+    docs = [
+        {
+            "issuer_key": "jpm",
+            "issuer_name": "JPMORGAN CHASE & CO",
+            "form": "quarterly report",
+            "outcome": "paused",
+        }
+    ] * 2 + [
+        {
+            "issuer_key": "msft",
+            "issuer_name": "MICROSOFT CORP",
+            "form": "prospectus supplement (bond offering)",
+            "outcome": "needs an analyst",
+        }
+    ] * 5
+    block = _brief_copy_block({"live": {"logged": 18, "documents": docs}})
+    assert "two documents are paused at a turn limit" in block["live"]
+    assert "five documents are left for an analyst" in block["live"]
+    assert "JPMORGAN" not in block["live"] and "MICROSOFT" not in block["live"]

@@ -37,6 +37,14 @@ ISSUER_SHORT: dict[str, str] = {
     "duke_florida": "Duke Florida",
     "msft": "Microsoft",
     "t": "AT&T",
+    "jpm": "JPMorgan",
+    "cat": "Caterpillar",
+    "jnj": "Johnson & Johnson",
+    "nee": "NextEra Energy",
+    "pg": "P&G",
+    "gm": "GM",
+    "wmt": "Walmart",
+    "xom": "Exxon Mobil",
 }
 
 

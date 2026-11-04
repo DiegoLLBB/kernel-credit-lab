@@ -88,3 +88,29 @@ def apply_sector_map(session: Any) -> dict[str, int]:
         iss.sector = sector
         stats["updated"] += 1
     return stats
+
+
+def load_name_map() -> dict[str, str]:
+    """Ticker → display name from issuer_sectors.yaml ``names`` (may be empty)."""
+    raw = yaml.safe_load(_config_path().read_text()) or {}
+    names = raw.get("names") or {}
+    return {str(k).strip().upper(): str(v).strip() for k, v in names.items() if v}
+
+
+def apply_name_map(session: Any) -> dict[str, int]:
+    """Replace capitalised SEC names with the usual written name for listed tickers."""
+    from sqlalchemy import select
+
+    from app.models import Issuer
+
+    stats = {"renamed": 0, "unchanged": 0}
+    names = load_name_map()
+    for iss in session.scalars(select(Issuer).where(Issuer.parent_id.is_(None))).all():
+        ticker = (iss.ticker or "").strip().upper()
+        wanted = names.get(ticker)
+        if not wanted or iss.name == wanted:
+            stats["unchanged"] += 1
+            continue
+        iss.name = wanted
+        stats["renamed"] += 1
+    return stats
