@@ -159,6 +159,41 @@ function money(v: unknown): string {
   return v != null && v !== "" && Number.isFinite(n) && Math.abs(n) >= 1_000_000 ? formatUsdDisplay(n) : String(v ?? "–");
 }
 
+/** Titles for refused steps: the action was attempted, not done. */
+const TRIED_WORDS: Record<string, string> = {
+  record_fact: "Tried to record a quote",
+  propose_change: "Tried to change the records",
+  submit_alert: "Tried to submit the alert",
+  set_checklist: "Tried to set the checklist",
+  compute_metrics: "Tried to recompute the maturity wall",
+};
+
+const CHECK_WORDS: Record<string, string> = {
+  claims: "independent check",
+  alert_rules: "alert rules",
+  quote: "exact quote",
+  evidence: "evidence",
+  coverage: "checklist coverage",
+};
+
+/** One chip per check: the last result recorded for each name (a re-check replaces the first). */
+function finalChecks(checks: TraceTurnOut["checks"]): TraceTurnOut["checks"] {
+  const byName = new Map<string, TraceTurnOut["checks"][number]>();
+  for (const c of checks) byName.set(c.check_name, c);
+  const out = [...byName.values()];
+  // If the independent check failed, "alert rules: failed" only repeats it.
+  const claimsFailed = out.some((c) => c.check_name === "claims" && !c.passed);
+  return claimsFailed ? out.filter((c) => c.check_name !== "alert_rules") : out;
+}
+
+/** A short readable reason instead of the checker's raw output. */
+function problemText(problems: unknown): string {
+  if (problems == null) return "";
+  if (typeof problems === "string") return problems.slice(0, 200);
+  if (Array.isArray(problems)) return problems.map((p) => String(p)).join("; ").slice(0, 200);
+  return "see the details below";
+}
+
 function TurnBody({ t }: { t: TraceTurnOut }) {
   const refused = Boolean(t.refusal_reason);
   const meta = [t.status, t.cost_label ?? (t.cost_usd != null || t.model ? formatCost(t.cost_usd, { model: t.model }) : null)]
@@ -168,7 +203,11 @@ function TurnBody({ t }: { t: TraceTurnOut }) {
     <div className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h4 className={`text-base font-medium ${refused ? "text-memo-added" : "text-memo-ink"}`}>
-          {t.tool ? (TOOL_WORDS[t.tool] ?? t.tool.replace(/_/g, " ")) : "Thinking, no tool call"}
+          {t.tool
+            ? refused && TRIED_WORDS[t.tool]
+              ? TRIED_WORDS[t.tool]
+              : (TOOL_WORDS[t.tool] ?? t.tool.replace(/_/g, " "))
+            : "Thinking, no tool call"}
         </h4>
         {t.tool ? <span className="font-mono text-xs text-memo-muted">{t.tool}</span> : null}
         {meta ? <span className="text-xs text-memo-muted">{meta}</span> : null}
@@ -181,14 +220,15 @@ function TurnBody({ t }: { t: TraceTurnOut }) {
         </p>
       ) : null}
       {t.checks.length > 0 ? (
-        <ul className="flex flex-wrap gap-2">
-          {t.checks.map((c, i) => (
-            <li key={`${c.check_name}-${i}`} className="text-sm">
-              <PassFailChip passed={c.passed} label={`${c.check_name.replace(/_/g, " ")}: ${c.passed ? "passed" : "failed"}`} />
-              {!c.passed && c.problems != null ? (
-                <span className="ml-2 text-xs text-memo-added">
-                  {typeof c.problems === "string" ? c.problems : JSON.stringify(c.problems)}
-                </span>
+        <ul className="flex flex-wrap items-center gap-2">
+          {finalChecks(t.checks).map((c) => (
+            <li key={c.check_name} className="text-sm">
+              <PassFailChip
+                passed={c.passed}
+                label={`${CHECK_WORDS[c.check_name] ?? c.check_name.replace(/_/g, " ")}: ${c.passed ? "passed" : "failed"}`}
+              />
+              {!c.passed && !refused ? (
+                <span className="ml-2 text-xs text-memo-added">{problemText(c.problems)}</span>
               ) : null}
             </li>
           ))}
