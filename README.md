@@ -1,11 +1,15 @@
 # Kernel Credit Lab
 
+*The credit module of Kernel Terminal.*
+
 **Credit monitoring you can audit.** Kernel watches USD investment-grade issuers and alerts when
 their debt maturity profile changes. Every alert carries the exact quote from the filing, the
 recomputed maturity wall and an independent model's check.
 
 **Live:** https://kernel-credit-lab.web.app · **Video:** _link_ ·
 [![CI](https://github.com/DiegoLLBB/kernel-credit-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/DiegoLLBB/kernel-credit-lab/actions/workflows/ci.yml)
+
+![Kernel's overview: the latest change found live, Amazon's $17.5bn term loan, with its effect on debt due by year](docs/overview.png)
 
 > **Principle.** Numbers come from filings and are computed in code. Models read documents and
 > write sentences, and an independent model refuses any sentence or change the evidence does not
@@ -23,16 +27,16 @@ the analyst only what changed the picture, with the source for every number.
 
 - **Watches** 16 US investment-grade companies across 9 sectors. Six have every bond and loan
   recorded one by one (Duke Energy and three of its operating subsidiaries, Oracle, Verizon,
-  Boeing, Intel, Amazon); ten more were added by ticker (Microsoft, JPMorgan, Johnson &
-  Johnson, Caterpillar, NextEra, Procter & Gamble, AT&T, Walmart, Exxon Mobil, General Motors). Live mode polls SEC EDGAR and
-  issuer newsrooms twice a day.
+  Boeing, Intel, Amazon); ten more were added by ticker (Microsoft, JPMorgan, Johnson & Johnson,
+  Caterpillar, NextEra, Procter & Gamble, AT&T, Walmart, Exxon Mobil, General Motors). Live mode
+  polls SEC EDGAR and issuer newsrooms twice a day.
 - **Reads each new document with an agent** (Muse Spark) whose tools carry the checks:
   - every fact must be an exact quote from the document
   - every change to the debt records must cite those facts
   - materiality is decided by code
   - nothing is published until Muse Spark Open, a different model, has checked the alert's claims
-- **Recomputes the maturity wall** (debt due per year, 2026–2029) before and after each change,
-  at any past date.
+- **Recomputes the maturity wall** (debt due per year, 2026–2030) before and after each change,
+  at any past date; "Play 2026" replays the year filing by filing.
 - **Explains it in plain English.** For each company:
   - **credit metrics from XBRL:** total debt, debt due in 24 months, cash cover, leverage,
     interest coverage, liquidity (cash plus undrawn credit lines against debt due in 24 months),
@@ -40,12 +44,16 @@ the analyst only what changed the picture, with the source for every number.
   - **a checked snapshot** and an impact sentence per alert
   - **a refinancing panel:** Treasury yield plus the company's own borrowing premium, with a
     0–300bp shock slider
+  - **"What to watch"**: a few lines computed in code from those figures (liquidity cover, a
+    year's move in leverage or interest cover, the heaviest maturity year), never written by a model
   - **a daily brief** written by Muse Wonder
 - **Reads charts in investor decks.** SAM 3.1 locates bar charts and bars, Muse Spark reads the
   printed values, and bar geometry must match them. Unverifiable charts are refused
   (26 of 34 verified across 5 decks in our test run).
-- **Shows its work.** Every run has a trace: each tool call, each check that passed or refused,
-  tokens, cost and model.
+- **Shows its work.** Every run has a trace that leads with the steps Kernel refused and why,
+  then every tool call, check, token, cost and model.
+- **Fits an analyst's day:** a list of bonds and loans coming due in the next 12 months, a
+  printable one-page tear sheet per company, and CSV and RSS exports of the alerts and watchlist.
 
 ## Results
 
@@ -70,6 +78,8 @@ we missed it when we built the test set. The frozen agent found it on its own, q
 drew on in September 2026. The Term Loan matures in September 2029"), passed the independent
 check, and moved Amazon's 2029 maturities from $12.9bn to $30.4bn. Every live document and its
 outcome (alert, no alert, needs an analyst, paused) is on the live overview, misses included.
+By 4 Nov the frozen agent had read 26 live documents: 1 alert, 18 with nothing material, 5 left
+for an analyst and 2 paused at its turn limit.
 
 ## Meta models
 
@@ -112,8 +122,8 @@ lint, migrations and about 370 tests; every deploy runs a smoke test of the live
 - **Coverage:** 16 companies. Only the first six have bond-by-bond records; for the other ten,
   and for the rest of each year's debt, the maturity profile comes from the 10-K schedule.
 - **Replay misses:** 5 of 14 expected changes were not caught, including Intel's April notes
-  and August equity raise. Events that paused or failed count as misses; the live overview lists
-  each one under Details.
+  and August equity raise. Events that paused or failed count as misses; the overview lists each
+  one under "What Kernel missed or got wrong".
 - **Two caught changes have wrong numbers:**
   - a parent-company term loan repayment that was never applied (`duk_parent_tl_repaid`)
   - a subsidiary term loan recorded as a convertible bond (`dep_term_loan`)
@@ -125,6 +135,12 @@ lint, migrations and about 370 tests; every deploy runs a smoke test of the live
 - **Refinancing is illustrative.** It assumes all maturing debt rolls at one tenor at Treasury plus
   the company's own borrowing premium: interest expense ÷ average debt minus Treasury (kept between
   0.5% and 3.0%). That is a figure from the filings, not a market spread.
+- **Old maturity schedules are not shown.** Where a company's latest tagged schedule is more than
+  18 months old (GM's is from 2012, JPMorgan's from 2022), the page says so instead of drawing it,
+  and the written summary does not use it.
+- **Bank structured notes are skipped live.** JPMorgan files several 424B2/424B3 pricing
+  supplements a day for notes it sells to clients; they don't change its own debt profile, so live
+  mode doesn't spend its budget on them.
 - **No ratings, prices or spreads** (licensed data).
 
 ## Next
