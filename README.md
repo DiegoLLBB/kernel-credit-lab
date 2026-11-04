@@ -65,6 +65,12 @@ agent, compared with a one-shot model given the same documents:
 | Kernel agent | 9 of 14 | 7 of 14 | 1 | 0 | yes (16 of 23 wall checks) | $19.42 |
 | One-shot model | 8 of 14 | 3 of 14 | 1 | 0 | no | $0.28 |
 
+**12 of the 14 material changes reached an analyst.** 9 were published as alerts. 3 more (Oracle's
+$25bn notes, Intel's bridge loan, Amazon's Canadian-dollar notes) ended as "needs an analyst": the
+agent could not confirm the change and escalated it instead of guessing. The scorer counts those 3
+as misses because no alert was published. Only 2 were missed outright, both Intel judgement calls: a
+refinancing it judged net-neutral, and a stock offering. Each outcome is on the company's page.
+
 The agent was tuned on these events, so this is an in-sample result. The scorer was corrected
 once after the first comparison (tranche matching, years read from quotes, FX at the event date),
 with the same rules for both rows; see [PROGRESS.md](docs/PROGRESS.md).
@@ -121,8 +127,9 @@ lint, migrations and about 370 tests; every deploy runs a smoke test of the live
 
 - **Coverage:** 16 companies. Only the first six have bond-by-bond records; for the other ten,
   and for the rest of each year's debt, the maturity profile comes from the 10-K schedule.
-- **Replay misses:** 5 of 14 expected changes were not caught, including Intel's April notes
-  and August equity raise. Events that paused or failed count as misses; the overview lists each
+- **Replay misses:** 5 of 14 expected changes raised no alert: 3 were escalated to an analyst
+  (Oracle's February notes, Intel's bridge loan, Amazon's Canadian-dollar notes) and 2 were missed
+  outright (Intel's April notes and August equity raise). Events that paused or failed count as misses; the overview lists each
   one under "What Kernel missed or got wrong".
 - **Two caught changes have wrong numbers:**
   - a parent-company term loan repayment that was never applied (`duk_parent_tl_repaid`)
