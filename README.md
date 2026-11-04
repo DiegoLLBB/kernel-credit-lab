@@ -6,7 +6,7 @@
 their debt maturity profile changes. Every alert carries the exact quote from the filing, the
 recomputed maturity wall and an independent model's check.
 
-**Live:** https://kernel-credit-lab.web.app · **Video:** _link_ ·
+**Live:** https://kernel-credit-lab.web.app · **Video:** https://youtu.be/loPB9OnyTSU ·
 [![CI](https://github.com/DiegoLLBB/kernel-credit-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/DiegoLLBB/kernel-credit-lab/actions/workflows/ci.yml)
 
 ![Kernel's overview: the latest change found live, Amazon's $17.5bn term loan, with its effect on debt due by year](docs/overview.png)
