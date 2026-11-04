@@ -12,6 +12,7 @@ import { PageSkeleton } from "@/components/skeleton";
 import {
   API_URL,
   getJson,
+  type AlertDetailOut,
   type BriefSentence,
   type CreditOverview,
   type EvalComparisonRow,
@@ -184,15 +185,26 @@ function tileValue(row: WatchlistRow, metric: string): number | null {
 
 export function OverviewClient() {
   const [overview, setOverview] = useState<CreditOverview | null>(null);
+  const [featured, setFeatured] = useState<AlertDetailOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
+    // Fetch the newest agent alert before showing the page, so the featured chart and the
+    // sections below it appear together instead of the chart pushing them down a moment later.
     getJson<CreditOverview>("/api/credit/overview")
-      .then((d) => {
-        if (!cancelled) setOverview(d);
+      .then(async (d) => {
+        const first = d.feed.find((i) => i.kind !== "metric");
+        let alert: AlertDetailOut | null = null;
+        if (first) {
+          alert = await getJson<AlertDetailOut>(`/api/alerts/${first.alert_id}`).catch(() => null);
+        }
+        if (!cancelled) {
+          setFeatured(alert);
+          setOverview(d);
+        }
       })
       .catch((e: Error) => {
         if (!cancelled) setError(e.message);
@@ -323,7 +335,7 @@ export function OverviewClient() {
       {overview ? (
         <>
           <SectionBoundary name="latest change">
-          {agentFeed[0] ? <FeaturedChange alertId={agentFeed[0].alert_id} /> : null}
+          {featured ? <FeaturedChange alert={featured} /> : null}
           </SectionBoundary>
 
           <div className="mb-16 grid gap-x-12 gap-y-10 md:grid-cols-[minmax(0,7fr)_minmax(0,4fr)]">

@@ -1,31 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { ChangeQuote, DebtByYear } from "@/components/debt-by-year";
-import { getJson, type AlertDetailOut } from "@/lib/api";
+import type { AlertDetailOut } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
-/** The newest agent alert, shown in full on the overview: the change, the chart and its quote. */
-export function FeaturedChange({ alertId }: { alertId: string }) {
-  const [alert, setAlert] = useState<AlertDetailOut | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getJson<AlertDetailOut>(`/api/alerts/${alertId}`)
-      .then((d) => {
-        if (!cancelled) setAlert(d);
-      })
-      .catch(() => {
-        /* the feed below still lists it */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [alertId]);
-
-  if (!alert) return null;
-
+/**
+ * The newest agent alert, shown in full on the overview: the change, the chart and its quote.
+ * The overview fetches the alert before it draws anything, so this section never pops in above
+ * content that is already on screen.
+ */
+export function FeaturedChange({ alert }: { alert: AlertDetailOut }) {
   const checked = alert.claims_check?.status === "pass";
 
   return (
