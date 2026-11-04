@@ -379,6 +379,7 @@ export function IssuerDetailClient() {
               loading={loading || (updating && !snapshot)}
               asOf={asOf}
               watch={<WatchList lines={watchLines(snapshot?.metrics ?? [], issuer.maturity_wall)} />}
+              parent={issuer.parent ? { key: issuer.parent.key, name: issuer.parent.name } : null}
             />
             </SectionBoundary>
             {updating && snapshot ? (

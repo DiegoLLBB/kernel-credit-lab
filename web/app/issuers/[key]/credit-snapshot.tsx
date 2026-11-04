@@ -19,12 +19,15 @@ export function CreditSnapshot({
   loading,
   asOf,
   watch,
+  parent,
 }: {
   snapshot: IssuerSnapshot | null;
   loading: boolean;
   asOf?: string;
   /** "What to watch" lines, placed under the written summary. */
   watch?: ReactNode;
+  /** Set for group subsidiaries, whose figures are only in the parent's consolidated data. */
+  parent?: { key: string | null; name: string } | null;
 }) {
   if (loading && !snapshot) {
     return (
@@ -127,7 +130,21 @@ export function CreditSnapshot({
 
       {watch}
 
-      {snapshot.metrics.length > 0 ? (
+      {parent && snapshot.metrics.every((t) => t.value === null) ? (
+        <p className="mt-6 max-w-[70ch] text-sm text-memo-muted">
+          This company reports inside {parent.name}&apos;s combined filings, and Kernel reads the
+          consolidated figures only, so it has no credit figures of its own here. Its bonds and loans and
+          its debt by year are below; the group&apos;s figures are on{" "}
+          {parent.key ? (
+            <Link href={`/issuers/${encodeURIComponent(parent.key)}`} className="text-memo-info underline underline-offset-2">
+              {parent.name}&apos;s page
+            </Link>
+          ) : (
+            `${parent.name}'s page`
+          )}
+          .
+        </p>
+      ) : snapshot.metrics.length > 0 ? (
         <>
           {snapshot.metrics.some((t) => /fewer than 3/i.test(t.peer?.line ?? "")) ? (
             <p className="mt-6 hidden text-sm text-memo-muted">
