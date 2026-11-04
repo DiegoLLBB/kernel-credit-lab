@@ -177,12 +177,25 @@ export function IssuerDetailClient() {
     hasLoadedRef.current = false;
   }
 
+  // Responses for a date are applied if they are newer than what is on screen, even when the
+  // date has moved on since. During Play the date advances every 0.7 s and a response takes
+  // about as long, so discarding stale requests meant the chart never changed until Play stopped.
+  const reqSeq = useRef(0);
+  const shownIssuerSeq = useRef(0);
+  const shownSnapshotSeq = useRef(0);
   useEffect(() => {
-    let cancelled = false;
+    shownIssuerSeq.current = 0;
+    shownSnapshotSeq.current = 0;
+  }, [key]);
+
+  useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     const immediate = !hasLoadedRef.current;
     const run = () => {
+      const seq = ++reqSeq.current;
+      // keyRef holds the company on screen; a response for another company is ignored.
+      const stale = () => keyRef.current !== key;
       if (immediate) {
         setLoading(true);
         setSnapshot(null);
@@ -191,27 +204,30 @@ export function IssuerDetailClient() {
       }
       getJson<IssuerDetailOut>(`/api/issuers/${encodeURIComponent(key)}?as_of=${asOf}`)
         .then((d) => {
-          if (cancelled) return;
+          if (stale() || seq < shownIssuerSeq.current) return;
+          shownIssuerSeq.current = seq;
           setIssuer(d);
           hasLoadedRef.current = true;
           setEventDates([...new Set(d.events.map((e) => e.event_date))].sort());
           setError(null);
         })
         .catch((e: Error) => {
-          if (!cancelled) setError(e.message);
+          if (!stale() && seq === reqSeq.current) setError(e.message);
         })
         .finally(() => {
-          if (!cancelled) {
+          if (!stale() && seq === reqSeq.current) {
             setLoading(false);
             setUpdating(false);
           }
         });
       getJson<IssuerSnapshot>(`/api/issuers/${encodeURIComponent(key)}/snapshot?as_of=${asOf}`)
         .then((d) => {
-          if (!cancelled) setSnapshot(d);
+          if (stale() || seq < shownSnapshotSeq.current) return;
+          shownSnapshotSeq.current = seq;
+          setSnapshot(d);
         })
         .catch(() => {
-          if (!cancelled) setSnapshot(null);
+          if (!stale() && seq === reqSeq.current) setSnapshot(null);
         });
     };
 
@@ -219,10 +235,10 @@ export function IssuerDetailClient() {
     else debounceRef.current = setTimeout(run, 250);
 
     return () => {
-      cancelled = true;
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [key, asOf]);
+
 
   useEffect(() => {
     let cancelled = false;
