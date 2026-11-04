@@ -8,7 +8,7 @@ import { ErrorLine, PageShell } from "@/components/loading-error";
 import { PageSkeleton } from "@/components/skeleton";
 import { ReplayVerdictBadge } from "@/components/replay-verdict-badge";
 import { AlertStatusChip } from "@/components/status-chip";
-import { DebtByYear, sourceLine, yearLabel } from "@/components/debt-by-year";
+import { ChangeQuote, DebtByYear, sourceLine, yearLabel } from "@/components/debt-by-year";
 import {
   getJson,
   postJson,
@@ -145,50 +145,94 @@ export function AlertDetailClient() {
       {!error && !alert ? <PageSkeleton kind="alert" /> : null}
 
       {alert ? (
-        <article className="max-w-4xl">
-          <header>
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-memo-muted">
-              {alert.issuer.key ? (
-                <Link
-                  href={`/issuers/${encodeURIComponent(alert.issuer.key)}`}
-                  className="font-semibold text-memo-ink underline-offset-2 hover:underline"
-                >
-                  {alert.issuer.name}
+        <article>
+          <header className="grid gap-x-12 gap-y-6 md:grid-cols-[minmax(0,1fr)_17rem] md:items-start">
+            <div>
+              <p className="text-sm text-memo-muted">
+                <Link href="/alerts" className="underline-offset-2 hover:underline">
+                  Alerts
                 </Link>
-              ) : (
-                <span className="font-semibold text-memo-ink">{alert.issuer.name}</span>
-              )}
-              <span>{formatDate(alert.event_date)}</span>
-              {alert.live ? (
-                <span className="rounded border border-memo-info/50 px-1.5 py-0.5 text-xs text-memo-info">
-                  found live
-                </span>
-              ) : null}
-              <ReplayVerdictBadge verdict={alert.replay_verdict} reason={alert.replay_verdict_reason} />
-            </p>
-            <h2 className="mt-4 max-w-[30ch] text-2xl font-semibold leading-tight text-memo-ink sm:text-[34px] sm:leading-[42px]">
-              {alert.impact_sentence ?? alert.title}
-            </h2>
-            {alert.impact_sentence ? (
-              <p className="mt-3 max-w-[70ch] text-base text-memo-muted">{alert.title}</p>
-            ) : null}
-            {alert.materiality_reasons.length > 0 ? (
-              <p className="mt-3 max-w-[70ch] text-sm text-memo-muted">
-                Why it matters:{" "}
-                {alert.materiality_reasons
-                  .map((r) =>
-                    r
-                      .replace(/\$([\d,]{10,})/g, (_, n: string) => formatUsdDisplay(n))
-                      .replace(/\bFY(20\d\d)\b/g, "$1"),
-                  )
-                  .join("; ")}
-                .
+                <span>, {alert.issuer.name}</span>
               </p>
-            ) : null}
+              <h2 className="mt-2 max-w-[30ch] text-2xl font-semibold leading-tight text-memo-ink sm:text-[36px] sm:leading-[44px]">
+                {alert.impact_sentence ?? alert.title}
+              </h2>
+              {alert.impact_sentence ? (
+                <p className="mt-4 max-w-[64ch] text-base text-memo-ink">{alert.title}</p>
+              ) : null}
+              {alert.materiality_reasons.length > 0 ? (
+                <p className="mt-3 max-w-[64ch] text-sm text-memo-muted">
+                  Why it matters:{" "}
+                  {alert.materiality_reasons
+                    .map((r) =>
+                      r
+                        .replace(/\$([\d,]{10,})/g, (_, n: string) => formatUsdDisplay(n))
+                        .replace(/\bFY(20\d\d)\b/g, "$1"),
+                    )
+                    .join("; ")}
+                  .
+                </p>
+              ) : null}
+            </div>
+            <dl className="border-t border-memo-ink text-sm">
+              <div className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                <dt className="text-memo-muted">Company</dt>
+                <dd className="text-right font-medium text-memo-ink">
+                  {alert.issuer.key ? (
+                    <Link
+                      href={`/issuers/${encodeURIComponent(alert.issuer.key)}`}
+                      className="text-memo-info underline underline-offset-2"
+                    >
+                      {alert.issuer.name}
+                    </Link>
+                  ) : (
+                    alert.issuer.name
+                  )}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                <dt className="text-memo-muted">Filed</dt>
+                <dd className="text-right font-medium text-memo-ink">{formatDate(alert.event_date)}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                <dt className="text-memo-muted">Found</dt>
+                <dd className="text-right font-medium text-memo-ink">
+                  {alert.live ? "Live, by the frozen agent" : "In the 2026 replay"}
+                </dd>
+              </div>
+              {alert.replay_verdict && alert.replay_verdict !== "not yet scored" ? (
+                <div className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                  <dt className="text-memo-muted">Replay result</dt>
+                  <dd className="text-right">
+                    <ReplayVerdictBadge verdict={alert.replay_verdict} reason={alert.replay_verdict_reason} />
+                  </dd>
+                </div>
+              ) : null}
+              <div className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                <dt className="text-memo-muted">Independent check</dt>
+                <dd
+                  className={`text-right font-medium ${
+                    claims ? (claimsOk ? "text-memo-reduced" : "text-memo-added") : "text-memo-muted"
+                  }`}
+                >
+                  {claims ? (claimsOk ? "Passed" : (claims.status ?? "unknown")) : "Not stored"}
+                </dd>
+              </div>
+              {alert.run_id ? (
+                <div className="flex items-baseline justify-between gap-4 border-b border-memo-rule py-1.5">
+                  <dt className="text-memo-muted">Agent&apos;s record</dt>
+                  <dd className="text-right">
+                    <Link href={`/runs/${alert.run_id}`} className="font-medium text-memo-info underline underline-offset-2">
+                      Every step
+                    </Link>
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
           </header>
 
           <SectionBoundary name="debt by year">
-          <section aria-labelledby="wall-heading" className="mt-10">
+          <section aria-labelledby="wall-heading" className="mt-12 border-t-[3px] border-memo-ink pt-6">
             <h3 id="wall-heading" className="text-lg font-semibold text-memo-ink">
               Debt due by year
             </h3>
@@ -196,7 +240,19 @@ export function AlertDetailClient() {
               What this change does to the company&apos;s maturities, recomputed from Kernel&apos;s
               records.
             </p>
-            <div className="mt-5">
+            <div className="mt-5 hidden gap-x-12 md:grid md:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] md:items-center">
+              <DebtByYear
+                beforeWall={alert.before_wall}
+                afterWall={alert.after_wall}
+                affected={alert.affected_buckets}
+                findings={alert.findings}
+                animate
+                large
+                showQuote={false}
+              />
+              <ChangeQuote affected={alert.affected_buckets} findings={alert.findings} />
+            </div>
+            <div className="mt-5 md:hidden">
               <DebtByYear
                 beforeWall={alert.before_wall}
                 afterWall={alert.after_wall}
